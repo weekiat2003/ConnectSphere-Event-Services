@@ -8,6 +8,7 @@ from app.models.change_request import ChangeRequest, EventChangeHistory, Arrange
 from app.models.event import Event, EventEquipmentRequirement, EventStatusHistory
 from app.models.venue import BOOKING_APPROVED, ACTIVE_BOOKING_STATUSES, Venue, VenueBooking
 from app.models.user import User
+from app.events.services.status import ensure_not_cancelled
 
 REVIEWABLE_STATUSES = ("pending", "re_review")
 RECONSIDERATION_REASON = "Needs reconsideration"

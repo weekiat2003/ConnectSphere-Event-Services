@@ -91,6 +91,7 @@ CREATE TABLE events (
 
     registration_required   TINYINT(1) NOT NULL DEFAULT 0,
     intended_capacity       INT UNSIGNED NULL,
+    registration_closed_at  DATETIME NULL,
 
     clarification_flag      TINYINT(1) NOT NULL DEFAULT 0,   -- sub-state of under_review
     clarification_comments  TEXT NULL,

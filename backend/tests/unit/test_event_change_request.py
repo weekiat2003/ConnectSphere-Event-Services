@@ -138,7 +138,7 @@ def test_option_is_not_offered_to_another_organiser(app):
 def test_request_is_refused_for_any_other_status(app, status):
     with app.app_context():
         event = _event(status)
-        with pytest.raises(ChangeRequestError, match="approved, planning or confirmed"):
+        with pytest.raises(ChangeRequestError, match="approved, planning, cancelled or confirmed"):
             _submit(event, {"expected_attendance": 120})
         assert ChangeRequest.query.count() == 0
 

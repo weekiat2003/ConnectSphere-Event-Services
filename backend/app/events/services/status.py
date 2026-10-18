@@ -9,6 +9,8 @@ Owns the status-transition rules for the Event Status Management epic:
 """
 from sqlalchemy import func
 
+from app.common.time import utcnow
+from app.common.text_validation import validate_descriptive_text
 from app.extensions import db
 from app.models.equipment import EquipmentReservation
 from app.models.event import Event, EventSafetyReview, EventStatusHistory
@@ -19,6 +21,8 @@ from app.models.venue import (
     BOOKING_REJECTED,
     VenueBooking,
 )
+from app.models.change_request import ChangeRequest
+
 
 ALLOWED_TRANSITIONS = {
     "draft": {"submitted"},
@@ -33,6 +37,31 @@ ALLOWED_TRANSITIONS = {
     "rejected": set(),
 }
 
+CANCELLABLE_STATUSES = (
+    "submitted",
+    "under_review",
+    "approved",
+    "planning",
+    "confirmed",
+)
+
+CANCEL_STATUS_MESSAGE = (
+    "Only a submitted, under review, approved, planning or confirmed event "
+    "can be cancelled"
+)
+
+
+def can_cancel_event(event: Event, coordinator_id: int) -> bool:
+    return (
+        event.coordinator_id == coordinator_id
+        and event.status in CANCELLABLE_STATUSES
+    )
+
+
+def ensure_not_cancelled(event: Event) -> None:
+    if event.status == "cancelled":
+        raise PermissionError("A cancelled event cannot be changed")
+
 
 class InvalidTransitionError(Exception):
     pass
@@ -45,6 +74,114 @@ def change_status(event: Event, new_status: str, changed_by_id: int, reason: str
 
     return _record_status_change(event, new_status, changed_by_id, reason)
 
+def cancel_event(
+    event: Event,
+    coordinator_id: int,
+    reason: str,
+    dry_run: bool = False,
+) -> Event:
+    """Cancel an event, release active arrangements, and close registration.
+
+    The event and its historical records remain visible. This action is final:
+    a cancelled event cannot be reopened.
+    """
+    if event.coordinator_id != coordinator_id:
+        raise PermissionError(
+            "Only the assigned Coordinator can cancel this event"
+        )
+
+    if event.status not in CANCELLABLE_STATUSES:
+        raise InvalidTransitionError(CANCEL_STATUS_MESSAGE)
+
+    try:
+        validate_descriptive_text(
+            reason if isinstance(reason, str) else "",
+            "cancellation reason",
+        )
+    except ValueError as problem:
+        raise ValueError(str(problem))
+
+    if dry_run:
+        return event
+
+    old_status = event.status
+    now = utcnow()
+
+    event.status = "cancelled"
+    event.registration_closed_at = now
+
+    db.session.add(
+        EventStatusHistory(
+            event_id=event.id,
+            old_status=old_status,
+            new_status="cancelled",
+            changed_by=coordinator_id,
+            reason=reason.strip(),
+            changed_at=now,
+        )
+    )
+
+    VenueBooking.query.filter(
+        VenueBooking.event_id == event.id,
+        VenueBooking.status.in_(("pending", "approved")),
+    ).update(
+        {
+            "status": BOOKING_CANCELLED,
+            "decided_by": coordinator_id,
+            "decision_reason": f"Event cancelled: {reason.strip()}",
+            "decided_at": now,
+        },
+        synchronize_session=False,
+    )
+
+    EquipmentReservation.query.filter(
+        EquipmentReservation.event_id == event.id,
+        EquipmentReservation.status == "reserved",
+    ).update(
+        {"status": "released"},
+        synchronize_session=False,
+    )
+
+    ChangeRequest.query.filter(
+        ChangeRequest.event_id == event.id,
+        ChangeRequest.status.in_(("pending", "re_review")),
+    ).update(
+        {
+            "status": "rejected",
+            "coordinator_id": coordinator_id,
+            "decision_reason": "Event cancelled",
+            "decided_at": now,
+        },
+        synchronize_session=False,
+    )
+
+    db.session.commit()
+    return event
+
+CANCELLABLE_STATUSES = (
+    "submitted",
+    "under_review",
+    "approved",
+    "planning",
+    "confirmed",
+)
+
+CANCEL_STATUS_MESSAGE = (
+    "Only a submitted, under review, approved, planning or confirmed event "
+    "can be cancelled"
+)
+
+
+def can_cancel_event(event: Event, coordinator_id: int) -> bool:
+    return (
+        event.coordinator_id == coordinator_id
+        and event.status in CANCELLABLE_STATUSES
+    )
+
+
+def ensure_not_cancelled(event: Event) -> None:
+    if event.status == "cancelled":
+        raise PermissionError("A cancelled event cannot be changed")
 
 def confirm_after_safety_approval(event: Event, review: EventSafetyReview) -> Event:
     if event.status != "safety_check":

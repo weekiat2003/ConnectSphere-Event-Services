@@ -121,11 +121,12 @@
   
   <script setup>
   import { onMounted, ref } from "vue";
-  import { useRoute } from "vue-router";
+  import { useRoute, useRouter } from "vue-router";
   import changeRequestsApi from "../api/changeRequests";
   import { useConfirm } from "../composables/useConfirm";
   
   const route = useRoute();
+  const router = useRouter();
   const queue = ref([]);
   const detail = ref(null);
   const venues = ref([]);
@@ -256,6 +257,13 @@
     if (action === "process_change") return processChange();
     if (action === "trigger_re_review") return triggerReReview();
     if (action === "apply_change") return applyReReview();
+
+    if (action === "cancel_event") {
+      await router.push({
+        name: "event-detail",
+        params: { id: detail.value.event.id },
+      });
+    }
   }
 
   async function triggerReReview() {

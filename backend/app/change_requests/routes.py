@@ -22,6 +22,7 @@ from app.models.event import Event
 from app.models.user import User
 from app.extensions import db
 from app.venues.services import catalogue as venue_catalogue
+from app.events.services.status import ensure_not_cancelled
 
 change_requests_bp = Blueprint("change_requests", __name__)
 # What an organiser may see of a venue: enough to choose one, nothing internal
@@ -61,6 +62,7 @@ def submit(event_id):
     event = _own_event(event_id, user)
     if not event:
         return jsonify({"error": "Event not found"}), 404
+    ensure_not_cancelled(event)
     data = request.get_json() or {}
     try:
         created = submit_change_request(event, user.id, data.get("changes"), data.get("reason"))
@@ -77,6 +79,7 @@ def request_event_withdrawal(event_id):
     event = _own_event(event_id, user)
     if not event:
         return jsonify({"error": "Event not found"}), 404
+    ensure_not_cancelled(event)
     data = request.get_json() or {}
     try:
         created = request_withdrawal(event, user.id, data.get("reason"))

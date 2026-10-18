@@ -39,9 +39,17 @@
           v-if="isAssignedCoordinator && !showEditForm && ['under_review', 'approved', 'planning'].includes(event.status)"
           class="btn btn-grey btn-small" @click="openEditForm">Edit
         </button>
-        <button v-if="isAssignedCoordinator && ['approved', 'planning'].includes(event.status)"
-          class="btn btn-rose btn-small" @click="cancelEvent">Cancel Event
-        </button>
+        <button
+        v-if="
+          isAssignedCoordinator &&
+          ['submitted', 'under_review', 'approved', 'planning', 'confirmed']
+            .includes(event.status)
+        "
+        class="btn btn-rose btn-small"
+        @click="openCancelForm"
+      >
+        Cancel Event
+      </button>
       </div>
       <div v-if="event.reviewDecision?.outcome" class="notice" :class="event.reviewDecision.outcome">
         <strong>
@@ -53,6 +61,12 @@
         </p>
         <p v-if="event.reviewDecision.reason" class="decision-reason">
           <strong>Reason:</strong> {{ event.reviewDecision.reason }}
+        </p>
+      </div>
+      <div v-if="event.status === 'cancelled'" class="notice error">
+        <strong>This event was cancelled.</strong>
+        <p v-if="cancellationReason" class="decision-reason">
+          <strong>Reason:</strong> {{ cancellationReason }}
         </p>
       </div>
       <div
@@ -306,6 +320,43 @@
           </div>
         </template>
       </div>
+
+      <div
+        v-if="isAssignedCoordinator && showCancelForm"
+          class="action-block"
+        >
+          <h3 class="block-title">Cancel Event</h3>
+
+          <label class="field-row">
+            Reason for cancelling
+            <textarea
+              v-model="cancelReason"
+              placeholder="Explain why this event is being cancelled"
+            ></textarea>
+          </label>
+
+          <p v-if="cancelErrors.reason" class="field-error">
+            {{ cancelErrors.reason }}
+          </p>
+
+          <div class="actions">
+            <button
+              class="btn btn-rose"
+              :disabled="cancelling || !cancelReason.trim()"
+              @click="cancelEvent"
+            >
+              Confirm cancellation
+            </button>
+
+            <button
+              class="btn btn-grey"
+              :disabled="cancelling"
+              @click="closeCancelForm"
+            >
+              Close
+            </button>
+          </div>
+        </div>
 
       <div v-if="event.status === 'confirmed'" class="action-block">
         <textarea v-model="comment" placeholder="Reason for reverting to planning"></textarea>
@@ -671,6 +722,33 @@ const safetyErrors = ref([]);
 const safetyReason = ref("");
 const safetySubmitting = ref(false);
 const { confirm } = useConfirm();
+
+const showCancelForm = ref(false);
+const cancelReason = ref("");
+const cancelErrors = ref({});
+const cancelling = ref(false);
+
+const cancellationReason = computed(() => {
+  const history = event.value?.statusHistory || [];
+
+  const latest = [...history]
+    .filter((row) => row.newStatus === "cancelled")
+    .sort((a, b) => new Date(b.changedAt) - new Date(a.changedAt))[0];
+
+  return latest?.reason || "";
+});
+
+function openCancelForm() {
+  cancelReason.value = "";
+  cancelErrors.value = {};
+  showCancelForm.value = true;
+}
+
+function closeCancelForm() {
+  showCancelForm.value = false;
+  cancelReason.value = "";
+  cancelErrors.value = {};
+}
 
 const safetyFactors = [
   { key: "expected_attendance", label: "Expected attendance" },
@@ -1283,17 +1361,48 @@ async function reject() {
 }
 
 async function cancelEvent() {
-  actionError.value = "";
+  console.log("CANCEL EVENT CLICKED", {
+    eventId: event.value?.id,
+    reason: cancelReason.value,
+  });
+  cancelErrors.value = {};
+  cancelling.value = true;
+
   try {
-    const data = await requestActionWithConfirmation((confirmed) =>
-      eventsApi.cancelEvent(event.value.id, comment.value, confirmed)
-    );
-    if (data) {
-      comment.value = "";
-      await load();
+    try {
+      await eventsApi.cancelEvent(event.value.id, cancelReason.value);
+    } catch (e) {
+      if (
+        e.response?.status === 409 &&
+        e.response.data?.requiresConfirmation
+      ) {
+        const ok = await confirm(e.response.data.message);
+        if (!ok) return;
+
+        await eventsApi.cancelEvent(
+          event.value.id,
+          cancelReason.value,
+          true
+        );
+      } else {
+        throw e;
+      }
     }
+
+    closeCancelForm();
+    await load();
   } catch (e) {
-    actionError.value = e.response?.data?.error || "Could not cancel this event.";
+    const data = e.response?.data;
+
+    cancelErrors.value = {
+      reason:
+        data?.errors?.reason ||
+        data?.errors?.event ||
+        data?.error ||
+        "Could not cancel this event.",
+    };
+  } finally {
+    cancelling.value = false;
   }
 }
 

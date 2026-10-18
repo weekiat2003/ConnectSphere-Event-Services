@@ -211,11 +211,13 @@ def get_event(event_id):
 @events_bp.put("/<int:event_id>/update")
 @roles_required("event_coordinator")
 def update_event_route(event_id):
+    status_service.ensure_not_cancelled(event)
     """US-1 core-field edit + US-4 confirmed-event lock."""
     user = _current_user()
     event = Event.query.get(event_id)
     if not event:
         return jsonify({"error": "Event not found"}), 404
+    status_service.ensure_not_cancelled(event)
 
     data = request.get_json() or {}
     changes = data.get("fields", {})
@@ -376,6 +378,7 @@ def request_clarification(event_id):
 @events_bp.post("/<int:event_id>/clarification/response")
 @roles_required("event_organiser")
 def respond_clarification(event_id):
+    status_service.ensure_not_cancelled(event)
     user = _current_user()
     event = Event.query.get(event_id)
     if not event:
@@ -393,6 +396,7 @@ def respond_clarification(event_id):
         event = review.respond_to_clarification(event, user.id, review_id, data)
     except (ValueError, PermissionError) as e:
         return jsonify({"error": str(e)}), 400
+    status_service.ensure_not_cancelled(event)
 
     payload = event.to_dict()
     payload["clarificationThread"] = review.get_clarification_thread(event)
@@ -594,26 +598,45 @@ def change_event_status(event_id):
 @events_bp.post("/<int:event_id>/cancel")
 @roles_required("event_coordinator")
 def cancel_event_route(event_id):
-    """Dedicated cancel endpoint, mirroring approve/reject: requires
-    confirmation and a descriptive reason, same rules as rejection."""
+    """Cancel an event. The reason is validated before confirmation; nothing
+    is written until the Coordinator confirms."""
     user = _current_user()
     event = Event.query.get(event_id)
+
     if not event:
         return jsonify({"error": "Event not found"}), 404
+
     if event.coordinator_id != user.id:
-        return jsonify({"error": "Only the assigned Coordinator can cancel this event"}), 403
+        return jsonify({
+            "error": "Only the assigned Coordinator can cancel this event"
+        }), 403
 
     data = request.get_json() or {}
+    reason = data.get("reason")
+
+    try:
+        status_service.cancel_event(event, user.id, reason, dry_run=True)
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except (ValueError, status_service.InvalidTransitionError) as e:
+        return jsonify({
+            "error": "This event could not be cancelled",
+            "errors": {"reason": str(e)},
+        }), 400
+
     confirmation = _require_confirmation(event, data, "cancel")
     if confirmation:
         return confirmation
 
-    reason = data.get("reason")
     try:
-        validate_descriptive_text(reason, "cancellation reason")
-        event = status_service.change_status(event, "cancelled", user.id, reason)
+        event = status_service.cancel_event(event, user.id, reason)
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
     except (ValueError, status_service.InvalidTransitionError) as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({
+            "error": "This event could not be cancelled",
+            "errors": {"reason": str(e)},
+        }), 400
 
     return jsonify(event.to_dict()), 200
 

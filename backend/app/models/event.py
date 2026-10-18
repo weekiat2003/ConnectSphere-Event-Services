@@ -38,6 +38,7 @@ class Event(db.Model):
 
     registration_required = db.Column(db.Boolean, default=False)
     intended_capacity = db.Column(db.Integer)
+    registration_closed_at = db.Column(db.DateTime, nullable=True)
 
     clarification_flag = db.Column(db.Boolean, default=False)
     clarification_comments = db.Column(db.Text)
@@ -123,6 +124,11 @@ class Event(db.Model):
             "venueBookings": [booking.to_dict() for booking in self.venue_bookings],
             "registrationRequired": self.registration_required,
             "intendedCapacity": self.intended_capacity,
+            "registrationClosedAt": (
+                self.registration_closed_at.isoformat()
+                if self.registration_closed_at
+                else None
+            ),
             "clarificationFlag": self.clarification_flag,
             "clarificationComments": self.clarification_comments,
             "reviewDecision": {
@@ -133,6 +139,7 @@ class Event(db.Model):
                 "coordinatorName": self.review_coordinator.name if self.review_coordinator else None,
             },
             "safetyReviews": [review.to_dict() for review in self.safety_reviews],
+            "statusHistory": [row.to_dict() for row in self.status_history],
             "resubmittedFromEventId": self.resubmitted_from_event_id,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
@@ -229,6 +236,17 @@ class EventStatusHistory(db.Model):
     changed_by = db.Column(db.BigInteger, db.ForeignKey("users.id"))
     reason = db.Column(db.Text)
     changed_at = db.Column(db.DateTime, default=utcnow())
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "eventId": self.event_id,
+            "oldStatus": self.old_status,
+            "newStatus": self.new_status,
+            "changedBy": self.changed_by,
+            "reason": self.reason,
+            "changedAt": self.changed_at.isoformat() if self.changed_at else None,
+        }
 
 
 class EventSafetyReview(db.Model):
