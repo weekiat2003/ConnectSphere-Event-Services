@@ -4,7 +4,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
 from app.auth.decorators import roles_required
-from app.equipment.services import availability, catalogue, reservation
+from app.equipment.services import availability, catalogue, preparation, reservation
 from app.models.equipment import EquipmentReservation
 from app.models.event import Event, EventEquipmentRequirement
 from app.models.user import User
@@ -125,4 +125,21 @@ def release_equipment(reservation_id):
         result = reservation.release(record)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    return jsonify(result.to_dict()), 200
+
+
+@equipment_bp.put("/requirements/<int:requirement_id>/preparation")
+@roles_required("technical_support_staff")
+def update_requirement_preparation(requirement_id):
+    requirement = EventEquipmentRequirement.query.get(requirement_id)
+    if not requirement:
+        return jsonify({"error": "Equipment requirement not found"}), 404
+    try:
+        result = preparation.update_equipment_preparation(
+            requirement, _current_user(), request.get_json() or {}
+        )
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 403
+    except preparation.EquipmentPreparationError as exc:
+        return jsonify({"error": str(exc)}), 400
     return jsonify(result.to_dict()), 200
