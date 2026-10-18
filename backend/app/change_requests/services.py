@@ -4,13 +4,16 @@ from datetime import date, time
 from app.common.time import utcnow
 from app.common.text_validation import validate_descriptive_text
 from app.extensions import db
-from app.models.change_request import ChangeRequest, EventChangeHistory
-from app.models.event import Event
+from app.models.change_request import ChangeRequest, EventChangeHistory, ArrangementFlag
+from app.models.event import Event, EventEquipmentRequirement, EventStatusHistory
 from app.models.venue import BOOKING_APPROVED, ACTIVE_BOOKING_STATUSES, Venue, VenueBooking
 from app.models.user import User
 
+REVIEWABLE_STATUSES = ("pending", "re_review")
+RECONSIDERATION_REASON = "Needs reconsideration"
 CHANGEABLE_STATUSES = ("approved", "planning", "confirmed")
 STATUS_MESSAGE = "Changes can only be requested for an event that is approved, planning or confirmed"
+DECIDED_STATUSES = ("processed", "rejected", "cannot_accommodate")
 
 # Changing these can affect arrangements already made, so the request is
 # marked significant. Everything else the organiser may change is routine.
@@ -312,12 +315,13 @@ def _summary(change_request: ChangeRequest, event: Event) -> dict:
 
 
 def list_review_queue(coordinator_id: int):
-    """Pending requests on events this Coordinator is currently assigned to,
-    oldest first. Uses the event's current Coordinator, so reassignment is respected."""
     pairs = (
         db.session.query(ChangeRequest, Event)
         .join(Event, ChangeRequest.event_id == Event.id)
-        .filter(Event.coordinator_id == coordinator_id, ChangeRequest.status == "pending")
+        .filter(
+            Event.coordinator_id == coordinator_id,
+            ChangeRequest.status.in_(REVIEWABLE_STATUSES),
+        )
         .order_by(ChangeRequest.created_at.asc(), ChangeRequest.id.asc())
         .all()
     )
@@ -342,23 +346,39 @@ def _affected_arrangements(event: Event) -> list:
 
 
 def _available_actions(change_request: ChangeRequest) -> list:
-    if change_request.status != "pending":
-        return []
-    if change_request.request_type == "withdrawal":
-        return ["cancel_event", "cannot_accommodate"]
-    if change_request.is_significant:
-        return ["trigger_re_review", "cannot_accommodate"]
-    return ["process_change", "cannot_accommodate"]
+    if change_request.status == "pending":
+        if change_request.request_type == "withdrawal":
+            return ["cancel_event", "cannot_accommodate"]
+
+        if change_request.is_significant:
+            return ["trigger_re_review", "cannot_accommodate"]
+
+        return ["process_change", "cannot_accommodate"]
+
+    if change_request.status == "re_review":
+        return ["apply_change"]
+
+    return []
 
 
 def _decision(change_request: ChangeRequest):
-    if change_request.status == "pending":
+    if change_request.status not in DECIDED_STATUSES:
         return None
-    decider = db.session.get(User, change_request.coordinator_id) if change_request.coordinator_id else None
+
+    decider = (
+        db.session.get(User, change_request.coordinator_id)
+        if change_request.coordinator_id
+        else None
+    )
+
     return {
         "status": change_request.status,
         "decidedBy": decider.name if decider else None,
-        "decidedAt": change_request.decided_at.isoformat() if change_request.decided_at else None,
+        "decidedAt": (
+            change_request.decided_at.isoformat()
+            if change_request.decided_at
+            else None
+        ),
         "reason": change_request.decision_reason,
     }
 
@@ -388,6 +408,7 @@ def get_review_detail(request_id: int, coordinator_id: int) -> dict:
         "affectedArrangements": _affected_arrangements(event) if shows_arrangements else [],
         "availableActions": _available_actions(change_request),
         "decision": _decision(change_request),
+        "reReview": _re_review_record(change_request, event),
     }
 
 # ---------------------------------------------------------------------
@@ -467,5 +488,335 @@ def process_routine_change(request_id: int, coordinator_id: int, dry_run: bool =
     change_request.status = "processed"
     change_request.coordinator_id = coordinator_id
     change_request.decided_at = utcnow()
+    db.session.commit()
+    return change_request
+
+def _python_value(field: str, value):
+    """Change-request JSON stores dates/times as ISO strings, but the Event
+    model columns need Python date/time objects."""
+    if field == "proposed_date" and isinstance(value, str):
+        return date.fromisoformat(value)
+
+    if field == "proposed_time" and isinstance(value, str):
+        return time.fromisoformat(value)
+
+    return value
+
+# ---------------------------------------------------------------------
+# Coordinator processes a significant change
+# ---------------------------------------------------------------------
+
+REVIEWABLE_STATUSES = ("pending", "re_review")
+RECONSIDERATION_REASON = "Needs reconsideration"
+
+
+def _get_locked_request(request_id: int) -> ChangeRequest:
+    change_request = (
+        db.session.query(ChangeRequest)
+        .filter_by(id=request_id)
+        .with_for_update()
+        .first()
+    )
+    if change_request is None:
+        raise LookupError("Change request not found")
+    return change_request
+
+
+def _assert_assigned_coordinator(change_request: ChangeRequest, coordinator_id: int) -> Event:
+    event = db.session.get(Event, change_request.event_id)
+    if event is None or event.coordinator_id != coordinator_id:
+        raise PermissionError(
+            "Only the Coordinator assigned to this event can review its change requests"
+        )
+    return event
+
+
+def _live_arrangements(event: Event) -> list[dict]:
+    """Arrangements that still need attention: pending, approved and held
+    venue bookings, plus the event's equipment requirement lines."""
+    bookings = (
+        VenueBooking.query.filter(
+            VenueBooking.event_id == event.id,
+            VenueBooking.status.in_(ACTIVE_BOOKING_STATUSES),
+        )
+        .order_by(VenueBooking.start_datetime.asc())
+        .all()
+    )
+
+    arrangements = [
+        {"kind": "venue_booking", "target_id": booking.id, "booking": booking}
+        for booking in bookings
+    ]
+    arrangements += [
+        {"kind": "equipment", "target_id": requirement.id, "requirement": requirement}
+        for requirement in event.equipment_requirements
+    ]
+    return arrangements
+
+
+def _create_reconsideration_flags(
+    change_request: ChangeRequest, event: Event
+) -> list[ArrangementFlag]:
+    flags = []
+    for arrangement in _live_arrangements(event):
+        flag = ArrangementFlag(
+            event_id=event.id,
+            change_request_id=change_request.id,
+            kind=arrangement["kind"],
+            target_id=arrangement["target_id"],
+            reason=RECONSIDERATION_REASON,
+        )
+        db.session.add(flag)
+        flags.append(flag)
+    return flags
+
+def trigger_re_review(
+    request_id: int, coordinator_id: int, dry_run: bool = False
+) -> ChangeRequest:
+    """Send a pending significant change for re-review.
+
+    The proposed change is not applied. Live arrangements are flagged as
+    needing reconsideration, but no booking, hold or equipment arrangement is
+    cancelled, released or otherwise changed.
+    """
+    change_request = _get_locked_request(request_id)
+    event = _assert_assigned_coordinator(change_request, coordinator_id)
+
+    if change_request.request_type == "withdrawal":
+        raise ChangeRequestError(
+            {"request": "A withdrawal request cannot be sent for re-review"}
+        )
+
+    if not change_request.is_significant:
+        raise ChangeRequestError(
+            {"request": "Only a significant change can be sent for re-review"}
+        )
+
+    if change_request.status != "pending":
+        raise ChangeRequestError(
+            {"request": "This change request has already been decided or sent for re-review"}
+        )
+
+    if event.status not in CHANGEABLE_STATUSES:
+        raise ChangeRequestError({"event": STATUS_MESSAGE})
+
+    if dry_run:
+        return change_request
+
+    change_request.status = "re_review"
+    change_request.re_review_by = coordinator_id
+    change_request.re_review_at = utcnow()
+
+    # Still unresolved: these remain unset until the coordinator records the
+    # final outcome.
+    change_request.coordinator_id = None
+    change_request.decided_at = None
+    change_request.decision_reason = None
+
+    _create_reconsideration_flags(change_request, event)
+
+    if event.status == "confirmed":
+        old_status = event.status
+        event.status = "planning"
+        db.session.add(
+            EventStatusHistory(
+                event_id=event.id,
+                old_status=old_status,
+                new_status=event.status,
+                changed_by=coordinator_id,
+                reason="Significant change sent for re-review",
+            )
+        )
+
+    db.session.commit()
+    return change_request
+
+def _re_review_record(change_request: ChangeRequest, event: Event) -> dict | None:
+    if change_request.re_review_at is None:
+        return None
+
+    triggerer = (
+        db.session.get(User, change_request.re_review_by)
+        if change_request.re_review_by
+        else None
+    )
+
+    flags = {
+        (flag.kind, flag.target_id): flag
+        for flag in ArrangementFlag.query.filter_by(
+            change_request_id=change_request.id
+        ).all()
+    }
+
+    flagged = []
+    for arrangement in _live_arrangements(event):
+        flag = flags.get((arrangement["kind"], arrangement["target_id"]))
+        needs_reconsideration = bool(flag and flag.cleared_at is None)
+
+        if arrangement["kind"] == "venue_booking":
+            booking = arrangement["booking"]
+            flagged.append({
+                "kind": "venue_booking",
+                "venueId": booking.venue_id,
+                "status": booking.status,
+                "needsReconsideration": needs_reconsideration,
+            })
+        else:
+            requirement = arrangement["requirement"]
+            flagged.append({
+                "kind": "equipment",
+                "type": requirement.equipment_type,
+                "quantity": requirement.quantity,
+                "status": requirement.status,
+                "needsReconsideration": needs_reconsideration,
+            })
+
+    return {
+        "triggeredBy": triggerer.name if triggerer else None,
+        "triggeredAt": (
+            change_request.re_review_at.isoformat()
+            if change_request.re_review_at
+            else None
+        ),
+        "flaggedArrangements": flagged,
+    }
+
+def _replace_equipment_requirements(event: Event, items: list[dict]) -> None:
+    event.equipment_requirements.clear()
+    for item in items:
+        event.equipment_requirements.append(
+            EventEquipmentRequirement(
+                equipment_type=str(item["type"]).strip(),
+                quantity=item["quantity"],
+                technical_notes=item.get("technicalNotes"),
+                status="requested",
+            )
+        )
+
+
+def _apply_cleaned_change(
+    event: Event,
+    change_request: ChangeRequest,
+    field: str,
+    current,
+    proposed,
+    coordinator_id: int,
+) -> None:
+    db.session.add(
+        EventChangeHistory(
+            event_id=event.id,
+            change_request_id=change_request.id,
+            field=field,
+            old_value=current,
+            new_value=proposed,
+            changed_by=coordinator_id,
+        )
+    )
+
+    if field == "equipment_requirements":
+        _replace_equipment_requirements(event, proposed)
+        return
+
+    if field == "venue_id":
+        # The event's displayed current venue comes from its approved booking.
+        # A venue change is a coordinator/staff decision recorded here; it does
+        # not move, cancel or release an existing booking.
+        return
+
+    setattr(event, field, proposed)
+
+
+def _replace_equipment_requirements(event: Event, items: list[dict]) -> None:
+    event.equipment_requirements.clear()
+
+    for item in items:
+        event.equipment_requirements.append(
+            EventEquipmentRequirement(
+                equipment_type=str(item["type"]).strip(),
+                quantity=item["quantity"],
+                technical_notes=item.get("technicalNotes"),
+                status="requested",
+            )
+        )
+
+
+def _planned_updates(
+    event: Event, requested: dict
+) -> list[tuple[str, object, object]]:
+    """Validate and read every current value before changing anything."""
+    cleaned, errors = _revalidate(requested)
+    if errors:
+        raise ChangeRequestError(errors)
+
+    planned = []
+    with db.session.no_autoflush:
+        for field, proposed in cleaned.items():
+            current = _current_value(event, field)
+            if not _same(field, current, proposed):
+                planned.append((field, current, proposed))
+
+    return planned
+
+
+def apply_re_reviewed_change(
+    request_id: int, coordinator_id: int, dry_run: bool = False
+) -> ChangeRequest:
+    """Record that a significant change under re-review is going ahead."""
+    change_request = _get_locked_request(request_id)
+    event = _assert_assigned_coordinator(change_request, coordinator_id)
+
+    if change_request.status != "re_review":
+        raise ChangeRequestError(
+            {"request": "Only a request under re-review can be marked as going ahead"}
+        )
+
+    if event.status not in CHANGEABLE_STATUSES:
+        raise ChangeRequestError({"event": PROCESS_STATUS_MESSAGE})
+
+    planned = _planned_updates(
+        event, change_request.requested_changes or {}
+    )
+
+    if dry_run:
+        return change_request
+
+    for field, current, proposed in planned:
+        db.session.add(
+            EventChangeHistory(
+                event_id=event.id,
+                change_request_id=change_request.id,
+                field=field,
+                old_value=current,
+                new_value=proposed,
+                changed_by=coordinator_id,
+            )
+        )
+
+        if field == "equipment_requirements":
+            _replace_equipment_requirements(event, proposed)
+        elif field == "venue_id":
+            # The current venue is derived from the approved booking.
+            # Record the coordinator's decision without changing bookings.
+            continue
+        else:
+            setattr(event, field, _python_value(field, proposed))
+
+    # Make the event/history writes explicit before the flag update queries
+    # ArrangementFlag. This avoids an unexpected query-invoked autoflush.
+    db.session.flush()
+
+    now = utcnow()
+
+    ArrangementFlag.query.filter_by(
+        change_request_id=change_request.id
+    ).update(
+        {"cleared_at": now},
+        synchronize_session=False,
+    )
+
+    change_request.status = "processed"
+    change_request.coordinator_id = coordinator_id
+    change_request.decided_at = now
+
     db.session.commit()
     return change_request

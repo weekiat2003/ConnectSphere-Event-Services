@@ -35,9 +35,9 @@ connectsphere/
    mysql -u connectsphere_user -p connectsphere < database/schema.sql
    ```
 
-   This creates all tables and seeds the five fixed roles (`event_organiser`,
+   This creates all tables and seeds the six fixed roles (`event_organiser`,
    `event_coordinator`, `venue_staff`, `technical_support_staff`,
-   `attendee`).
+   `safety_officer`, `attendee`).
 
 ## 2. Backend setup (Flask API)
 
@@ -62,7 +62,8 @@ python scripts/seed_users.py
 
 This creates one user per role (`organiser@example.com`,
 `coordinator1@example.com`, `coordinator2@example.com`, `venue@example.com`,
-`techsupport@example.com`, `attendee@example.com`), all with the password
+`techsupport@example.com`, `safety@example.com`, `attendee@example.com`), all
+with the password
 `Password123!`.
 
 The seed script also creates a varied venue catalogue for search testing, with
