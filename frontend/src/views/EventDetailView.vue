@@ -55,11 +55,8 @@
           <strong>Reason:</strong> {{ event.reviewDecision.reason }}
         </p>
       </div>
-      <div
-        v-if="latestSafetyReview"
-        class="notice"
-        :class="latestSafetyReview.decision === 'approved' ? 'approved' : 'rejected'"
-      >
+      <div v-if="latestSafetyReview" class="notice"
+        :class="latestSafetyReview.decision === 'approved' ? 'approved' : 'rejected'">
         <strong>{{ safetyDecisionHeading(latestSafetyReview.decision) }}</strong>
         <p class="decision-meta">
           By {{ latestSafetyReview.safetyOfficerName || `Safety Officer #${latestSafetyReview.safetyOfficerId}` }}
@@ -222,90 +219,85 @@
         <p v-if="actionError" class="field-error">{{ actionError }}</p>
       </div>
 
-      <div v-if="['under_review', 'approved', 'planning'].includes(event.status)" class="action-block">
-        <div class="section-heading">
-          <h3 class="block-title">Edit Event Information</h3>
-          <button v-if="!showEditForm" class="btn btn-grey btn-small" @click="openEditForm">Edit</button>
+      <div v-if="showEditForm && ['under_review', 'approved', 'planning'].includes(event.status)" class="action-block">
+        <h3 class="block-title">Edit Event Information</h3>
+        <div class="edit-event-form">
+          <div v-for="field in EVENT_EDIT_FIELD_OPTIONS" :key="field.key" class="edit-field"
+            :class="{ 'edit-field-wide': field.type === 'textarea' || field.type === 'checkbox', 'edit-field-inline': field.type === 'checkbox' }">
+            <template v-if="field.type === 'checkbox'">
+              <label :for="`edit-${field.key}`" class="inline-checkbox-label">
+                <input :id="`edit-${field.key}`" type="checkbox" v-model="editForm[field.key]" />
+                {{ field.label }}
+              </label>
+            </template>
+            <template v-else>
+              <label :for="`edit-${field.key}`">{{ field.label }}</label>
+              <textarea v-if="field.type === 'textarea'" :id="`edit-${field.key}`" v-model="editForm[field.key]"
+                rows="3"></textarea>
+              <input v-else-if="field.type === 'number'" :id="`edit-${field.key}`" type="number" min="1"
+                v-model.number="editForm[field.key]" />
+              <input v-else :id="`edit-${field.key}`" :type="field.type" v-model="editForm[field.key]" />
+            </template>
+            <p v-if="editErrors[field.key]" class="field-error">{{ editErrors[field.key] }}</p>
+          </div>
         </div>
 
-        <template v-if="showEditForm">
-          <div class="edit-event-form">
-            <div v-for="field in EVENT_EDIT_FIELD_OPTIONS" :key="field.key" class="edit-field"
-              :class="{ 'edit-field-wide': field.type === 'textarea', 'edit-field-inline': field.type === 'checkbox' }">
-              <template v-if="field.type === 'checkbox'">
-                <label :for="`edit-${field.key}`" class="inline-checkbox-label">
-                  <input :id="`edit-${field.key}`" type="checkbox" v-model="editForm[field.key]" />
-                  {{ field.label }}
-                </label>
-              </template>
-              <template v-else>
-                <label :for="`edit-${field.key}`">{{ field.label }}</label>
-                <textarea v-if="field.type === 'textarea'" :id="`edit-${field.key}`" v-model="editForm[field.key]"
-                  rows="3"></textarea>
-                <input v-else-if="field.type === 'number'" :id="`edit-${field.key}`" type="number" min="1"
-                  v-model.number="editForm[field.key]" />
-                <input v-else :id="`edit-${field.key}`" :type="field.type" v-model="editForm[field.key]" />
-              </template>
-              <p v-if="editErrors[field.key]" class="field-error">{{ editErrors[field.key] }}</p>
-            </div>
-          </div>
-
-          <div class="edit-field edit-field-wide">
-            <label>Required facilities</label>
-            <div v-for="(facility, index) in editForm.required_facilities" :key="index" class="facility-row">
-              <input type="text" v-model="editForm.required_facilities[index]" placeholder="e.g. Projector" />
-              <button type="button" class="btn btn-grey btn-small"
-                @click="editForm.required_facilities.splice(index, 1)">Remove</button>
-            </div>
-            <button type="button" class="btn btn-grey btn-small" @click="editForm.required_facilities.push('')">+ Add
-              facility</button>
-            <p v-if="editErrors.required_facilities" class="field-error">{{ editErrors.required_facilities }}</p>
-          </div>
-
-          <div class="edit-field edit-field-wide">
-            <label>Equipment requirements</label>
-            <div v-for="(item, index) in editForm.equipment_requirements" :key="item.id ?? `new-${index}`"
-              class="equipment-row">
-              <input type="text" v-model="item.type" placeholder="Equipment type" />
-              <input type="number" min="1" v-model.number="item.quantity" placeholder="Qty" />
-              <input type="text" v-model="item.technicalNotes" placeholder="Technical notes (optional)" />
-              <button type="button" class="btn btn-grey btn-small"
-                @click="editForm.equipment_requirements.splice(index, 1)">Remove</button>
-              <p v-if="editErrors[`equipment_requirements[${index}].type`]" class="field-error">{{
-                editErrors[`equipment_requirements[${index}].type`] }}</p>
-              <p v-if="editErrors[`equipment_requirements[${index}].quantity`]" class="field-error">{{
-                editErrors[`equipment_requirements[${index}].quantity`] }}</p>
-            </div>
+        <div class="edit-field edit-field-wide">
+          <label>Required facilities</label>
+          <div v-for="(facility, index) in editForm.required_facilities" :key="index" class="facility-row">
+            <input type="text" v-model="editForm.required_facilities[index]" placeholder="e.g. Projector" />
             <button type="button" class="btn btn-grey btn-small"
-              @click="editForm.equipment_requirements.push({ id: null, type: '', quantity: 1, technicalNotes: '' })">+
-              Add
-              equipment requirement</button>
-            <p v-if="editErrors.equipment_requirements" class="field-error">{{ editErrors.equipment_requirements }}</p>
+              @click="editForm.required_facilities.splice(index, 1)">Remove</button>
           </div>
+          <button type="button" class="btn btn-grey btn-small" @click="editForm.required_facilities.push('')">+ Add
+            facility</button>
+          <p v-if="editErrors.required_facilities" class="field-error">{{ editErrors.required_facilities }}</p>
+        </div>
 
-
-          <div v-if="editTouchesSignificantField" class="offline-review-callout">
-            <label class="checkbox-option">
-              <input type="checkbox" v-model="offlineReviewConfirmed" />
-              I confirm the offline review for this change has been done
-            </label>
-            <p class="offline-review-hint">
-              You're changing a field that may affect existing venue or equipment arrangements
-              (date, time, attendance, capacity, layout, or accessibility needs). Confirm you've
-              coordinated this outside the system before saving.
-            </p>
+        <div class="edit-field edit-field-wide">
+          <label>Equipment requirements</label>
+          <div v-for="(item, index) in editForm.equipment_requirements" :key="item.id ?? `new-${index}`"
+            class="equipment-row">
+            <input type="text" v-model="item.type" placeholder="Equipment type" />
+            <input type="number" min="1" v-model.number="item.quantity" placeholder="Qty" />
+            <input type="text" v-model="item.technicalNotes" placeholder="Technical notes (optional)" />
+            <button type="button" class="btn btn-grey btn-small"
+              @click="editForm.equipment_requirements.splice(index, 1)">Remove</button>
+            <p v-if="editErrors[`equipment_requirements[${index}].type`]" class="field-error">{{
+              editErrors[`equipment_requirements[${index}].type`] }}</p>
+            <p v-if="editErrors[`equipment_requirements[${index}].quantity`]" class="field-error">{{
+              editErrors[`equipment_requirements[${index}].quantity`] }}</p>
           </div>
+          <button type="button" class="btn btn-grey btn-small"
+            @click="editForm.equipment_requirements.push({ id: null, type: '', quantity: 1, technicalNotes: '' })">+ Add
+            equipment requirement</button>
+          <p v-if="editErrors.equipment_requirements" class="field-error">{{ editErrors.equipment_requirements }}</p>
+        </div>
 
-          <p v-if="editErrors.event" class="field-error">{{ editErrors.event }}</p>
+        <div v-if="editTouchesSignificantField" class="offline-review-callout">
+          <label class="checkbox-option">
+            <input type="checkbox" v-model="offlineReviewConfirmed" />
+            I confirm the offline review for this change has been done
+          </label>
+          <p class="offline-review-hint">
+            You're changing a field that may affect existing venue or equipment arrangements
+            (date, time, attendance, capacity, layout, or accessibility needs). Confirm you've
+            coordinated this outside the system before saving.
+          </p>
+        </div>
 
-          <div class="actions">
-            <button class="btn btn-primary" :disabled="editSubmitting" @click="submitEdit">
-              {{ editSubmitting ? "Saving..." : "Save Changes" }}
-            </button>
-            <button class="btn btn-grey" :disabled="editSubmitting" @click="showEditForm = false">Cancel</button>
-          </div>
-        </template>
+        <p v-if="editErrors.event" class="field-error">{{ editErrors.event }}</p>
+
+        <div class="actions">
+          <button class="btn btn-primary" :disabled="editSubmitting" @click="submitEdit">
+            {{ editSubmitting ? "Saving..." : "Save Changes" }}
+          </button>
+          <button class="btn btn-grey" :disabled="editSubmitting" @click="showEditForm = false">Cancel</button>
+        </div>
       </div>
+
+
+
 
       <div v-if="event.status === 'confirmed'" class="action-block">
         <textarea v-model="comment" placeholder="Reason for reverting to planning"></textarea>
@@ -346,9 +338,53 @@
     <section v-if="auth.hasRole('safety_officer') && event.status === 'safety_check'">
       <h3 class="section-title">Operational Safety Check</h3>
       <div class="action-block">
-        <p class="notice-inline">This event is awaiting your safety check.</p>
+        <fieldset class="safety-checklist">
+          <legend>
+            Factors assessed
+            <span class="checklist-count">({{ assessedSafetyFactors.length }} of {{ safetyFactors.length }})</span>
+          </legend>
+          <label v-for="factor in safetyFactors" :key="factor.key">
+            <input v-model="assessedSafetyFactors" type="checkbox" :value="factor.key"
+              @change="onAssessedChange(factor.key)">
+            {{ factor.label }}
+          </label>
+        </fieldset>
+        <fieldset class="safety-checklist">
+          <legend>Factors of concern</legend>
+          <label v-for="factor in safetyFactors" :key="factor.key">
+            <input v-model="concernSafetyFactors" type="checkbox" :value="factor.key"
+              @change="onConcernChange(factor.key)">
+            {{ factor.label }}
+          </label>
+        </fieldset>
+        <fieldset class="safety-checklist">
+          <legend>Affected arrangements</legend>
+          <label>
+            <input v-model="affectedSafetyArrangements" type="checkbox" value="venue">
+            Venue
+          </label>
+          <label>
+            <input v-model="affectedSafetyArrangements" type="checkbox" value="equipment">
+            Equipment
+          </label>
+        </fieldset>
+        <textarea v-model="safetyReason" placeholder="Reason (required for rejection or change requests)"></textarea>
+        <ul v-if="safetyErrors.length" class="field-error safety-errors">
+          <li v-for="message in safetyErrors" :key="message">{{ message }}</li>
+        </ul>
+        <p v-if="approveBlockedReason" class="notice-inline">{{ approveBlockedReason }}</p>
         <div class="actions">
-          <router-link class="btn btn-primary" :to="`/safety-reviews/${event.id}`">Open safety assessment</router-link>
+          <button class="btn btn-mint" :disabled="!!approveBlockedReason || safetySubmitting"
+            @click="submitSafetyDecision('approved')">
+            Approve safety
+          </button>
+          <button class="btn btn-rose" :disabled="safetySubmitting" @click="submitSafetyDecision('rejected')">
+            Reject arrangement
+          </button>
+          <button class="btn btn-butter" :disabled="safetySubmitting"
+            @click="submitSafetyDecision('changes_requested')">
+            Request changes
+          </button>
         </div>
       </div>
     </section>
@@ -998,12 +1034,12 @@ function openEditForm() {
     proposed_date: event.value.proposedDate,
     proposed_time: event.value.proposedTime,
     expected_attendance: event.value.expectedAttendance,
-    capacity_needed: event.value.capacityNeeded,
-    required_layout: event.value.requiredLayout,
-    accessibility_needs: event.value.accessibilityNeeds,
+    capacity_needed: event.value.venueRequirements?.capacityNeeded,
+    required_layout: event.value.venueRequirements?.requiredLayout,
+    accessibility_needs: event.value.venueRequirements?.accessibilityNeeds,
     registration_required: event.value.registrationRequired,
     intended_capacity: event.value.intendedCapacity,
-    required_facilities: [...(event.value.requiredFacilities || [])],
+    required_facilities: [...(event.value.venueRequirements?.requiredFacilities || [])],
     equipment_requirements: (event.value.equipmentRequirements || []).map((item) => ({
       id: item.id,
       type: item.equipmentType ?? item.type,
@@ -1013,7 +1049,7 @@ function openEditForm() {
   };
   Object.keys(editForm).forEach((key) => delete editForm[key]);
   Object.assign(editForm, source);
-  initialEditValues = JSON.parse(JSON.stringify(source)); // deep clone — critical now
+  initialEditValues = JSON.parse(JSON.stringify(source));
   editErrors.value = {};
   offlineReviewConfirmed.value = false;
   showEditForm.value = true;
@@ -1327,7 +1363,7 @@ onMounted(async () => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem 1.25rem;
   margin: 0.75rem 0 1rem;
-  align-items: start; 
+  align-items: start;
 }
 
 .edit-field {
@@ -1883,8 +1919,39 @@ textarea {
 }
 
 .badge.cannot_accommodate,
-.badge.significant { background: var(--rose-bg, #fbdcdc); }
-.badge.routine { background: var(--sky-bg, #d6ecff); }
+.badge.significant {
+  background: var(--rose-bg, #fbdcdc);
+}
+
+.badge.routine {
+  background: var(--sky-bg, #d6ecff);
+}
+
+/* Operational safety check */
+.safety-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+  margin: 0 0 0.85rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border, #e3e3e8);
+  border-radius: 10px;
+}
+
+.safety-checklist legend {
+  padding: 0 0.35rem;
+  font-weight: 600;
+}
+
+.checklist-count {
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+.safety-errors {
+  padding-left: 1.2rem;
+}
+
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
