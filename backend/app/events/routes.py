@@ -639,6 +639,8 @@ def review_event_safety(event_id):
         )
     except safety.SafetyReviewConflictError as e:
         return jsonify({"error": str(e)}), 409
+    except safety.SafetyReviewValidationError as e:
+        return jsonify({"error": str(e), "errors": e.errors}), 400
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
