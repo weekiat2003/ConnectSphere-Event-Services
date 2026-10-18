@@ -35,6 +35,9 @@ class Venue(db.Model):
 
     accessibility_info = db.Column(db.Text, nullable=True)
     operating_hours = db.Column(db.String(255), nullable=True)
+    # Free-text limits a Safety Officer must consider (e.g. "No open flames",
+    # "Max 2 stage platforms", "Fire exit on east side must stay clear").
+    known_restrictions = db.Column(db.Text, nullable=True)
     # Week 7 change #1: minutes the venue is occupied before / after an event
     setup_minutes = db.Column(db.Integer, nullable=False, default=0)
     turnaround_minutes = db.Column(db.Integer, nullable=False, default=0)
@@ -104,6 +107,7 @@ class Venue(db.Model):
             "facilities": list(self.facilities or []),
             "supportedLayouts": list(self.supported_layouts or []),
             "operatingHours": self.operating_hours,
+            "knownRestrictions": self.known_restrictions,
             "setupMinutes": self.setup_minutes,
             "turnaroundMinutes": self.turnaround_minutes,
             "isActive": self.is_active,
