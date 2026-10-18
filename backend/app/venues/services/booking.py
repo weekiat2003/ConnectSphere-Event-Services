@@ -27,7 +27,11 @@ from app.models.venue import (
     Venue,
     VenueBooking,
 )
-from app.venues.services.availability import compute_booking_window
+from app.venues.services.availability import (
+    compute_booking_window,
+    find_unavailability_overlap,
+    resolve_flags_for_booking,
+)
 
 
 def submit_booking_request(
@@ -180,6 +184,9 @@ def cancel_booking(
         if updated != 1:
             raise ValueError("This booking is no longer approved")
 
+        # The booking an availability flag pointed at is gone, so close its flags.
+        resolve_flags_for_booking(current.event_id, current.venue_id)
+
         event = db.session.get(Event, current.event_id)
         if event is not None:
             from app.events.services.status import (
@@ -258,6 +265,16 @@ def has_confirmed_conflict(
 
 
 
+def _refuse_if_venue_unavailable(venue: Venue, start, end) -> None:
+    """Week 7 change #2: Venue Staff may have marked the venue unavailable
+    (maintenance, renovation...). No booking or hold may overlap that period."""
+    blocked = find_unavailability_overlap(venue.id, start, end)
+    if blocked is not None:
+        period = f"{blocked.start_datetime.isoformat()} to {blocked.end_datetime.isoformat()}"
+        why = f" ({blocked.reason})" if blocked.reason else ""
+        raise ValueError(f"The venue is marked unavailable from {period}{why}")
+
+
 def approve_booking(booking: VenueBooking, decided_by: int) -> VenueBooking:
     """Approve under a venue-row lock to serialize approvals for this venue."""
     try:
@@ -298,6 +315,7 @@ def approve_booking(booking: VenueBooking, decided_by: int) -> VenueBooking:
             raise ValueError("This hold has expired")
 
         start, end = compute_booking_window(current, venue)
+        _refuse_if_venue_unavailable(venue, start, end)
         now = utcnow()
 
         # Check approved bookings and active tentative holds.
@@ -448,6 +466,7 @@ def manage_hold(booking_id, staff_id, action, expiry=None):
                 raise ValueError("Booking is not eligible for this hold action")
             if has_confirmed_conflict(venue.id, current, exclude_booking_id=current.id):
                 raise ValueError("Venue conflicts with an existing confirmed booking or active hold")
+            _refuse_if_venue_unavailable(venue, *compute_booking_window(current, venue))
             current.status = HELD
             current.hold_expires_at = expiry
             current.hold_warning_sent_at = None

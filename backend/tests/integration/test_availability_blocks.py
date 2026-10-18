@@ -9,7 +9,10 @@ from types import SimpleNamespace
 import pytest
 
 from app.extensions import db
-from app.models.venue import Venue, VenueUnavailability
+from datetime import datetime
+
+from app.models.event import Event
+from app.models.venue import Venue, VenueAvailabilityFlag, VenueBooking, VenueUnavailability
 from app.venues.services.suitability import check_suitability
 
 URL = "/api/venues"
@@ -283,3 +286,208 @@ class TestChangingOperatingHoursFlagsBookedEvents:
 
         assert resp.status_code == 200
         assert resp.get_json()["flagsRaised"] == []
+
+# ---------------------------------------------------------------------------
+# Week 7 change #2, part 2 (over HTTP)
+# ---------------------------------------------------------------------------
+@pytest.fixture()
+def owner(make_user, auth_header):
+    """Venue Staff who created the venue (only they may approve / cancel its bookings)."""
+    user_id = make_user("owner-staff@test.com", ["venue_staff"])
+    return {"id": user_id, "hdr": auth_header("owner-staff@test.com")}
+
+
+@pytest.fixture()
+def coordinators(make_user, auth_header):
+    mine = make_user("coord-mine@test.com", ["event_coordinator"])
+    make_user("coord-other@test.com", ["event_coordinator"])
+    return {
+        "id": mine,
+        "mine": auth_header("coord-mine@test.com"),
+        "other": auth_header("coord-other@test.com"),
+    }
+
+
+def _owned_venue(owner, name="Hall"):
+    venue = Venue(name=name, location="North Campus", capacity=100, created_by=owner["id"])
+    db.session.add(venue)
+    db.session.commit()
+    return venue
+
+
+def _booking_at(venue, coordinator_id, status="approved", day=5, start_hour=10, end_hour=12):
+    event = Event(
+        name="Annual Conference",
+        organiser_id=1,
+        coordinator_id=coordinator_id,
+        proposed_date=datetime(2026, 12, day).date(),
+        proposed_time=datetime(2026, 12, day, start_hour).time(),
+        expected_attendance=10,
+        status="planning",
+    )
+    db.session.add(event)
+    db.session.flush()
+    booking = VenueBooking(
+        event_id=event.id,
+        venue_id=venue.id,
+        requested_by=coordinator_id,
+        status=status,
+        start_datetime=datetime(2026, 12, day, start_hour),
+        end_datetime=datetime(2026, 12, day, end_hour),
+    )
+    db.session.add(booking)
+    db.session.commit()
+    return booking
+
+
+def _block_for(client, headers, venue_id, start="2026-12-05T09:00:00", end="2026-12-05T17:00:00", reason="Roof repairs"):
+    resp = client.post(f"{URL}/{venue_id}/unavailability", json={"start": start, "end": end, "reason": reason}, headers=headers)
+    assert resp.status_code == 201, resp.get_json()
+    return resp.get_json()
+
+
+class TestEditUnavailabilityRoute:
+    def test_staff_can_shorten_a_period(self, client, owner):
+        venue = _owned_venue(owner)
+        block_id = _block_for(client, owner["hdr"], venue.id)["unavailability"]["id"]
+
+        resp = client.put(f"{URL}/{venue.id}/unavailability/{block_id}", json={"end": "2026-12-05T12:00:00"}, headers=owner["hdr"])
+
+        assert resp.status_code == 200
+        assert resp.get_json()["unavailability"]["end"] == "2026-12-05T12:00:00"
+        calendar = client.get(f"{URL}/{venue.id}/calendar?start=2026-12-05T00:00:00&end=2026-12-06T00:00:00", headers=owner["hdr"]).get_json()
+        assert calendar["unavailability"][0]["end"] == "2026-12-05T12:00:00"
+
+    def test_extending_a_period_flags_newly_affected_events(self, client, owner, coordinators):
+        venue = _owned_venue(owner)
+        _booking_at(venue, coordinators["id"], start_hour=14, end_hour=16)
+        block_id = _block_for(client, owner["hdr"], venue.id, end="2026-12-05T12:00:00")["unavailability"]["id"]
+
+        resp = client.put(f"{URL}/{venue.id}/unavailability/{block_id}", json={"end": "2026-12-05T17:00:00"}, headers=owner["hdr"])
+
+        assert len(resp.get_json()["flagsRaised"]) == 1
+
+    @pytest.mark.parametrize(
+        "body",
+        [{"end": "2026-12-05T08:00:00"}, {"end": "not-a-date"}, {"start": "2026-12-06T00:00:00"}, {"reason": "x" * 300}],
+    )
+    def test_invalid_edits_return_400_and_change_nothing(self, client, owner, body):
+        venue = _owned_venue(owner)
+        block_id = _block_for(client, owner["hdr"], venue.id)["unavailability"]["id"]
+
+        resp = client.put(f"{URL}/{venue.id}/unavailability/{block_id}", json=body, headers=owner["hdr"])
+
+        assert resp.status_code == 400
+        assert VenueUnavailability.query.get(block_id).end_datetime == datetime(2026, 12, 5, 17)
+
+    def test_unknown_period_or_venue_returns_404(self, client, owner):
+        venue = _owned_venue(owner)
+
+        assert client.put(f"{URL}/{venue.id}/unavailability/9999", json={"end": "2026-12-05T12:00:00"}, headers=owner["hdr"]).status_code == 404
+        assert client.put(f"{URL}/9999/unavailability/1", json={"end": "2026-12-05T12:00:00"}, headers=owner["hdr"]).status_code == 404
+
+    def test_coordinator_cannot_edit_and_anonymous_is_unauthorised(self, client, owner, coordinators):
+        venue = _owned_venue(owner)
+        block_id = _block_for(client, owner["hdr"], venue.id)["unavailability"]["id"]
+        url = f"{URL}/{venue.id}/unavailability/{block_id}"
+
+        assert client.put(url, json={"end": "2026-12-05T12:00:00"}, headers=coordinators["mine"]).status_code == 403
+        assert client.put(url, json={"end": "2026-12-05T12:00:00"}).status_code == 401
+        assert VenueUnavailability.query.get(block_id).end_datetime == datetime(2026, 12, 5, 17)
+
+
+class TestApprovalBlockedByUnavailability:
+    def test_pending_request_in_a_blocked_period_is_refused_with_the_reason(self, client, owner, coordinators):
+        venue = _owned_venue(owner)
+        pending = _booking_at(venue, coordinators["id"], status="pending")
+        _block_for(client, owner["hdr"], venue.id)
+
+        resp = client.post(f"{URL}/bookings/{pending.id}/approve", headers=owner["hdr"])
+
+        assert resp.status_code == 409
+        assert "Roof repairs" in resp.get_json()["error"]
+        assert VenueBooking.query.get(pending.id).status == "pending"
+
+    def test_approval_works_again_once_the_period_is_removed(self, client, owner, coordinators):
+        venue = _owned_venue(owner)
+        pending = _booking_at(venue, coordinators["id"], status="pending")
+        block_id = _block_for(client, owner["hdr"], venue.id)["unavailability"]["id"]
+        client.delete(f"{URL}/{venue.id}/unavailability/{block_id}", headers=owner["hdr"])
+
+        assert client.post(f"{URL}/bookings/{pending.id}/approve", headers=owner["hdr"]).status_code == 200
+
+
+class TestFlagsForCoordinators:
+    def test_flag_tells_the_coordinator_what_to_do(self, client, owner, coordinators):
+        venue = _owned_venue(owner, "Main Hall")
+        booking = _booking_at(venue, coordinators["id"])
+        _block_for(client, owner["hdr"], venue.id)
+
+        flags = client.get(f"{URL}/flags/mine", headers=coordinators["mine"]).get_json()
+
+        assert len(flags) == 1
+        flag = flags[0]
+        assert (flag["eventName"], flag["venueName"], flag["reason"]) == ("Annual Conference", "Main Hall", "Roof repairs")
+        assert flag["bookingId"] == booking.id
+        assert flag["unavailablePeriods"][0]["start"] == "2026-12-05T09:00:00"
+        assert VenueBooking.query.get(booking.id).status == "approved"  # event not cancelled
+
+    def test_other_coordinators_do_not_see_it(self, client, owner, coordinators):
+        venue = _owned_venue(owner)
+        _booking_at(venue, coordinators["id"])
+        _block_for(client, owner["hdr"], venue.id)
+
+        assert client.get(f"{URL}/flags/mine", headers=coordinators["other"]).get_json() == []
+
+    def test_only_the_events_coordinator_can_resolve_its_flag(self, client, owner, coordinators):
+        venue = _owned_venue(owner)
+        _booking_at(venue, coordinators["id"])
+        _block_for(client, owner["hdr"], venue.id)
+        flag_id = VenueAvailabilityFlag.query.one().id
+
+        assert client.post(f"{URL}/flags/{flag_id}/resolve", headers=coordinators["other"]).status_code == 403
+        assert VenueAvailabilityFlag.query.get(flag_id).resolved is False
+        assert client.post(f"{URL}/flags/{flag_id}/resolve", headers=coordinators["mine"]).status_code == 200
+        assert client.get(f"{URL}/flags/mine", headers=coordinators["mine"]).get_json() == []
+
+    def test_unknown_flag_returns_404(self, client, coordinators):
+        assert client.post(f"{URL}/flags/9999/resolve", headers=coordinators["mine"]).status_code == 404
+
+
+class TestReleasingTheOriginalBooking:
+    def test_staff_cancel_frees_the_venue_and_closes_the_flag(self, client, owner, coordinators):
+        venue = _owned_venue(owner)
+        booking = _booking_at(venue, coordinators["id"])
+        _block_for(client, owner["hdr"], venue.id)
+
+        resp = client.post(f"{URL}/bookings/{booking.id}/cancel", json={"reason": "Venue unavailable"}, headers=owner["hdr"])
+
+        assert resp.status_code == 200
+        assert VenueBooking.query.get(booking.id).status == "cancelled"
+        assert client.get(f"{URL}/flags/mine", headers=coordinators["mine"]).get_json() == []
+        event = Event.query.get(booking.event_id)
+        assert event.status != "cancelled" and event.name == "Annual Conference"
+
+    def test_another_staff_member_cannot_cancel_this_venues_booking(self, client, owner, coordinators, make_user, auth_header):
+        make_user("intruder@test.com", ["venue_staff"])
+        venue = _owned_venue(owner)
+        booking = _booking_at(venue, coordinators["id"])
+
+        resp = client.post(f"{URL}/bookings/{booking.id}/cancel", json={}, headers=auth_header("intruder@test.com"))
+
+        assert resp.status_code == 403
+        assert VenueBooking.query.get(booking.id).status == "approved"
+
+    def test_a_replacement_venue_can_be_requested_for_the_same_event(self, client, owner, coordinators):
+        original, replacement = _owned_venue(owner, "Original"), _owned_venue(owner, "Replacement")
+        booking = _booking_at(original, coordinators["id"])
+        _block_for(client, owner["hdr"], original.id)
+
+        resp = client.post(
+            f"{URL}/bookings",
+            json={"eventId": booking.event_id, "venues": [{"venueId": replacement.id, "date": "2026-12-05", "startTime": "10:00", "endTime": "12:00"}]},
+            headers=coordinators["mine"],
+        )
+
+        assert resp.status_code == 201, resp.get_json()
+        assert VenueBooking.query.filter_by(event_id=booking.event_id).count() == 2

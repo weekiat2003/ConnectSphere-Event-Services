@@ -55,6 +55,12 @@ export default {
       `/venues/${id}/unavailability/${blockId}`
     ),
 
+  updateUnavailability: (id, blockId, payload) =>
+    apiClient.put(
+      `/venues/${id}/unavailability/${blockId}`,
+      payload
+    ),
+
   myFlags: () =>
     apiClient.get("/venues/flags/mine"),
 
