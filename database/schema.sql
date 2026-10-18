@@ -361,7 +361,7 @@ CREATE TABLE equipment_items (
     name            VARCHAR(150) NOT NULL UNIQUE,
     category        VARCHAR(100) NULL,
     total_quantity  INT UNSIGNED NOT NULL,
-    status          ENUM('active','maintenance','retired') NOT NULL DEFAULT 'active',
+    status          ENUM('active','maintenance','retired','damaged') NOT NULL DEFAULT 'active',
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
