@@ -75,6 +75,28 @@ def mark_item_active(item_id):
 # ---------------------------------------------------------------------
 # Equipment Availability Checking
 # ---------------------------------------------------------------------
+def _parse_availability_args(args):
+    """Validates the availability query string; the error message names the bad field."""
+    try:
+        start = datetime.fromisoformat(args.get("start") or "")
+    except ValueError:
+        raise ValueError("start is required and must be an ISO datetime")
+    try:
+        end = datetime.fromisoformat(args.get("end") or "")
+    except ValueError:
+        raise ValueError("end is required and must be an ISO datetime")
+    try:
+        if end <= start:
+            raise ValueError("end must be after start")
+    except TypeError:
+        raise ValueError("start and end must both include, or both omit, a timezone")
+    try:
+        quantity = int(args.get("quantity", "1"))
+    except ValueError:
+        raise ValueError("quantity must be a whole number")
+    if quantity < 1:
+        raise ValueError("quantity must be at least 1")
+    return start, end, quantity
 
 @equipment_bp.get("/items/<int:item_id>/availability")
 @roles_required("technical_support_staff", "event_coordinator")
@@ -82,15 +104,48 @@ def check_item_availability(item_id):
     item = catalogue.get_item(item_id)
     if not item:
         return jsonify({"error": "Equipment item not found"}), 404
-    start = request.args.get("start")
-    end = request.args.get("end")
-    quantity = request.args.get("quantity", type=int, default=1)
-    if not start or not end:
-        return jsonify({"error": "start and end query params (ISO datetimes) are required"}), 400
-    result = availability.check_availability(
-        item, quantity, datetime.fromisoformat(start), datetime.fromisoformat(end)
+    try:
+        start, end, quantity = _parse_availability_args(request.args)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(availability.check_availability(item, quantity, start, end)), 200
+
+@equipment_bp.get("/events/<int:event_id>/availability")
+@roles_required("technical_support_staff", "event_coordinator")
+def check_event_availability(event_id):
+    event = Event.query.get(event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+    try:
+        start, end, _ = _parse_availability_args(request.args)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    requirements = (
+        EventEquipmentRequirement.query.filter_by(event_id=event.id)
+        .order_by(EventEquipmentRequirement.id)
+        .all()
     )
-    return jsonify(result), 200
+    results = []
+    for req in requirements:
+        item = catalogue.get_item_by_name(req.equipment_type)
+        if item:
+            result = availability.check_availability(item, req.quantity, start, end)
+        else:
+            result = {
+                "available": False,
+                "requestedQuantity": req.quantity,
+                "reason": f"No catalogue item named '{req.equipment_type}'",
+            }
+        results.append({"requirementId": req.id, "type": req.equipment_type, **result})
+
+    return jsonify({
+        "eventId": event.id,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "results": results,
+        "available": all(r["available"] for r in results),
+    }), 200
 
 
 # ---------------------------------------------------------------------
