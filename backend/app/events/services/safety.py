@@ -24,6 +24,18 @@ class SafetyReviewConflictError(ValueError):
     """Raised when a review is attempted after the event has left safety_check."""
 
 
+class SafetyReviewValidationError(ValueError):
+    """Raised when a rejection or change request is missing required details.
+
+    Carries every problem at once so the Safety Officer can fix them in one
+    pass instead of resubmitting once per missing item.
+    """
+
+    def __init__(self, errors: list[str]):
+        self.errors = errors
+        super().__init__("; ".join(errors))
+
+
 def review_safety_check(
     event: Event,
     safety_officer: User,
@@ -57,11 +69,17 @@ def review_safety_check(
         if concern_factors:
             raise ValueError("An event with safety concerns cannot be approved")
     else:
-        validate_descriptive_text(comments, "safety decision reason")
+        errors = []
+        try:
+            validate_descriptive_text(comments, "safety decision reason")
+        except ValueError as e:
+            errors.append(str(e))
         if not concern_factors:
-            raise ValueError("Mark at least one safety factor as a concern")
+            errors.append("Mark at least one safety factor as a concern")
         if not affected_arrangements:
-            raise ValueError("Specify affected arrangements: venue, equipment, or both")
+            errors.append("Specify affected arrangements: venue, equipment, or both")
+        if errors:
+            raise SafetyReviewValidationError(errors)
 
     review = EventSafetyReview(
         event_id=event.id,

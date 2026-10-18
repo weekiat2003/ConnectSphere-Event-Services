@@ -14,6 +14,8 @@ from app.change_requests.services import (
     get_review_detail,
     list_review_queue,
     process_routine_change,
+    trigger_re_review,
+    apply_re_reviewed_change,
 
 )
 from app.models.event import Event
@@ -145,3 +147,67 @@ def catalogue():
     ).mappings().all()
 
     return jsonify({"venues": venues, "equipment": [dict(row) for row in rows]}), 200
+
+@change_requests_bp.post("/<int:request_id>/re-review")
+@roles_required("event_coordinator")
+def start_re_review(request_id):
+    user = _current_user()
+    data = request.get_json() or {}
+
+    try:
+        trigger_re_review(request_id, user.id, dry_run=True)
+
+        if data.get("confirmed") is not True:
+            return jsonify({
+                "requiresConfirmation": True,
+                "message": (
+                    "Send this significant change for re-review? The event will "
+                    "return to planning if it is confirmed, and affected "
+                    "arrangements will be flagged for reconsideration."
+                ),
+            }), 409
+
+        result = trigger_re_review(request_id, user.id)
+    except LookupError:
+        return jsonify({"error": "Change request not found"}), 404
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except ChangeRequestError as e:
+        return jsonify({
+            "error": "This change request could not be sent for re-review",
+            "errors": e.errors,
+        }), 400
+
+    return jsonify(result.to_dict()), 200
+
+
+@change_requests_bp.post("/<int:request_id>/apply")
+@roles_required("event_coordinator")
+def complete_re_review(request_id):
+    user = _current_user()
+    data = request.get_json() or {}
+
+    try:
+        apply_re_reviewed_change(request_id, user.id, dry_run=True)
+
+        if data.get("confirmed") is not True:
+            return jsonify({
+                "requiresConfirmation": True,
+                "message": (
+                    "Record that this change is going ahead? The event details "
+                    "will be updated and the reconsideration flags will be cleared."
+                ),
+            }), 409
+
+        result = apply_re_reviewed_change(request_id, user.id)
+    except LookupError:
+        return jsonify({"error": "Change request not found"}), 404
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except ChangeRequestError as e:
+        return jsonify({
+            "error": "This change could not be recorded as going ahead",
+            "errors": e.errors,
+        }), 400
+
+    return jsonify(result.to_dict()), 200

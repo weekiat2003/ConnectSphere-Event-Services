@@ -390,7 +390,7 @@ def test_detail_endpoint_returns_the_full_review_payload(app):
 
     assert response.status_code == 200
     body = response.get_json()
-    assert set(body) == {"request", "event", "changes", "affectedArrangements", "availableActions", "decision"}
+    assert set(body) == {"request", "event", "changes", "affectedArrangements", "availableActions", "decision", "reReview"}
     assert body["changes"] == [{"field": "expected_attendance", "current": 80, "proposed": 120}]
     assert body["availableActions"] == ["trigger_re_review", "cannot_accommodate"]
     assert body["decision"] is None

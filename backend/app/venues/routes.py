@@ -9,7 +9,7 @@ from app.extensions import db
 from app.models.event import Event
 from app.models.user import User
 from app.models.venue import Venue, VenueBooking
-from app.venues.services import availability, booking, booking_requests, catalogue, search, suitability
+from app.venues.services import availability, booking, booking_requests, catalogue, search, suitability, preparation
 from app.venues.services.booking_requests import BookingRequestError
 
 venues_bp = Blueprint("venues", __name__)
@@ -742,3 +742,20 @@ def hold_notices():
         notices.append({"bookingId": b.id, "eventId": b.event_id, "type": kind,
                         "message": message, "expiresAt": b.hold_expires_at.isoformat()})
     return jsonify(notices), 200
+
+
+@venues_bp.put("/bookings/<int:booking_id>/preparation")
+@roles_required("venue_staff")
+def update_booking_preparation(booking_id):
+    user = _current_user()
+    record = VenueBooking.query.get(booking_id)
+    if not record:
+        return jsonify({"error": "Booking not found"}), 404
+    data = request.get_json() or {}
+    try:
+        result = preparation.update_venue_preparation(record, user, data)
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except preparation.PreparationUpdateError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(result.to_dict()), 200

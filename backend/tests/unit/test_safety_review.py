@@ -173,3 +173,32 @@ def test_decided_event_cannot_be_reviewed_again(app, organiser, make_user, make_
             )
 
         assert EventSafetyReview.query.filter_by(event_id=event_id).count() == 1
+
+
+@pytest.mark.parametrize("decision", ["rejected", "changes_requested"])
+def test_nonapproval_reports_every_missing_detail_at_once(
+    app, organiser, make_user, make_event, decision
+):
+    with app.app_context():
+        officer_id = make_user(f"safety-all-missing-{decision}@test.com", ["safety_officer"])
+        event_id = make_event(organiser, status="safety_check")
+        event = db.session.get(Event, event_id)
+
+        with pytest.raises(safety.SafetyReviewValidationError) as excinfo:
+            safety.review_safety_check(
+                event,
+                db.session.get(User, officer_id),
+                decision,
+                "   ",
+                assessed_factors=["emergency_access"],
+                concern_factors=[],
+                affected_arrangements=[],
+            )
+
+        errors = excinfo.value.errors
+        assert len(errors) == 3
+        assert any("reason" in error for error in errors)
+        assert any("at least one safety factor" in error for error in errors)
+        assert any("affected arrangements" in error for error in errors)
+        assert event.status == "safety_check"
+        assert EventSafetyReview.query.filter_by(event_id=event_id).count() == 0
