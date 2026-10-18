@@ -384,6 +384,26 @@ class TestVenuePreparation:
 
 # test equipment preparation service
 
+def test_adding_new_equipment_requirement_does_not_overwrite_existing(app, coordinator, make_event):
+    with app.app_context():
+        from app.models.user import User
+        event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator)
+        existing = EventEquipmentRequirement(event_id=event_id, equipment_type="Projector", quantity=1)
+        db.session.add(existing)
+        db.session.commit()
+
+        update_event_fields(
+            Event.query.get(event_id), User.query.get(coordinator),
+            {"equipment_requirements": [
+                {"id": existing.id, "type": "Projector", "quantity": 1},
+                {"type": "Speaker", "quantity": 2},
+            ]},
+            offline_review_confirmed=True,
+        )
+
+        items = {i.equipment_type: i.quantity for i in EventEquipmentRequirement.query.filter_by(event_id=event_id)}
+        assert items == {"Projector": 1, "Speaker": 2}
+
 def _make_requirement(event_id, status="requested"):
     req = EventEquipmentRequirement(event_id=event_id, equipment_type="Projector", quantity=2, status=status)
     db.session.add(req)
@@ -458,4 +478,3 @@ class TestEquipmentPreparation:
 
             with pytest.raises(EquipmentPreparationError):
                 update_equipment_preparation(req, tss, {"testing_status": "done"})
-

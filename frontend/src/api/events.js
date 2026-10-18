@@ -6,6 +6,7 @@ export default {
   listDrafts: () => apiClient.get("/events/drafts"),
   updateDraft: (id, payload) => apiClient.put(`/events/drafts/${id}`, payload),
   deleteDraft: (id) => apiClient.delete(`/events/drafts/${id}`),
+  updateEvent: (id, payload) => apiClient.put(`/events/${id}/update`, payload),
   submitEvent: (id) => apiClient.post(`/events/${id}/submit`),
   myEvents: () => apiClient.get("/events/mine"),
   assignedEvents: () => apiClient.get("/events/assigned"),
