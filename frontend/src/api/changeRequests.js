@@ -10,4 +10,8 @@ export default {
   getReviewDetail: (requestId) => apiClient.get(`/change-requests/${requestId}/review`),
   processChange: (requestId, confirmed = false) =>
     apiClient.post(`/change-requests/${requestId}/process`, { confirmed }),
+  startReReview: (requestId, confirmed = false) =>
+    apiClient.post(`/change-requests/${requestId}/re-review`, { confirmed }),
+  applyReReview: (requestId, confirmed = false) =>
+    apiClient.post(`/change-requests/${requestId}/apply`, { confirmed }),
 };

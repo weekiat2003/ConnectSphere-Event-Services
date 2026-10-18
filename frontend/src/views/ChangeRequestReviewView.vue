@@ -60,6 +60,38 @@
           <p v-else class="notice-inline">No venue bookings or equipment are currently arranged for this event.</p>
         </div>
   
+        <div v-if="detail.reReview" class="re-review">
+          <h4>Re-review</h4>
+          <p>
+            Triggered by <strong>{{ detail.reReview.triggeredBy || "—" }}</strong>
+            on {{ formatDate(detail.reReview.triggeredAt) }}.
+          </p>
+
+          <p v-if="detail.reReview.flaggedArrangements.length">
+            The following arrangements were flagged as needing reconsideration:
+          </p>
+          <ul v-if="detail.reReview.flaggedArrangements.length">
+            <li
+              v-for="(item, index) in detail.reReview.flaggedArrangements"
+              :key="index"
+            >
+              <template v-if="item.kind === 'venue_booking'">
+                Venue booking: {{ venueName(item.venueId) }} ({{ item.status }})
+              </template>
+              <template v-else>
+                Equipment: {{ item.quantity }} × {{ item.type }} ({{ item.status }})
+              </template>
+              —
+              <strong>
+                {{ item.needsReconsideration ? "Needs reconsideration" : "Cleared" }}
+              </strong>
+            </li>
+          </ul>
+          <p v-else class="notice-inline">
+            No arrangements needed reconsideration.
+          </p>
+        </div>
+
         <div v-if="detail.decision" class="decision">
           <strong>{{ statusLabel(detail.decision.status) }}</strong>
           by {{ detail.decision.decidedBy || "—" }} on {{ formatDate(detail.decision.decidedAt) }}
@@ -69,9 +101,10 @@
           <button
             v-for="action in detail.availableActions"
             :key="action"
-            :disabled="action !== 'process_change' || processing"
-            :title="action === 'process_change' ? '' : 'Not available yet'"
-            @click="action === 'process_change' && processChange()"
+            class="btn"
+            :class="actionClass(action)"
+            :disabled="processing"
+            @click="runAction(action)"
           >
             {{ ACTION_LABELS[action] }}
           </button>
@@ -123,6 +156,7 @@
   const ACTION_LABELS = {
     process_change: "Process change",
     trigger_re_review: "Trigger re-review",
+    apply_change: "Record change is going ahead",
     cannot_accommodate: "Cannot accommodate",
     cancel_event: "Cancel event",
   };
@@ -210,6 +244,84 @@
       processing.value = false;
     }
   }
+
+  function actionClass(action) {
+    if (action === "trigger_re_review") return "btn-butter";
+    if (action === "apply_change") return "btn-mint";
+    if (action === "cancel_event" || action === "cannot_accommodate") return "btn-rose";
+    return "btn-primary";
+  }
+
+  async function runAction(action) {
+    if (action === "process_change") return processChange();
+    if (action === "trigger_re_review") return triggerReReview();
+    if (action === "apply_change") return applyReReview();
+  }
+
+  async function triggerReReview() {
+    actionError.value = "";
+    actionErrors.value = {};
+    const id = detail.value.request.id;
+    processing.value = true;
+
+    try {
+      try {
+        await changeRequestsApi.startReReview(id);
+      } catch (e) {
+        if (e.response?.status === 409 && e.response.data?.requiresConfirmation) {
+          if (!(await confirm(e.response.data.message))) return;
+          await changeRequestsApi.startReReview(id, true);
+        } else {
+          throw e;
+        }
+      }
+
+      await loadQueue();
+      await openRequest(id);
+    } catch (e) {
+      const data = e.response?.data;
+      actionError.value = data?.errors ? "" : data?.error || "Could not trigger re-review.";
+      actionErrors.value = data?.errors || {};
+    } finally {
+      processing.value = false;
+    }
+  }
+
+  async function applyReReview() {
+  actionError.value = "";
+  actionErrors.value = {};
+  const id = detail.value.request.id;
+  processing.value = true;
+
+  try {
+    try {
+      // First call intentionally receives 409: it asks for confirmation.
+      await changeRequestsApi.applyReReview(id);
+    } catch (e) {
+      if (e.response?.status === 409 && e.response.data?.requiresConfirmation) {
+        const ok = await confirm(e.response.data.message);
+        if (!ok) return;
+
+        // Second call actually applies the change.
+        await changeRequestsApi.applyReReview(id, true);
+      } else {
+        throw e;
+      }
+    }
+
+    await loadQueue();
+    await openRequest(id);
+  } catch (e) {
+    const data = e.response?.data;
+    actionError.value =
+      data?.error ||
+      (data?.errors ? Object.values(data.errors).join(" ") : "") ||
+      "Could not record the change as going ahead.";
+    actionErrors.value = data?.errors || {};
+  } finally {
+    processing.value = false;
+  }
+}
   
   onMounted(async () => {
     await loadQueue();
@@ -232,4 +344,5 @@
   .badge.significant, .badge.withdrawal { background: var(--rose-bg, #fbdcdc); }
   .badge.routine { background: var(--sky-bg, #d6ecff); }
   button.secondary { background: #e2e5ea; color: #333; }
+  .re-review { margin-top: 1rem; padding: 0.75rem; background: var(--butter-bg, #fff1c2); border-radius: 8px; }
   </style>
