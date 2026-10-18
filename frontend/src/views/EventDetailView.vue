@@ -174,8 +174,7 @@
           </p>
           <router-link v-if="isAssignedCoordinator"
             :to="{ name: 'change-request-review', query: { id: request.id } }">Open in review</router-link>
-          <p v-if="request.decidedAt" class="change-reason"><strong>Processed:</strong> {{ formatDate(request.decidedAt)
-          }}</p>
+          <p v-if="request.decidedAt" class="change-reason"><strong>Decided:</strong> {{ formatDate(request.decidedAt) }}</p>
           <p v-if="request.status === 're_review' && request.reReviewAt" class="change-reason">
             <strong>Sent for re-review</strong> by the assigned Coordinator on {{ formatDate(request.reReviewAt) }}.
             Affected arrangements are flagged for reconsideration; proposed values are not applied yet.
@@ -1960,7 +1959,6 @@ textarea {
   color: var(--butter-text, #8a5a00);
 }
 
-.badge.cannot_accommodate,
 .badge.significant {
   background: var(--rose-bg, #fbdcdc);
 }

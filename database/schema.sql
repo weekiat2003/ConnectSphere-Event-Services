@@ -415,9 +415,9 @@ CREATE TABLE change_requests (
   is_significant TINYINT(1) NOT NULL DEFAULT 0,
   reason TEXT NOT NULL,
 
-  -- pending | re_review | processed | rejected | cannot_accommodate
+  -- pending | re_review | processed | rejected
   status ENUM(
-    'pending', 're_review', 'processed', 'rejected', 'cannot_accommodate'
+    'pending', 're_review', 'processed', 'rejected'
   ) NOT NULL DEFAULT 'pending',
 
   coordinator_id BIGINT UNSIGNED NULL, -- who recorded the final outcome

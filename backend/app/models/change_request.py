@@ -13,7 +13,7 @@ class ChangeRequest(db.Model):
     reason = db.Column(db.Text, nullable=False)
     is_significant = db.Column(db.Boolean, nullable=False, default=False)
 
-    # pending | re_review | processed | rejected | cannot_accommodate
+    # pending | re_review | processed | rejected
     status = db.Column(db.String(30), nullable=False, default="pending")
 
     coordinator_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=True)
@@ -43,6 +43,7 @@ class ChangeRequest(db.Model):
             "reReviewBy": self.re_review_by,
             "reReviewAt": self.re_review_at.isoformat() if self.re_review_at else None,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "coordinatorId": self.coordinator_id,
         }
 
 
