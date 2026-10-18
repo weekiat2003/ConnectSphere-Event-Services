@@ -159,26 +159,22 @@ const router = createRouter({
 router.beforeEach((to) => {
   const auth = useAuthStore();
 
-  if (
-    to.meta.requiresAuth &&
-    !auth.isAuthenticated
-  ) {
-    return {
-      name: "login",
-    };
+  if (to.meta.requiresAuth && !auth.isAuthenticated) {
+    return { name: "login" };
   }
 
   if (
-    to.meta.roles &&
-    !to.meta.roles.some(
-      (role) => auth.hasRole(role)
-    )
+    to.name === "dashboard" &&
+    auth.hasRole("venue_staff") &&
+    !auth.hasRole("event_organiser") &&
+    !auth.hasRole("event_coordinator")
   ) {
-    return {
-      name: "dashboard",
-    };
+    return { name: "venue-booking-approval" };
+  }
+
+  if (to.meta.roles && !to.meta.roles.some((role) => auth.hasRole(role))) {
+    return { name: "dashboard" };
   }
 });
-
 
 export default router;
