@@ -92,6 +92,21 @@ class Event(db.Model):
     def status_label(self) -> str:
         return STATUS_LABELS.get(self.status, UNKNOWN_STATUS_LABEL)
     
+    def cancellation_dict(self):
+        """Who cancelled the event, when, and why. None unless it is cancelled."""
+        if self.status != "cancelled":
+            return None
+        entries = [h for h in self.status_history if h.new_status == "cancelled"]
+        if not entries:
+            return None
+        latest = max(entries, key=lambda h: h.id)
+        return {
+            "reason": latest.reason,
+            "timestamp": latest.changed_at.isoformat() if latest.changed_at else None,
+            "coordinatorId": latest.changed_by,
+            "coordinatorName": latest.changed_by_user.name if latest.changed_by_user else None,
+        }
+    
     def to_dict(self):
         proposed_time = None
         if self.proposed_time is not None:
@@ -132,6 +147,7 @@ class Event(db.Model):
                 "coordinatorId": self.review_coordinator_id,
                 "coordinatorName": self.review_coordinator.name if self.review_coordinator else None,
             },
+            "cancellation": self.cancellation_dict(),
             "safetyReviews": [review.to_dict() for review in self.safety_reviews],
             "resubmittedFromEventId": self.resubmitted_from_event_id,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
@@ -229,6 +245,7 @@ class EventStatusHistory(db.Model):
     changed_by = db.Column(db.BigInteger, db.ForeignKey("users.id"))
     reason = db.Column(db.Text)
     changed_at = db.Column(db.DateTime, default=utcnow())
+    changed_by_user = db.relationship("User", foreign_keys=[changed_by])
 
 
 class EventSafetyReview(db.Model):

@@ -9,6 +9,8 @@ Owns the status-transition rules for the Event Status Management epic:
 """
 from sqlalchemy import func
 
+from app.common.text_validation import validate_descriptive_text
+from app.common.time import utcnow
 from app.extensions import db
 from app.models.equipment import EquipmentReservation
 from app.models.event import Event, EventSafetyReview, EventStatusHistory
@@ -18,6 +20,9 @@ from app.models.venue import (
     BOOKING_WITHDRAWN,
     BOOKING_REJECTED,
     VenueBooking,
+    ACTIVE_BOOKING_STATUSES,
+    BOOKING_HELD,
+    BOOKING_RELEASED,
 )
 
 ALLOWED_TRANSITIONS = {
@@ -32,6 +37,9 @@ ALLOWED_TRANSITIONS = {
     "cancelled": set(),
     "rejected": set(),
 }
+
+CANCELLABLE_STATUSES = ("approved", "planning", "confirmed", "safety_check")
+CANCEL_STATUS_MESSAGE = "An event can only be cancelled while it is approved, planning or in safety check"
 
 
 class InvalidTransitionError(Exception):
@@ -145,3 +153,85 @@ def revert_to_planning(event: Event, changed_by_id: int, reason: str) -> Event:
     if event.status != "confirmed":
         raise InvalidTransitionError("Only a confirmed event can be reverted to planning")
     return change_status(event, "planning", changed_by_id, reason=reason)
+
+class EventActionError(ValueError):
+    """`errors` maps a field name ("reason" / "event") to a message."""
+
+    def __init__(self, errors: dict):
+        self.errors = errors
+        super().__init__("; ".join(errors.values()))
+
+
+def validate_cancellation_reason(reason) -> str:
+    """Same rules as clarification comments."""
+    try:
+        validate_descriptive_text(reason if isinstance(reason, str) else "", "reason")
+    except ValueError as problem:
+        raise EventActionError({"reason": str(problem)})
+    return reason.strip()
+
+def _release_arrangements(event: Event, coordinator_id: int, reason: str, now):
+    """Release the cancelled event's live venue bookings (pending, approved,
+    held) and equipment reservations. Does not commit; the caller does."""
+    bookings = VenueBooking.query.filter(
+        VenueBooking.event_id == event.id,
+        VenueBooking.status.in_(ACTIVE_BOOKING_STATUSES),
+    ).all()
+    for booking in bookings:
+        if booking.status == BOOKING_HELD:
+            booking.hold_released_at = now
+        booking.status = BOOKING_RELEASED
+        booking.decided_by = coordinator_id
+        booking.decided_at = now
+        booking.decision_reason = f"Event cancelled: {reason}"
+
+    reservations = EquipmentReservation.query.filter_by(
+        event_id=event.id, status="reserved"
+    ).all()
+    for reservation in reservations:
+        reservation.status = "released"
+
+    return len(bookings), len(reservations)
+
+def cancel_event(event_id: int, coordinator_id: int, reason, dry_run: bool = False) -> Event:
+    """Cancel an event. A reason is required. dry_run runs every check and writes nothing."""
+    query = db.session.query(Event).filter_by(id=event_id)
+    if not dry_run:
+        query = query.with_for_update()  # of two simultaneous cancels, the second sees "cancelled"
+    event = query.first()
+
+    if event is None:
+        raise LookupError("Event not found")
+    if event.coordinator_id != coordinator_id:
+        raise PermissionError("Only the Coordinator assigned to this event can cancel it")
+    if event.status not in CANCELLABLE_STATUSES:
+        raise EventActionError({"event": CANCEL_STATUS_MESSAGE})
+
+    reason = validate_cancellation_reason(reason)
+    if dry_run:
+        return event
+
+    old_status = event.status
+    event.status = "cancelled"
+    db.session.add(EventStatusHistory(
+        event_id=event.id,
+        old_status=old_status,
+        new_status="cancelled",
+        changed_by=coordinator_id,
+        reason=reason,
+        changed_at=utcnow(),
+    ))
+    old_status = event.status
+    now = utcnow()
+    event.status = "cancelled"
+    db.session.add(EventStatusHistory(
+        event_id=event.id,
+        old_status=old_status,
+        new_status="cancelled",
+        changed_by=coordinator_id,
+        reason=reason,
+        changed_at=now,
+    ))
+    _release_arrangements(event, coordinator_id, reason, now)
+    db.session.commit()
+    return event

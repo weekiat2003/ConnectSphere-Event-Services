@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 
 REQUIRED_FOR_SUBMISSION = ["name", "purpose", "description", "proposed_date", "expected_attendance"]
 REVIEWABLE_STATUSES = ("submitted", "under_review")
+CANCELLABLE_STATUSES = ("approved", "planning", "confirmed", "safety_check")
 
 # Once an event reaches any of these, the Organiser can no longer respond
 # to an outstanding clarification (the event is no longer actively "in
@@ -215,6 +216,23 @@ def reject_event(event: Event, coordinator_id: int, reason: str) -> Event:
         EventReview(event_id=event.id, coordinator_id=coordinator_id, action="rejected", comments=reason)
     )
     change_status(event, "rejected", changed_by_id=coordinator_id, reason=reason)
+    return event
+
+def cancel_event(event: Event, coordinator_id: int, reason: str) -> Event:
+    if event.coordinator_id != coordinator_id:
+        raise PermissionError("Only the assigned Coordinator can cancel this request")
+    if event.status not in CANCELLABLE_STATUSES:
+        raise ValueError("This request cannot be cancelled")
+    validate_descriptive_text(reason, "cancellation reason")
+
+    event.review_outcome = "cancelled"
+    event.review_reason = reason
+    event.review_timestamp = utcnow()
+    event.review_coordinator_id = coordinator_id
+    db.session.add(
+        EventReview(event_id=event.id, coordinator_id=coordinator_id, action="cancelled", comments=reason)
+    )
+    change_status(event, "cancelled", changed_by_id=coordinator_id, reason=reason)
     return event
 
 
