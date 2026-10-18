@@ -407,23 +407,42 @@ CREATE TABLE registrations (
 -- ---------------------------------------------------------------------
 
 CREATE TABLE change_requests (
-    id                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    event_id            BIGINT UNSIGNED NOT NULL,
-    organiser_id        BIGINT UNSIGNED NOT NULL,
-    request_type        ENUM('change','withdrawal') NOT NULL DEFAULT 'change',
-    requested_changes   JSON NOT NULL,               -- field-level proposed changes
-    is_significant      TINYINT(1) NOT NULL DEFAULT 0,
-    reason              TEXT NOT NULL,  
-    status              ENUM('pending','processed','rejected','cannot_accommodate') NOT NULL DEFAULT 'pending',
-    coordinator_id      BIGINT UNSIGNED NULL,
-    decision_reason     TEXT NULL,
-    decided_at          DATETIME NULL,
-    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    CONSTRAINT fk_cr_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
-    CONSTRAINT fk_cr_organiser FOREIGN KEY (organiser_id) REFERENCES users(id),
-    CONSTRAINT fk_cr_coordinator FOREIGN KEY (coordinator_id) REFERENCES users(id),
-    INDEX idx_cr_event (event_id)
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  event_id BIGINT UNSIGNED NOT NULL,
+  organiser_id BIGINT UNSIGNED NOT NULL,
+  request_type ENUM('change','withdrawal') NOT NULL DEFAULT 'change',
+  requested_changes JSON NOT NULL, -- field-level proposed changes
+  is_significant TINYINT(1) NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL,
+
+  -- pending | re_review | processed | rejected | cannot_accommodate
+  status ENUM(
+    'pending', 're_review', 'processed', 'rejected', 'cannot_accommodate'
+  ) NOT NULL DEFAULT 'pending',
+
+  coordinator_id BIGINT UNSIGNED NULL, -- who recorded the final outcome
+  decision_reason TEXT NULL,
+  decided_at DATETIME NULL,
+
+  -- Who triggered re-review and when. The request remains unresolved while
+  -- it is under re-review.
+  re_review_by BIGINT UNSIGNED NULL,
+  re_review_at DATETIME NULL,
+
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  CONSTRAINT fk_cr_event FOREIGN KEY (event_id)
+    REFERENCES events(id) ON DELETE CASCADE,
+  CONSTRAINT fk_cr_organiser FOREIGN KEY (organiser_id)
+    REFERENCES users(id),
+  CONSTRAINT fk_cr_coordinator FOREIGN KEY (coordinator_id)
+    REFERENCES users(id),
+  CONSTRAINT fk_cr_re_review_by FOREIGN KEY (re_review_by)
+    REFERENCES users(id),
+
+  INDEX idx_cr_event (event_id),
+  INDEX idx_cr_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE event_change_history (
@@ -439,6 +458,29 @@ CREATE TABLE event_change_history (
     CONSTRAINT fk_chg_hist_request FOREIGN KEY (change_request_id) REFERENCES change_requests(id) ON DELETE CASCADE,
     CONSTRAINT fk_chg_hist_user FOREIGN KEY (changed_by) REFERENCES users(id),
     INDEX idx_chg_hist_event (event_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE arrangement_flags (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  event_id BIGINT UNSIGNED NOT NULL,
+  change_request_id BIGINT UNSIGNED NOT NULL,
+
+  -- venue_booking | equipment
+  kind ENUM('venue_booking', 'equipment') NOT NULL,
+  target_id BIGINT UNSIGNED NOT NULL,
+
+  reason VARCHAR(255) NOT NULL DEFAULT 'Needs reconsideration',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  cleared_at DATETIME NULL,
+
+  CONSTRAINT fk_af_event FOREIGN KEY (event_id)
+    REFERENCES events(id) ON DELETE CASCADE,
+  CONSTRAINT fk_af_request FOREIGN KEY (change_request_id)
+    REFERENCES change_requests(id) ON DELETE CASCADE,
+
+  INDEX idx_af_request (change_request_id),
+  INDEX idx_af_event (event_id),
+  INDEX idx_af_target (kind, target_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------------------------------------------------------------

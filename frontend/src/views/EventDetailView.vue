@@ -151,6 +151,9 @@
             :to="{ name: 'change-request-review', query: { id: request.id } }"
           >Open in review</router-link>
           <p v-if="request.decidedAt" class="change-reason"><strong>Processed:</strong> {{ formatDate(request.decidedAt) }}</p>
+          <p v-if="request.status === 're_review' && request.reReviewAt" class="change-reason" >
+            <strong>Sent for re-review</strong> by the assigned Coordinator on {{ formatDate(request.reReviewAt) }}. Affected arrangements are flagged for reconsideration; proposed values are not applied yet.
+          </p>
         </li>
       </ul>
     </div>
@@ -565,7 +568,14 @@ const EDITABLE_FIELD_OPTIONS = [
 const editableFields = ref([]);       // coordinator's selection when requesting clarification
 
 // "under_review" -> "under review"
-const statusLabel = (status) => (status || "").replace(/_/g, " ");
+const statusLabel = (status) => {
+  const labels = {
+    re_review: "Under re-review",
+  };
+  return labels[status] || String(status || "")
+    .replace(/_/g, " ")
+    .replace(/^./, (c) => c.toUpperCase());
+};
 
 const isAssignedCoordinator = computed(
   () => auth.hasRole("event_coordinator") && event.value?.coordinatorId === auth.user?.id
@@ -1469,6 +1479,7 @@ textarea { min-height: 4.5rem; resize: vertical; }
 .change-reason { margin: 0.4rem 0 0; }
 .badge.pending { background: var(--butter-bg, #fff1c2); }
 .badge.processed { background: var(--mint-bg, #d3f5e3); }
+.badge.re_review { background: var(--butter-bg, #fff1c2); color: var(--butter-text, #8a5a00); }
 .badge.cannot_accommodate,
 .badge.significant { background: var(--rose-bg, #fbdcdc); }
 .badge.routine { background: var(--sky-bg, #d6ecff); }
