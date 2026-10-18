@@ -65,7 +65,24 @@ This creates one user per role (`organiser@example.com`,
 `techsupport@example.com`, `attendee@example.com`), all with the password
 `Password123!`.
 
-The seed script now also creates sample venues `Main Auditorium`, `Seminar Room A` and `Banquet Hall`.
+The seed script also creates a varied venue catalogue for search testing, with
+room layouts such as `theatre`, `classroom`, `u-shape`, `banquet`, `boardroom`,
+`cabaret`, `hollow square`, `island`, and `standing`. The Room layout filter
+offers the distinct layouts recorded for active venues; these are catalogue
+labels, not a separate fixed list. Existing seeded venues are enriched with
+missing sample catalogue values when the script is re-run, without removing
+values maintained by Venue Staff.
+
+Venue Staff can add or edit venue locations, layouts, facilities, accessibility
+features, and capacities in the Venue Catalogue. Search-filter options are
+derived from active venues, so staff changes are reflected by the next options
+request; layouts are not limited to the sample values in the seed script.
+
+For a fresh database, `database/schema.sql` creates the complete schema,
+including the `venue_layouts` table. To replace an older local development
+database, back up any data you need, drop the old `connectsphere` database,
+then run the schema command above and seed it again. Do not drop a database
+containing data you need to keep.
 
 Run the API:
 
@@ -80,6 +97,34 @@ The API listens on `http://localhost:5000/api`.
 ```bash
 pip install pytest
 pytest
+```
+
+### CI/CD pipeline
+
+`.github/workflows/pipeline.yml` runs on every pull request into `main` and
+every push to `main`:
+
+| Job | What it checks or does | Runs on |
+|---|---|---|
+| `lint` | Ruff (rules in `ruff.toml`) | every PR and push |
+| `test` | Backend unit and integration tests (pytest) | every PR and push |
+| `audit` | `pip-audit` on backend deps, `npm audit` on shipped frontend deps | every PR and push |
+| `package` | Builds `connectsphere-release.zip` once (backend + deps, built frontend, schema) and an SBOM | every PR and push |
+| `smoke` | Runs the zip against MySQL and probes it with `smoke.sh` | every PR and push |
+| `e2e` | Runs the zip and tests the login journey in a real browser (`e2e/`) | every PR and push |
+| `staging` | Records the release's SHA-256 (placeholder, no deployment) | push to `main` |
+| `production` | Waits for approval, then confirms it got the same zip (placeholder) | push to `main` |
+
+Mark `test`, `smoke` and `e2e` (optionally `lint` and `audit`) as required
+status checks on `main`. Add yourself as a required reviewer on the
+`production` environment to make the release gate a human decision.
+
+Run the smoke and browser tests locally against a running app:
+
+```bash
+bash smoke.sh http://localhost:5000                   # needs curl and jq; seeded DB
+pip install playwright && python -m playwright install chromium
+BASE_URL=http://localhost:5173/ python -m unittest discover -s e2e -v
 ```
 
 ## 3. Frontend setup (Vue)

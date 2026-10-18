@@ -54,7 +54,8 @@ class EquipmentReservation(db.Model):
     # reserved | released
     created_by = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=True)
     created_at = db.Column(db.DateTime, default=utcnow)
-
+    event = db.relationship("Event", backref="equipment_reservations")
+    
     def to_dict(self):
         return {
             "id": self.id,

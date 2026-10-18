@@ -8,8 +8,6 @@ from flask_jwt_extended import JWTManager, create_refresh_token
 from app.auth.routes import auth_bp
 
 from flask_jwt_extended import (
-    JWTManager,
-    create_refresh_token,
     create_access_token,
 )
 

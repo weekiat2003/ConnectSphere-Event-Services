@@ -7,7 +7,8 @@ production (Q&A #28/#45), so there is no self-registration endpoint. This
 script stands in for that external provisioning process during development.
 
 Run with:  python scripts/seed_users.py
-Safe to re-run: existing users, venues and events (matched by name) are skipped.
+Safe to re-run: existing users and events (matched by name) are skipped.
+Existing sample venues are enriched with any missing seeded catalogue values.
 """
 import os
 import sys
@@ -21,7 +22,7 @@ from app import create_app  # noqa: E402
 from app.extensions import db  # noqa: E402
 from app.models.event import Event  # noqa: E402  (adjust if your Event model lives elsewhere)
 from app.models.user import Organisation, Role, User  # noqa: E402
-from app.models.venue import Venue  # noqa: E402
+from app.models.venue import Venue, VenueBooking
 
 app = create_app(os.getenv("FLASK_ENV", "development"))
 
@@ -33,23 +34,111 @@ TEST_USERS = [
     {"name": "Priya Coordinator", "email": "coordinator2@example.com", "roles": ["event_coordinator"]},
     {"name": "Vince Venue", "email": "venue@example.com", "roles": ["venue_staff"]},
     {"name": "Tara TechSupport", "email": "techsupport@example.com", "roles": ["technical_support_staff"]},
+    {"name": "Sam Safety Officer", "email": "safety@example.com", "roles": ["safety_officer"]},
     {"name": "Alex Attendee", "email": "attendee@example.com", "roles": ["attendee"]},
 ]
 
 TEST_VENUES = [
-    {"name": "Main Auditorium", "location": "North Campus", "capacity": 300,
-     "accessibility_info": "Wheelchair accessible", "operating_hours": "08:00-22:00",
-     "setup_minutes": 30, "turnaround_minutes": 45},
-    {"name": "Seminar Room A", "location": "North Campus", "capacity": 40,
-     "accessibility_info": None, "operating_hours": "08:00-22:00",
-     "setup_minutes": 15, "turnaround_minutes": 15},
-    {"name": "Banquet Hall", "location": "South Campus", "capacity": 150,
-     "accessibility_info": "Step-free entrance", "operating_hours": "08:00-23:00",
-     "setup_minutes": 60, "turnaround_minutes": 60},
+    {
+        "name": "Main Auditorium",
+        "location": "North Campus",
+        "capacity": 300,
+        "accessibility_info": "Wheelchair accessible",
+        "operating_hours": "08:00-22:00",
+        "accessibility_features": ["Wheelchair accessible"],
+        "facilities": ["Microphone", "Projector", "Wi-Fi"],
+        "setup_minutes": 30,
+        "turnaround_minutes": 45,
+        "supported_layouts": ["theatre", "classroom"],
+    },
+    {
+        "name": "Seminar Room A",
+        "location": "North Campus",
+        "capacity": 40,
+        "accessibility_info": None,
+        "operating_hours": "08:00-22:00",
+        "facilities": ["Projector", "Whiteboard", "Wi-Fi"],
+        "setup_minutes": 15,
+        "turnaround_minutes": 15,
+        "supported_layouts": ["classroom", "u-shape"],
+    },
+    {
+        "name": "Banquet Hall",
+        "location": "South Campus",
+        "capacity": 150,
+        "accessibility_info": "Step-free entrance",
+        "operating_hours": "08:00-23:00",
+        "accessibility_features": ["Step-free entrance"],
+        "facilities": ["Microphone", "Stage"],
+        "setup_minutes": 60,
+        "turnaround_minutes": 60,
+        "supported_layouts": ["banquet", "theatre"],
+    },
+    {
+        "name": "Collaborative Workshop Studio",
+        "location": "East Campus",
+        "capacity": 72,
+        "accessibility_info": "Step-free access and adjustable-height tables",
+        "operating_hours": "07:00-22:00",
+        "accessibility_features": ["Step-free access", "Hearing loop"],
+        "facilities": ["Projector", "Whiteboard", "Power outlets", "Wi-Fi"],
+        "setup_minutes": 20,
+        "turnaround_minutes": 20,
+        "supported_layouts": ["classroom", "u-shape", "cabaret"],
+    },
+    {
+        "name": "Executive Boardroom",
+        "location": "Central Campus",
+        "capacity": 24,
+        "accessibility_info": "Lift access",
+        "operating_hours": "08:00-20:00",
+        "accessibility_features": ["Lift access"],
+        "facilities": ["Display screen", "Video conferencing", "Whiteboard"],
+        "setup_minutes": 10,
+        "turnaround_minutes": 10,
+        "supported_layouts": ["boardroom", "hollow square", "u-shape"],
+    },
+    {
+        "name": "Community Events Hall",
+        "location": "West Campus",
+        "capacity": 180,
+        "accessibility_info": "Step-free entrance and accessible washroom",
+        "operating_hours": "08:00-23:00",
+        "accessibility_features": ["Step-free access", "Accessible washroom"],
+        "facilities": ["Kitchenette", "Microphone", "Portable stage", "Wi-Fi"],
+        "setup_minutes": 45,
+        "turnaround_minutes": 45,
+        "supported_layouts": ["banquet", "cabaret", "theatre"],
+    },
+    {
+        "name": "Innovation Lab",
+        "location": "East Campus",
+        "capacity": 48,
+        "accessibility_info": "Step-free access",
+        "operating_hours": "08:00-21:00",
+        "accessibility_features": ["Step-free access"],
+        "facilities": ["Display screens", "Power outlets", "Whiteboard", "Wi-Fi"],
+        "setup_minutes": 15,
+        "turnaround_minutes": 15,
+        "supported_layouts": ["classroom", "island", "boardroom"],
+    },
+    {
+        "name": "Outdoor Amphitheatre",
+        "location": "South Campus",
+        "capacity": 500,
+        "accessibility_info": "Step-free viewing area",
+        "operating_hours": "08:00-22:00",
+        "accessibility_features": ["Step-free access"],
+        "facilities": ["Outdoor stage", "PA system", "Power outlets"],
+        "setup_minutes": 60,
+        "turnaround_minutes": 60,
+        "supported_layouts": ["theatre", "standing"],
+    },
 ]
 
 # ---------------------------------------------------------------------------
-# Dummy events. One per status so every screen/state in the app has data.
+# Dummy events cover the common workflow states; safety-check demos are staged
+# directly at safety_check so Safety Officers can exercise the checklist.
 # "coordinator" is the email of the assigned coordinator (None = unassigned,
 # as for drafts). "days" is the proposed date offset from today (negative =
 # past). "resubmits" names an earlier event this one was resubmitted from.
@@ -134,6 +223,42 @@ TEST_EVENTS = [
         "submitted_days_ago": 20,
         "review_outcome": "approved", "review_reason": "Approved. Venue and equipment to be arranged.",
         "review_days_ago": 15,
+    },
+    {
+        "name": "Hackathon Safety Check Demo",
+        "purpose": "Safety review demonstration",
+        "description": "Sample event staged for a Safety Officer to complete the operational checklist.",
+        "category": "Workshop",
+        "status": "safety_check",
+        "coordinator": "coordinator2@example.com",
+        "days": 42, "time": time(9, 0),
+        "expected_attendance": 60, "capacity_needed": 72,
+        "required_layout": "Classroom",
+        "accessibility_needs": "Step-free access and hearing loop",
+        "required_facilities": ["Projector", "Whiteboard", "Power outlets"],
+        "registration_required": 1, "intended_capacity": 72,
+        "submitted_days_ago": 8,
+        "review_outcome": "approved",
+        "review_reason": "Coordinator approved; venue and equipment arrangements are ready for safety review.",
+        "review_days_ago": 5,
+    },
+    {
+        "name": "Community Fair Safety Check Demo",
+        "purpose": "Safety review demonstration",
+        "description": "Sample outdoor event staged for manual safety-check testing.",
+        "category": "Community",
+        "status": "safety_check",
+        "coordinator": "coordinator1@example.com",
+        "days": 50, "time": time(11, 0),
+        "expected_attendance": 120, "capacity_needed": 180,
+        "required_layout": "Standing",
+        "accessibility_needs": "Step-free viewing and accessible washroom",
+        "required_facilities": ["Portable stage", "Microphone", "Wi-Fi"],
+        "registration_required": 1, "intended_capacity": 180,
+        "submitted_days_ago": 9,
+        "review_outcome": "approved",
+        "review_reason": "Coordinator approved; arrangements are ready for operational safety review.",
+        "review_days_ago": 6,
     },
     {
         "name": "Industry Panel: Future of AI",
@@ -227,11 +352,19 @@ _HELPER_KEYS = {"coordinator", "days", "time", "submitted_days_ago",
                 "review_days_ago", "resubmits"}
 
 with app.app_context():
-    org = Organisation.query.first()
+    org = Organisation.query.filter_by(name="Acme Events Ltd").first()
     if not org:
         org = Organisation(name="Acme Events Ltd")
         db.session.add(org)
         db.session.commit()
+
+    # schema.sql normally inserts the roles, but ensure an older or partially
+    # initialized development database can still be seeded safely.
+    role_names = {role for entry in TEST_USERS for role in entry["roles"]}
+    existing_roles = {role.name for role in Role.query.filter(Role.name.in_(role_names))}
+    for role_name in sorted(role_names - existing_roles):
+        db.session.add(Role(name=role_name))
+    db.session.flush()
 
     created = 0
     for entry in TEST_USERS:
@@ -248,14 +381,44 @@ with app.app_context():
         created += 1
 
     venues_created = 0
+    venues_enriched = 0
     for entry in TEST_VENUES:
-        if Venue.query.filter_by(name=entry["name"]).first():
+        venue = Venue.query.filter_by(name=entry["name"]).first()
+        if venue:
+            # Add missing sample values without deleting catalogue values a
+            # venue staff member may already have added.
+            for field in ("facilities", "accessibility_features", "supported_layouts"):
+                existing_values = {
+                    str(value).strip().casefold()
+                    for value in getattr(venue, field)
+                    if str(value).strip()
+                }
+                for value in entry.get(field, []):
+                    normalized = value.strip()
+                    if normalized and normalized.casefold() not in existing_values:
+                        getattr(venue, field).append(normalized)
+                        existing_values.add(normalized.casefold())
+                        venues_enriched += 1
             continue
         db.session.add(Venue(**entry))
         venues_created += 1
 
     # Commit users/venues first so events can reference their ids.
     db.session.commit()
+
+    # -----------------------------------------------------------------
+    # Assign seeded venues to Venue Staff
+    # -----------------------------------------------------------------
+    venue_staff = User.query.filter_by(
+        email="venue@example.com"
+    ).first()
+
+    if venue_staff:
+        for venue in Venue.query.all():
+            if venue.created_by is None:
+                venue.created_by = venue_staff.id
+
+        db.session.commit()
 
     # -----------------------------------------------------------------
     # Events
@@ -304,6 +467,152 @@ with app.app_context():
 
     db.session.commit()
 
+
+    # -----------------------------------------------------------------
+    # Venue Booking Requests
+    # -----------------------------------------------------------------
+    # Sample requests for testing Venue Booking Request and Approval.
+    # Safe to re-run: existing bookings are not duplicated.
+
+    TEST_BOOKINGS = [
+        {
+            "event": "Quarterly All-Hands Meeting",
+            "venue": "Main Auditorium",
+            "status": "pending",
+            "start_hour": 14,
+            "duration": 2,
+            "coordinator": "coordinator1@example.com",
+        },
+        {
+            "event": "Leadership Workshop",
+            "venue": "Seminar Room A",
+            "status": "pending",
+            "start_hour": 9,
+            "start_minute": 30,
+            "duration": 3,
+            "coordinator": "coordinator2@example.com",
+        },
+        {
+            "event": "Leadership Workshop",
+            "venue": "Innovation Lab",
+            "status": "pending",
+            "start_hour": 9,
+            "start_minute": 30,
+            "duration": 3,
+            "coordinator": "coordinator2@example.com",
+        },
+        {
+            "event": "Hackathon Kickoff",
+            "venue": "Main Auditorium",
+            "status": "pending",
+            "start_hour": 9,
+            "duration": 2,
+            "coordinator": "coordinator2@example.com",
+        },
+        {
+            "event": "Industry Panel: Future of AI",
+            "venue": "Main Auditorium",
+            "status": "approved",
+            "start_hour": 17,
+            "duration": 2,
+            "coordinator": "coordinator1@example.com",
+        },
+        {
+            "event": "Alumni Networking Dinner",
+            "venue": "Banquet Hall",
+            "status": "approved",
+            "start_hour": 18,
+            "start_minute": 30,
+            "duration": 3,
+            "coordinator": "coordinator1@example.com",
+        },
+        {
+            "event": "Open Air Music Night",
+            "venue": "Outdoor Amphitheatre",
+            "status": "rejected",
+            "start_hour": 20,
+            "duration": 2,
+            "coordinator": "coordinator1@example.com",
+        },
+        {
+            "event": "Open Air Music Night (Revised)",
+            "venue": "Banquet Hall",
+            "status": "pending",
+            "start_hour": 20,
+            "duration": 2,
+            "coordinator": "coordinator1@example.com",
+        },
+        {
+            "event": "Charity Gala Evening",
+            "venue": "Community Events Hall",
+            "status": "withdrawn",
+            "start_hour": 19,
+            "duration": 3,
+            "coordinator": "coordinator1@example.com",
+        },
+    ]
+
+    bookings_created = 0
+
+    for entry in TEST_BOOKINGS:
+        event = Event.query.filter_by(
+            name=entry["event"],
+            organiser_id=organiser.id,
+        ).first()
+
+        venue = Venue.query.filter_by(
+            name=entry["venue"],
+        ).first()
+
+        coordinator = User.query.filter_by(
+            email=entry["coordinator"],
+        ).first()
+
+        if not event or not venue or not coordinator:
+            print(f"Skipping booking for {entry['event']}: missing data")
+            continue
+
+        # Avoid duplicate seeded bookings.
+        existing = VenueBooking.query.filter_by(
+            event_id=event.id,
+            venue_id=venue.id,
+        ).first()
+
+        if existing:
+            continue
+
+        start_datetime = datetime.combine(
+            event.proposed_date,
+            time(
+                entry["start_hour"],
+                entry.get("start_minute", 0),
+            ),
+        )
+
+        end_datetime = start_datetime + timedelta(
+            hours=entry["duration"],
+        )
+
+        booking = VenueBooking(
+            event_id=event.id,
+            venue_id=venue.id,
+            requested_by=coordinator.id,
+            status=entry["status"],
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+        )
+
+        db.session.add(booking)
+        bookings_created += 1
+
+    db.session.commit()
+
+    print(f"Seeded {bookings_created} new venue booking request(s).")
+
+
     print(f"Seeded {created} new test user(s). Password for all: '{DEFAULT_PASSWORD}'")
-    print(f"Seeded {venues_created} new sample venue(s).")
+    print(
+        f"Seeded {venues_created} new sample venue(s); "
+        f"added {venues_enriched} missing catalogue value(s)."
+    )
     print(f"Seeded {events_created} new sample event(s).")

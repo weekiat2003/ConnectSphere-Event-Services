@@ -17,6 +17,10 @@ import VenueBookingRequestView from "../views/VenueBookingRequestView.vue";
 import VenueSearchView from "../views/VenueSearchView.vue";
 import EquipmentView from "../views/EquipmentView.vue";
 
+import VenueCatalogueView from "../views/VenueCatalogueView.vue";
+import VenueAvailabilityView from "../views/VenueAvailabilityView.vue";
+import VenueBookingApprovalView from "../views/VenueBookingApprovalView.vue";
+import ChangeRequestReviewView from "../views/ChangeRequestReviewView.vue";
 
 
 const routes = [
@@ -105,9 +109,9 @@ const routes = [
     component: VenueSearchView,
     meta: { requiresAuth: true, roles: ["event_coordinator"] },
   },
-  
+
   {
-    path: "/venue-booking-request",
+    path: "/venues/request",
     name: "venue-booking-request",
     component: VenueBookingRequestView,
     meta: {
@@ -116,7 +120,7 @@ const routes = [
     },
   },
 
-    {
+  {
     path: "/equipment",
     name: "equipment",
     component: EquipmentView,
@@ -124,6 +128,36 @@ const routes = [
       requiresAuth: true,
       roles: ["technical_support_staff"],
     },
+  },
+  
+  {
+    path: "/venues/availability",
+    name: "venue-availability",
+    component: VenueAvailabilityView,
+    meta: { requiresAuth: true, roles: ["venue_staff", "event_coordinator"] },
+  },
+
+  {
+    path: "/venues",
+    name: "venue-catalogue",
+    component: VenueCatalogueView,
+    meta: { requiresAuth: true, roles: ["venue_staff", "event_coordinator"] },
+  },
+
+  {
+  path: "/venues/approval",
+  name: "venue-booking-approval",
+  component: VenueBookingApprovalView,
+  meta: {
+    requiresAuth: true,
+    roles: ["venue_staff"],
+  },
+  },
+  { path: "/change-requests", 
+    name: "change-request-review", 
+    component: ChangeRequestReviewView, 
+    meta: { 
+      requiresAuth: true }
   },
 ];
 

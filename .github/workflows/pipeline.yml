@@ -1,0 +1,269 @@
+name: pipeline
+
+# Continuous Delivery for ConnectSphere.
+#
+#   lint ─┐
+#   test ─┼─> package ─┬─> smoke ─┬─> staging ──> production
+#   audit ┘            └─> e2e  ──┘   (push to     (waits for a
+#                                     main only)   human approval)
+#
+# The release zip is built exactly once (package). smoke and e2e run that zip,
+# not the source, and staging/production receive the very same bytes.
+# No real deployment happens: staging and production are placeholders that
+# record the release's SHA-256 fingerprint.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION: "22"
+  RELEASE_ZIP: connectsphere-release.zip
+  ARTIFACT_NAME: connectsphere-release
+
+jobs:
+  # ---------------------------------------------------------------------
+  # 1. Checks on the source (run side by side)
+  # ---------------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install ruff==0.17.0
+      - name: Ruff (rules in ruff.toml)
+        run: ruff check .
+
+  # Job id stays "test" so the Week 6 required status check keeps working.
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      # In-memory SQLite (TestingConfig), so no database service is needed.
+      - name: Run unit and integration tests
+        run: python -m pytest -v
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Python dependencies (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit -r backend/requirements.txt
+      # Only what ships to users (--omit=dev); fail on high or critical.
+      - name: Frontend dependencies (npm audit)
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
+  # ---------------------------------------------------------------------
+  # 2. Build the release exactly once
+  # ---------------------------------------------------------------------
+  package:
+    needs: [ lint, test, audit ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build the frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Assemble the release zip
+        run: |
+          mkdir -p build/backend build/frontend build/database
+          pip install -r backend/requirements.txt -t build/backend/
+          cp -r backend/app backend/wsgi.py backend/requirements.txt build/backend/
+          cp -r frontend/dist/. build/frontend/
+          cp database/schema.sql build/database/
+          find build -name '__pycache__' -type d -prune -exec rm -rf {} +
+          cd build && zip -qr "../$RELEASE_ZIP" .
+      - name: Generate an SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: build/
+          format: spdx-json
+          artifact-name: sbom.spdx.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.RELEASE_ZIP }}
+
+  # ---------------------------------------------------------------------
+  # 3. Check the package itself (not the source)
+  # ---------------------------------------------------------------------
+  smoke:
+    needs: package
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: connectsphere
+        ports: [ "3306:3306" ]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      FLASK_ENV: production
+      DATABASE_URL: mysql+pymysql://root:root@127.0.0.1:3306/connectsphere
+      SECRET_KEY: ci-smoke-secret-key-not-for-real-use-0123456789
+      JWT_SECRET_KEY: ci-smoke-jwt-secret-key-not-for-real-use-0123456789
+    steps:
+      - uses: actions/checkout@v5        # only for smoke.sh and the seed script
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+      - name: Unzip the release
+        run: unzip -q "$RELEASE_ZIP" -d staged
+      - name: Load the packaged schema and seed test users
+        run: |
+          docker exec -i ${{ job.services.mysql.id }} \
+            mysql -uroot -proot connectsphere < staged/database/schema.sql
+          # PYTHONPATH makes the seed script import the PACKAGED app and libraries.
+          PYTHONPATH=staged/backend python backend/scripts/seed_users.py
+      - name: Run the release (not the source) and smoke-test it
+        run: |
+          cd staged/backend
+          python -m flask --app wsgi run --port 5000 > ../../app.log 2>&1 &
+          cd ../..
+          bash smoke.sh http://localhost:5000 || { echo "--- app.log ---"; cat app.log; exit 1; }
+
+  e2e:
+    needs: package
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: connectsphere
+        ports: [ "3306:3306" ]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      FLASK_ENV: production
+      DATABASE_URL: mysql+pymysql://root:root@127.0.0.1:3306/connectsphere
+      SECRET_KEY: ci-e2e-secret-key-not-for-real-use-0123456789
+      JWT_SECRET_KEY: ci-e2e-jwt-secret-key-not-for-real-use-0123456789
+    steps:
+      - uses: actions/checkout@v5        # only for the e2e tests and seed script
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+      - name: Install Playwright and its browser
+        run: |
+          pip install playwright==1.64.0
+          python -m playwright install --with-deps chromium
+      - name: Unzip the release
+        run: unzip -q "$RELEASE_ZIP" -d staged
+      - name: Load the packaged schema and seed test users
+        run: |
+          docker exec -i ${{ job.services.mysql.id }} \
+            mysql -uroot -proot connectsphere < staged/database/schema.sql
+          PYTHONPATH=staged/backend python backend/scripts/seed_users.py
+      - name: Run the release and test it through a browser
+        run: |
+          cd staged/backend
+          python -m flask --app wsgi run --port 5000 > ../../app.log 2>&1 &
+          cd ../..
+          python -m http.server 5173 --directory staged/frontend > frontend.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fs http://localhost:5000/api/health > /dev/null && break
+            sleep 1
+          done
+          python -m unittest discover -s e2e -v \
+            || { echo "--- app.log ---"; cat app.log; exit 1; }
+
+  # ---------------------------------------------------------------------
+  # 4. Delivery: the same zip moves to staging, then (after approval) production
+  # ---------------------------------------------------------------------
+  staging:
+    needs: [ smoke, e2e ]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: staging
+    outputs:
+      sha256: ${{ steps.fingerprint.outputs.sha256 }}
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+      - name: Fingerprint the release
+        id: fingerprint
+        run: |
+          SHA=$(sha256sum "$RELEASE_ZIP" | cut -d' ' -f1)
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Staging release candidate"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Package: \`$RELEASE_ZIP\`"
+            echo "- SHA-256: \`$SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - run: echo "Deploy to staging would go here (no deployment for this project)."
+
+  production:
+    needs: staging
+    runs-on: ubuntu-latest
+    environment: production        # Required reviewers on this environment = the human gate
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+      - name: Confirm this is the exact package staging received
+        env:
+          STAGING_SHA: ${{ needs.staging.outputs.sha256 }}
+        run: |
+          SHA=$(sha256sum "$RELEASE_ZIP" | cut -d' ' -f1)
+          echo "staging:    $STAGING_SHA"
+          echo "production: $SHA"
+          [ "$SHA" = "$STAGING_SHA" ] || { echo "Package changed between staging and production!"; exit 1; }
+          {
+            echo "### Production release"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- SHA-256: \`$SHA\` (matches staging)"
+            echo "- The approver is recorded in this run's deployment review."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - run: echo "Deploy to production would go here (no deployment for this project)."

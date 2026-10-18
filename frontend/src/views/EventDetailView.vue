@@ -38,7 +38,7 @@
       </div>
       <div v-if="event.reviewDecision?.outcome" class="notice" :class="event.reviewDecision.outcome">
         <strong>
-          {{ event.reviewDecision.outcome === "approved" ? "Request approved" : "Request rejected" }}
+          Coordinator {{ event.reviewDecision.outcome === "approved" ? "approved" : "rejected" }} request
         </strong>
         <p class="decision-meta">
           By {{ event.reviewDecision.coordinatorName || `Coordinator #${event.reviewDecision.coordinatorId}` }}
@@ -46,6 +46,12 @@
         </p>
         <p v-if="event.reviewDecision.reason" class="decision-reason">
           <strong>Reason:</strong> {{ event.reviewDecision.reason }}
+        </p>
+      </div>
+      <div v-if="event.safetyReviews?.length" class="notice">
+        <strong>Latest safety decision: {{ event.safetyReviews.at(-1).decision.replaceAll("_", " ") }}</strong>
+        <p v-if="event.safetyReviews.at(-1).comments" class="decision-reason">
+          {{ event.safetyReviews.at(-1).comments }}
         </p>
       </div>
       <p class="description">{{ event.description }}</p>
@@ -116,6 +122,40 @@
         </li>
       </ul>
 
+    </div>
+
+    <div v-if="changeRequests.length" class="card history">
+      <h3 class="section-title">Change and Withdrawal Requests</h3>
+      <ul class="thread-list">
+        <li v-for="request in changeRequests" :key="request.id" class="thread-item">
+          <div class="change-header">
+            <span class="badge" :class="request.status">{{ statusLabel(request.status) }}</span>
+            <span v-if="request.requestType === 'withdrawal'" class="badge withdrawal">Withdrawal</span>
+            <span v-else class="badge" :class="request.isSignificant ? 'significant' : 'routine'">
+              {{ request.isSignificant ? "Significant" : "Routine" }}
+            </span>
+            <span class="thread-meta">Requested {{ formatDate(request.createdAt) }} </span>
+          </div>
+          <p class="change-reason"><strong>Reason:</strong> {{ request.reason }}</p>
+          <ul v-if="request.requestType !== 'withdrawal'" class="change-list">
+            <li v-for="(change, key) in request.requestedChanges" :key="key">
+              <strong>{{ CHANGE_LABELS[key] || key }}:</strong>
+              {{ formatChangeValue(key, change.from) }} → {{ formatChangeValue(key, change.to) }}
+            </li>
+          </ul>
+          <p v-if="request.decisionReason" class="change-reason">
+            <strong>Coordinator's reason:</strong> {{ request.decisionReason }}
+          </p>
+          <router-link
+            v-if="isAssignedCoordinator"
+            :to="{ name: 'change-request-review', query: { id: request.id } }"
+          >Open in review</router-link>
+          <p v-if="request.decidedAt" class="change-reason"><strong>Processed:</strong> {{ formatDate(request.decidedAt) }}</p>
+          <p v-if="request.status === 're_review' && request.reReviewAt" class="change-reason" >
+            <strong>Sent for re-review</strong> by the assigned Coordinator on {{ formatDate(request.reReviewAt) }}. Affected arrangements are flagged for reconsideration; proposed values are not applied yet.
+          </p>
+        </li>
+      </ul>
     </div>
 
     <!-- Coordinator Assignment: visible to any Coordinator when the event has
@@ -205,6 +245,44 @@
       </div>
     </section>
 
+    <section v-if="auth.hasRole('safety_officer') && event.status === 'safety_check'">
+      <h3 class="section-title">Operational Safety Check</h3>
+      <div class="action-block">
+        <fieldset class="safety-checklist">
+          <legend>Factors assessed</legend>
+          <label v-for="factor in safetyFactors" :key="factor.key">
+            <input v-model="assessedSafetyFactors" type="checkbox" :value="factor.key">
+            {{ factor.label }}
+          </label>
+        </fieldset>
+        <fieldset class="safety-checklist">
+          <legend>Factors of concern</legend>
+          <label v-for="factor in safetyFactors" :key="factor.key">
+            <input v-model="concernSafetyFactors" type="checkbox" :value="factor.key">
+            {{ factor.label }}
+          </label>
+        </fieldset>
+        <fieldset class="safety-checklist">
+          <legend>Affected arrangements</legend>
+          <label>
+            <input v-model="affectedSafetyArrangements" type="checkbox" value="venue">
+            Venue
+          </label>
+          <label>
+            <input v-model="affectedSafetyArrangements" type="checkbox" value="equipment">
+            Equipment
+          </label>
+        </fieldset>
+        <textarea v-model="comment" placeholder="Reason (required for rejection or change requests)"></textarea>
+        <p v-if="safetyError" class="field-error">{{ safetyError }}</p>
+        <div class="actions">
+          <button class="btn btn-mint" @click="submitSafetyDecision('approved')">Approve safety</button>
+          <button class="btn btn-rose" @click="submitSafetyDecision('rejected')">Reject arrangement</button>
+          <button class="btn btn-butter" @click="submitSafetyDecision('changes_requested')">Request changes</button>
+        </div>
+      </div>
+    </section>
+
     <!-- Organiser Actions: Event Review and Approval -->
     <section v-if="isOwningOrganiser">
       <template v-if="canRespondToClarifications && openClarifications.length">
@@ -259,6 +337,109 @@
           </div>
         </div>
       </template>
+      <div v-if="canRequestChange" class="action-block">
+        <template v-if="!showChangeForm">
+          <h3 class="block-title">Need to change something?</h3>
+          <p class="notice-inline">Your event stays as it is until the coordinator decides on your request.</p>
+          <div class="actions">
+            <button class="btn btn-primary" @click="openChangeForm">Request a Change</button>
+          </div>
+        </template>
+
+        <template v-else>
+          <h3 class="block-title">Request a Change</h3>
+          <p class="notice-inline">Fill in only what you want to change and leave everything else blank.</p>
+
+          <div v-for="field in CHANGE_FIELDS" :key="field.key" class="change-row">
+            <span class="detail-label">{{ field.label }}</span>
+            <span class="change-current">Current: {{ formatChangeValue(field.key, field.current(event)) }}</span>
+            <textarea v-if="field.type === 'textarea'" v-model="changeForm[field.key]" placeholder="Proposed value"></textarea>
+            <input v-else-if="field.type === 'number'" v-model.number="changeForm[field.key]" type="number" min="1" placeholder="Proposed value" />
+            <input v-else v-model="changeForm[field.key]" :type="field.type" placeholder="Proposed value" />
+            <p v-if="changeErrors[field.key]" class="field-error">{{ changeErrors[field.key] }}</p>
+          </div>
+
+          <div class="change-row">
+            <span class="detail-label">Venue</span>
+            <span class="change-current">Current: {{ currentVenueLabel }}</span>
+            <select v-model="changeForm.venue_id">
+              <option value="">Keep current venue</option>
+              <option v-for="venue in venues" :key="venue.id" :value="venue.id">
+                {{ venue.name }} (capacity {{ venue.capacity }})
+              </option>
+            </select>
+            <p v-if="changeErrors.venue_id" class="field-error">{{ changeErrors.venue_id }}</p>
+          </div>
+
+          <div class="change-row">
+            <span class="detail-label">Equipment</span>
+            <span class="change-current">Current: {{ currentEquipmentLabel }}</span>
+            <button v-if="changeEquipment === null" type="button" class="btn btn-grey btn-small" @click="startEquipmentChange">
+              Change equipment
+            </button>
+            <template v-else>
+              <div v-for="(item, index) in changeEquipment" :key="index" class="equipment-row">
+                <select v-model="item.type">
+                  <option value="" disabled>Choose equipment</option>
+                  <option v-if="item.type && !equipmentCatalogue.some((e) => e.name === item.type)" :value="item.type">
+                    {{ item.type }} (not in catalogue)
+                  </option>
+                  <option v-for="entry in equipmentCatalogue" :key="entry.id" :value="entry.name">
+                    {{ entry.name }}
+                  </option>
+                </select>
+                <input v-model.number="item.quantity" type="number" min="1" />
+                <button type="button" class="btn btn-grey btn-small" @click="removeEquipmentRow(index)">Remove</button>
+              </div>
+              <div class="actions">
+                <button type="button" class="btn btn-grey btn-small" @click="addEquipmentRow">Add item</button>
+                <button type="button" class="btn btn-grey btn-small" @click="changeEquipment = null">Keep current equipment</button>
+              </div>
+            </template>
+            <p v-if="changeErrors.equipment_requirements" class="field-error">{{ changeErrors.equipment_requirements }}</p>
+          </div>
+
+          <label class="field-row">
+            Reason for the change
+            <textarea v-model="changeReason" placeholder="Why do you need this change?"></textarea>
+          </label>
+          <p v-if="changeErrors.reason" class="field-error">{{ changeErrors.reason }}</p>
+          <p v-if="changeErrors.changes" class="field-error">{{ changeErrors.changes }}</p>
+          <p v-if="changeErrors.event" class="field-error">{{ changeErrors.event }}</p>
+
+          <div class="actions">
+            <button class="btn btn-primary" :disabled="changeSubmitting" @click="submitChangeRequest">Submit Change Request</button>
+            <button class="btn btn-grey" :disabled="changeSubmitting" @click="showChangeForm = false">Cancel</button>
+          </div>
+        </template>
+      </div>
+
+      <div v-if="canRequestWithdrawal" class="action-block">
+        <template v-if="!showWithdrawalForm">
+          <h3 class="block-title">No longer need this event?</h3>
+          <p class="notice-inline">Ask the coordinator to withdraw it. Your event stays as it is until they decide.</p>
+          <div class="actions">
+            <button class="btn btn-grey" @click="openWithdrawalForm">Request Withdrawal</button>
+          </div>
+        </template>
+
+        <template v-else>
+          <h3 class="block-title">Request Withdrawal</h3>
+          <label class="field-row">
+            Reason for withdrawing
+            <textarea v-model="withdrawalReason" placeholder="Why do you want to withdraw this event?"></textarea>
+          </label>
+          <p v-if="withdrawalErrors.reason" class="field-error">{{ withdrawalErrors.reason }}</p>
+          <p v-if="withdrawalErrors.request" class="field-error">{{ withdrawalErrors.request }}</p>
+          <p v-if="withdrawalErrors.event" class="field-error">{{ withdrawalErrors.event }}</p>
+          <div class="actions">
+            <button class="btn btn-rose" :disabled="withdrawalSubmitting" @click="submitWithdrawalRequest">
+              Submit Withdrawal Request
+            </button>
+            <button class="btn btn-grey" :disabled="withdrawalSubmitting" @click="showWithdrawalForm = false">Cancel</button>
+          </div>
+        </template>
+      </div>
 
       <div v-if="event.status === 'rejected' && event.canResubmit" class="action-block">
         <h3 class="block-title">Revise and Resubmit</h3>
@@ -337,6 +518,7 @@ import { useAuthStore } from "../stores/auth";
 import eventsApi from "../api/events";
 import usersApi from "../api/users";
 import { useConfirm } from "../composables/useConfirm";
+import changeRequestsApi from "../api/changeRequests";
 
 const route = useRoute();
 const router = useRouter();
@@ -344,6 +526,9 @@ const auth = useAuthStore();
 
 const event = ref(null);
 const comment = ref("");
+const assessedSafetyFactors = ref([]);
+const concernSafetyFactors = ref([]);
+const affectedSafetyArrangements = ref([]);
 const responseNotes = ref("");
 const newCoordinatorId = ref(null);
 const coordinators = ref([]);
@@ -353,7 +538,19 @@ const reviewHistory = ref([]);
 
 const confirmState = ref(null); // { message, onConfirm, onCancel }
 const actionError = ref("");
+const safetyError = ref("");
 const { confirm } = useConfirm();
+
+const safetyFactors = [
+  { key: "expected_attendance", label: "Expected attendance" },
+  { key: "venue_capacity", label: "Venue capacity" },
+  { key: "venue_layout", label: "Venue layout" },
+  { key: "emergency_access", label: "Emergency access" },
+  { key: "accessibility", label: "Accessibility requirements" },
+  { key: "equipment_placement", label: "Equipment placement" },
+  { key: "crowd_movement", label: "Crowd movement" },
+  { key: "venue_restrictions", label: "Known venue restrictions" },
+];
 
 const EDITABLE_FIELD_OPTIONS = [
   { key: "name", label: "Event name", type: "text" },
@@ -371,7 +568,14 @@ const EDITABLE_FIELD_OPTIONS = [
 const editableFields = ref([]);       // coordinator's selection when requesting clarification
 
 // "under_review" -> "under review"
-const statusLabel = (status) => (status || "").replace(/_/g, " ");
+const statusLabel = (status) => {
+  const labels = {
+    re_review: "Under re-review",
+  };
+  return labels[status] || String(status || "")
+    .replace(/_/g, " ")
+    .replace(/^./, (c) => c.toUpperCase());
+};
 
 const isAssignedCoordinator = computed(
   () => auth.hasRole("event_coordinator") && event.value?.coordinatorId === auth.user?.id
@@ -409,6 +613,181 @@ const revisionForm = reactive({
 });
 const revisionError = ref("");
 
+// ---- Event change requests ----
+const changeRequests = ref([]);
+const canRequestChange = ref(false);
+const currentVenueId = ref(null);
+const venues = ref([]);
+const equipmentCatalogue = ref([]);
+const showChangeForm = ref(false);
+const changeForm = reactive({}); // only fields that have a value are sent
+const changeEquipment = ref(null); // null = keep the current equipment
+const changeReason = ref("");
+const changeErrors = ref({}); // field -> message from the server
+const changeSubmitting = ref(false);
+
+// ---- Event withdrawal requests ----
+const canRequestWithdrawal = ref(false);
+const showWithdrawalForm = ref(false);
+const withdrawalReason = ref("");
+const withdrawalErrors = ref({});
+const withdrawalSubmitting = ref(false);
+
+const CHANGE_FIELDS = [
+  { key: "proposed_date", label: "Date", type: "date", current: (e) => e.proposedDate },
+  { key: "proposed_time", label: "Time", type: "time", current: (e) => e.proposedTime },
+  { key: "expected_attendance", label: "Expected attendance", type: "number", current: (e) => e.expectedAttendance },
+  { key: "capacity_needed", label: "Equipment Required", type: "number", current: (e) => e.venueRequirements?.capacityNeeded },
+  { key: "required_layout", label: "Venue Required", type: "text", current: (e) => e.venueRequirements?.requiredLayout },
+  { key: "accessibility_needs", label: "Accessibility needs", type: "textarea", current: (e) => e.venueRequirements?.accessibilityNeeds },
+  { key: "name", label: "Event name", type: "text", current: (e) => e.name },
+  { key: "description", label: "Description", type: "textarea", current: (e) => e.description },
+];
+
+const CHANGE_LABELS = {
+  ...Object.fromEntries(CHANGE_FIELDS.map((f) => [f.key, f.label])),
+  venue_id: "Venue",
+  equipment_requirements: "Equipment",
+};
+
+const venueName = (id) => venues.value.find((v) => v.id === id)?.name || (id ? `Venue #${id}` : "None");
+
+function formatChangeValue(key, value) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (key === "venue_id") return venueName(value);
+  if (key === "equipment_requirements") {
+    return value.length ? value.map((i) => `${i.quantity} × ${i.type}`).join(", ") : "None";
+  }
+  if (key === "proposed_time") return String(value).slice(0, 5);
+  return Array.isArray(value) ? value.join(", ") : String(value);
+}
+
+const currentVenueLabel = computed(() => (currentVenueId.value ? venueName(currentVenueId.value) : "—"));
+const currentEquipmentLabel = computed(() =>
+  formatChangeValue(
+    "equipment_requirements",
+    (event.value?.equipmentRequirements || []).map((e) => ({ type: e.type, quantity: e.quantity }))
+  )
+);
+
+async function ensureCatalogue() {
+  if (venues.value.length || equipmentCatalogue.value.length) return;
+  try {
+    const { data } = await changeRequestsApi.getCatalogue();
+    venues.value = data.venues || [];
+    equipmentCatalogue.value = data.equipment || [];
+  } catch (e) {
+    console.error("Could not load the catalogue", e.response?.status, e.response?.data || e);
+  }
+}
+
+async function loadChangeRequests() {
+  try {
+    if (isOwningOrganiser.value) {
+      const { data } = await changeRequestsApi.getForEvent(event.value.id);
+      canRequestChange.value = data.canRequestChange;
+      canRequestWithdrawal.value = data.canRequestWithdrawal;
+      currentVenueId.value = data.currentVenueId ?? null;
+      changeRequests.value = data.requests || [];
+    } else if (isAssignedCoordinator.value) {
+      const { data } = await changeRequestsApi.listAssigned();
+      changeRequests.value = data.filter((r) => r.eventId === event.value.id).sort((a, b) => b.id - a.id);
+      canRequestChange.value = false;
+      canRequestWithdrawal.value = false;
+    } else {
+      changeRequests.value = [];
+      canRequestChange.value = false;
+      canRequestWithdrawal.value = false;
+    }
+  } catch (e) {
+    changeRequests.value = [];
+    canRequestChange.value = false;
+    canRequestWithdrawal.value = false;
+  }
+  if (changeRequests.value.some((r) => r.requestedChanges?.venue_id)) await ensureCatalogue();
+}
+
+function resetChangeForm() {
+  for (const field of CHANGE_FIELDS) changeForm[field.key] = field.type === "number" ? null : "";
+  changeForm.venue_id = "";
+  changeEquipment.value = null;
+  changeReason.value = "";
+  changeErrors.value = {};
+}
+
+async function openChangeForm() {
+  await ensureCatalogue();
+  resetChangeForm();
+  showChangeForm.value = true;
+}
+
+function startEquipmentChange() {
+  changeEquipment.value = (event.value.equipmentRequirements || []).map((e) => ({
+    type: e.type,
+    quantity: e.quantity,
+  }));
+}
+const addEquipmentRow = () => changeEquipment.value.push({ type: "", quantity: 1 });
+const removeEquipmentRow = (index) => changeEquipment.value.splice(index, 1);
+
+function buildChanges() {
+  const changes = {};
+  for (const field of CHANGE_FIELDS) {
+    const value = changeForm[field.key];
+    if (value !== "" && value !== null && value !== undefined) changes[field.key] = value;
+  }
+  if (changeForm.venue_id !== "") changes.venue_id = changeForm.venue_id;
+  if (changeEquipment.value !== null) changes.equipment_requirements = changeEquipment.value;
+  return changes;
+}
+
+async function submitChangeRequest() {
+  changeErrors.value = {};
+  const confirmed = await confirm(
+    "Submit this change request? Your event stays exactly as it is until the coordinator decides."
+  );
+  if (!confirmed) return;
+
+  changeSubmitting.value = true;
+  try {
+    await changeRequestsApi.submit(event.value.id, { changes: buildChanges(), reason: changeReason.value });
+    showChangeForm.value = false;
+    resetChangeForm();
+    await load();
+  } catch (e) {
+    const data = e.response?.data;
+    changeErrors.value = data?.errors || { event: data?.error || "Could not submit the change request." };
+  } finally {
+    changeSubmitting.value = false;
+  }
+}
+
+function openWithdrawalForm() {
+  withdrawalReason.value = "";
+  withdrawalErrors.value = {};
+  showWithdrawalForm.value = true;
+}
+
+async function submitWithdrawalRequest() {
+  withdrawalErrors.value = {};
+  const confirmed = await confirm(
+    "Ask the coordinator to withdraw this event? Nothing changes until they decide."
+  );
+  if (!confirmed) return;
+
+  withdrawalSubmitting.value = true;
+  try {
+    await changeRequestsApi.requestWithdrawal(event.value.id, { reason: withdrawalReason.value });
+    showWithdrawalForm.value = false;
+    await load();
+  } catch (e) {
+    const data = e.response?.data;
+    withdrawalErrors.value = data?.errors || { event: data?.error || "Could not submit the withdrawal request." };
+  } finally {
+    withdrawalSubmitting.value = false;
+  }
+}
+
 const formatFieldNames = (keys) =>
   (keys || []).map((k) => EDITABLE_FIELD_OPTIONS.find((o) => o.key === k)?.label || k).join(", ");
 
@@ -431,6 +810,27 @@ async function load() {
   }
 
   clarificationThread.value.filter((item) => item.response === null).forEach(ensureResponseForm);
+  await loadChangeRequests(); 
+}
+
+async function submitSafetyDecision(decision) {
+  safetyError.value = "";
+  try {
+    await eventsApi.reviewSafety(event.value.id, {
+      decision,
+      comments: comment.value,
+      assessedFactors: assessedSafetyFactors.value,
+      concernFactors: concernSafetyFactors.value,
+      affectedArrangements: affectedSafetyArrangements.value,
+    });
+    comment.value = "";
+    assessedSafetyFactors.value = [];
+    concernSafetyFactors.value = [];
+    affectedSafetyArrangements.value = [];
+    await load();
+  } catch (error) {
+    safetyError.value = error.response?.data?.error || "Could not submit the safety decision.";
+  }
 }
 
 async function loadCoordinators() {
@@ -1050,85 +1450,37 @@ input {
   font: inherit;
 }
 
-textarea::placeholder,
-input::placeholder {
-  color: #a5a2c2;
-}
-
-textarea:focus,
-input:focus {
-  outline: none;
-  border-color: var(--primary, #6d5bd0);
-  background: #ffffff;
-  box-shadow: 0 0 0 3px var(--primary-tint, #ebe7ff);
-}
-
-textarea {
-  min-height: 4.5rem;
-  resize: vertical;
-}
+textarea::placeholder, input::placeholder { color: #a5a2c2; }
+textarea:focus, input:focus { outline: none; border-color: var(--primary, #6d5bd0); background: #ffffff; box-shadow: 0 0 0 3px var(--primary-tint, #ebe7ff); }
+textarea { min-height: 4.5rem; resize: vertical; }
 
 /* Buttons: colour matches meaning */
-.btn {
-  padding: 0.5rem 1.1rem;
-  border: none;
-  border-radius: 999px;
-  font: inherit;
-  font-size: 0.9rem;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.btn:focus-visible {
-  outline: 2px solid var(--primary, #6d5bd0);
-  outline-offset: 2px;
-}
-
-.btn-primary {
-  background: var(--primary, #6d5bd0);
-  color: #ffffff;
-}
-.btn-primary:hover {
-  background: var(--primary-hover, #5b49bd);
-}
-
-.btn-mint {
-  background: var(--mint-bg, #d3f5e3);
-  color: var(--mint-text, #1e6b47);
-}
-.btn-mint:hover {
-  background: #bdeed3;
-}
-
-.btn-rose {
-  background: var(--rose-bg, #ffdce3);
-  color: var(--rose-text, #a12b47);
-}
-.btn-rose:hover {
-  background: #ffc9d4;
-}
-
-.btn-butter {
-  background: var(--butter-bg, #fff1c2);
-  color: var(--butter-text, #8a5a00);
-}
-.btn-butter:hover {
-  background: #ffe8a0;
-}
-
-.btn-sky {
-  background: var(--sky-bg, #d6ecff);
-  color: var(--sky-text, #1f5f99);
-}
-.btn-sky:hover {
-  background: #bfe0ff;
-}
-
-.btn-grey {
-  background: #c6cfd7;
-  color: #626364;
-}
-.btn-grey:hover {
-  background: #b0b3b6;
-}
+.btn { padding: 0.5rem 1.1rem; border: none; border-radius: 999px; font: inherit; font-size: 0.9rem; font-weight: 500; cursor: pointer; }
+.btn:focus-visible { outline: 2px solid var(--primary, #6d5bd0); outline-offset: 2px; }
+.btn-primary { background: var(--primary, #6d5bd0); color: #ffffff; }
+.btn-primary:hover { background: var(--primary-hover, #5b49bd); }
+.btn-mint { background: var(--mint-bg, #d3f5e3); color: var(--mint-text, #1e6b47); }
+.btn-mint:hover { background: #bdeed3; }
+.btn-rose { background: var(--rose-bg, #ffdce3); color: var(--rose-text, #a12b47); }
+.btn-rose:hover { background: #ffc9d4; }
+.btn-butter { background: var(--butter-bg, #fff1c2); color: var(--butter-text, #8a5a00); }
+.btn-butter:hover { background: #ffe8a0; }
+.btn-sky { background: var(--sky-bg, #d6ecff); color: var(--sky-text, #1f5f99); }
+.btn-sky:hover { background: #bfe0ff; }
+.btn-grey { background: #c6cfd7;  color: #626364; }
+.btn-grey:hover { background: #b0b3b6; }
+.change-row { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.75rem; }
+.change-current { font-size: 0.85rem; color: var(--text-muted, #6b6890); }
+.equipment-row { display: flex; gap: 0.5rem; align-items: center; }
+.equipment-row input:first-child { flex: 1; }
+.equipment-row input[type="number"] { width: 5rem; }
+.change-header { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.change-list { margin: 0.4rem 0; padding-left: 1.2rem; }
+.change-reason { margin: 0.4rem 0 0; }
+.badge.pending { background: var(--butter-bg, #fff1c2); }
+.badge.processed { background: var(--mint-bg, #d3f5e3); }
+.badge.re_review { background: var(--butter-bg, #fff1c2); color: var(--butter-text, #8a5a00); }
+.badge.cannot_accommodate,
+.badge.significant { background: var(--rose-bg, #fbdcdc); }
+.badge.routine { background: var(--sky-bg, #d6ecff); }
 </style>

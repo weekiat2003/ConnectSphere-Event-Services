@@ -100,7 +100,11 @@ const stats = computed(() => {
 
 
 onMounted(async () => {
-  const call = auth.hasRole("event_coordinator") ? eventsApi.assignedEvents : eventsApi.myEvents;
+  const call = auth.hasRole("safety_officer")
+    ? eventsApi.allEvents
+    : auth.hasRole("event_coordinator")
+      ? eventsApi.assignedEvents
+      : eventsApi.myEvents;
   const { data } = await call();
   events.value = data;
 });

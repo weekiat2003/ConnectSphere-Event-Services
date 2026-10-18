@@ -32,7 +32,14 @@ def app():
     application = create_app("testing")
     with application.app_context():
         db.create_all()
-        for name in ("event_organiser", "event_coordinator", "venue_staff", "technical_support_staff", "attendee"):
+        for name in (
+            "event_organiser",
+            "event_coordinator",
+            "venue_staff",
+            "technical_support_staff",
+            "safety_officer",
+            "attendee",
+        ):
             db.session.add(Role(name=name))
         db.session.commit()
         yield application

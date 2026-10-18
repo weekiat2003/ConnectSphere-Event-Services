@@ -1,4 +1,3 @@
-from datetime import datetime
 from app.common.time import utcnow
 
 from app.extensions import db
@@ -7,7 +6,7 @@ created_at = db.Column(db.DateTime, default=utcnow)
 updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 EVENT_STATUSES = (
     "draft", "submitted", "under_review", "approved",
-    "planning", "confirmed", "completed", "cancelled", "rejected",
+    "planning", "safety_check", "confirmed", "completed", "cancelled", "rejected",
 )
 STATUS_LABELS = {s: s.replace("_", " ").capitalize() for s in EVENT_STATUSES}
 UNKNOWN_STATUS_LABEL = "Unknown status"
@@ -52,7 +51,7 @@ class Event(db.Model):
     resubmitted_from_event_id = db.Column(db.BigInteger, db.ForeignKey("events.id"))
 
     created_at = db.Column(db.DateTime, default=utcnow())
-    updated_at = db.Column(db.DateTime, default=utcnow(), onupdate=utcnow())
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     submitted_at = db.Column(db.DateTime)
 
     equipment_requirements = db.relationship(
@@ -65,6 +64,7 @@ class Event(db.Model):
         cascade="all, delete-orphan",
     )
     status_history = db.relationship("EventStatusHistory", backref="event", cascade="all, delete-orphan")
+    safety_reviews = db.relationship("EventSafetyReview", backref="event", cascade="all, delete-orphan")
     coordinator_history = db.relationship(
         "EventCoordinatorHistory", backref="event", cascade="all, delete-orphan"
     )
@@ -78,6 +78,9 @@ class Event(db.Model):
 
     clarification_responses = db.relationship(
         "EventClarificationResponse", backref="event", cascade="all, delete-orphan"
+    )
+    field_edit_logs = db.relationship(
+        "EventFieldEditLog", backref="event", cascade="all, delete-orphan"
     )
 
 
@@ -117,6 +120,7 @@ class Event(db.Model):
                 "requiredFacilities": self.required_facilities or [],
             },
             "equipmentRequirements": [e.to_dict() for e in self.equipment_requirements],
+            "venueBookings": [booking.to_dict() for booking in self.venue_bookings],
             "registrationRequired": self.registration_required,
             "intendedCapacity": self.intended_capacity,
             "clarificationFlag": self.clarification_flag,
@@ -128,6 +132,7 @@ class Event(db.Model):
                 "coordinatorId": self.review_coordinator_id,
                 "coordinatorName": self.review_coordinator.name if self.review_coordinator else None,
             },
+            "safetyReviews": [review.to_dict() for review in self.safety_reviews],
             "resubmittedFromEventId": self.resubmitted_from_event_id,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
@@ -145,7 +150,10 @@ class EventEquipmentRequirement(db.Model):
     technical_notes = db.Column(db.Text)
     status = db.Column(db.String(20), default="requested")
     created_at = db.Column(db.DateTime, default=utcnow())
-    updated_at = db.Column(db.DateTime, default=utcnow(), onupdate=utcnow())
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+    testing_status = db.Column(db.String(20), nullable=False, default="pending")
+    installation_status = db.Column(db.String(20), nullable=False, default="pending")
+    needs_recheck = db.Column(db.Boolean, nullable=False, default=False)
 
     def to_dict(self):
         return {
@@ -154,6 +162,10 @@ class EventEquipmentRequirement(db.Model):
             "quantity": self.quantity,
             "technicalNotes": self.technical_notes,
             "status": self.status,
+            "testingStatus": self.testing_status,
+            "installationStatus": self.installation_status,
+            "needsRecheck": self.needs_recheck,
+            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
@@ -219,6 +231,36 @@ class EventStatusHistory(db.Model):
     changed_at = db.Column(db.DateTime, default=utcnow())
 
 
+class EventSafetyReview(db.Model):
+    __tablename__ = "event_safety_reviews"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    event_id = db.Column(db.BigInteger, db.ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    safety_officer_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    decision = db.Column(db.String(30), nullable=False)
+    comments = db.Column(db.Text)
+    assessed_factors = db.Column(db.JSON, nullable=False, default=list)
+    concern_factors = db.Column(db.JSON, nullable=False, default=list)
+    affected_arrangements = db.Column(db.JSON, nullable=False, default=list)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    safety_officer = db.relationship("User", foreign_keys=[safety_officer_id])
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "eventId": self.event_id,
+            "safetyOfficerId": self.safety_officer_id,
+            "safetyOfficerName": self.safety_officer.name if self.safety_officer else None,
+            "decision": self.decision,
+            "comments": self.comments,
+            "assessedFactors": self.assessed_factors,
+            "concernFactors": self.concern_factors,
+            "affectedArrangements": self.affected_arrangements,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class EventCoordinatorHistory(db.Model):
     __tablename__ = "event_coordinator_history"
 
@@ -228,3 +270,17 @@ class EventCoordinatorHistory(db.Model):
     assigned_at = db.Column(db.DateTime, default=utcnow())
     unassigned_at = db.Column(db.DateTime)
     assignment_type = db.Column(db.String(20), default="auto")  # auto | reassignment
+class EventFieldEditLog(db.Model):
+    """Audit trail for ISP-118 US-1 edits and US-4 lock-rejection attempts."""
+    __tablename__ = "event_field_edit_logs"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    event_id = db.Column(db.BigInteger, db.ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    changed_by = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=True)
+    fields_changed = db.Column(db.JSON, nullable=False)
+    old_values = db.Column(db.JSON, nullable=False)
+    new_values = db.Column(db.JSON, nullable=False)
+    was_significant = db.Column(db.Boolean, nullable=False, default=False)
+    was_rejected = db.Column(db.Boolean, nullable=False, default=False)
+    rejection_reason = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow)

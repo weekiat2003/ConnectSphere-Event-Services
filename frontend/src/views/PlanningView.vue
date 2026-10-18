@@ -43,7 +43,7 @@
       <tbody>
         <tr v-for="e in filteredEvents" :key="e.id">
           <td>{{ e.name || "(untitled)" }}</td>
-          <td><span class="badge" :class="e.status">{{ e.status }}</span></td>
+          <td><span class="badge" :class="e.status">{{ e.status.replaceAll("_", " ") }}</span></td>
           <td>{{ e.proposedDate || "—" }} {{ e.proposedTime || "" }}</td>
           <td>{{ e.expectedAttendance ?? "—" }}</td>
           <td>
@@ -149,7 +149,7 @@ onMounted(load);
 }
 .badge.approved, .badge.confirmed, .badge.completed { background: #d7f5dd; }
 .badge.rejected, .badge.cancelled { background: #fbdcdc; }
-.badge.under_review, .badge.submitted, .badge.planning { background: #fff3cd; }
+.badge.under_review, .badge.submitted, .badge.planning, .badge.safety_check { background: #fff3cd; }
 .badge.unassigned { background: #ffe0b2; }
 .empty-state {
   color: #666;

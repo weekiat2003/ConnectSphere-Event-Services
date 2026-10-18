@@ -4,36 +4,105 @@ from app.models.venue import (
     ACTIVE_BOOKING_STATUSES,
     BOOKING_APPROVED,
     Venue,
-    VenueAvailabilityFlag,
     VenueBooking,
 )
-SUITABILITY_FIELDS = {"capacity", "supported_layouts", "accessibility_features"}
+SUITABILITY_FIELDS = {"capacity", "supported_layouts", "accessibility_features", "operating_hours"}
 TIMING_FIELDS = {"setup_minutes", "turnaround_minutes"}  # Week 7 change #1
+LIST_FIELDS = {"supported_layouts", "facilities", "accessibility_features"}
+
+
+_LIST_FIELDS = ("supportedLayouts", "facilities", "accessibilityFeatures")
+
+
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate(data: dict, *, partial: bool) -> dict:
+    """Validate venue input and return cleaned values (keyed like `data`).
+    partial=True (updates) only checks keys that are present; partial=False
+    (create) additionally requires name and capacity. Raises ValueError."""
+    clean = {}
+
+    if not partial or "name" in data:
+        name = data.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Venue name is required")
+        clean["name"] = name.strip()
+
+    if not partial or "capacity" in data:
+        capacity = data.get("capacity")
+        if capacity is None or capacity == "":
+            raise ValueError("Venue capacity is required")
+        if not _is_int(capacity):
+            raise ValueError("Venue capacity must be a whole number")
+        if capacity <= 0:
+            raise ValueError("Venue capacity must be greater than zero")
+        clean["capacity"] = capacity
+
+    for key, label in (("setupMinutes", "Setup time"), ("turnaroundMinutes", "Turnaround time")):
+        if key in data or not partial:
+            value = data.get(key, 0)
+            if value is None:
+                value = 0
+            if not _is_int(value):
+                raise ValueError(f"{label} must be a whole number of minutes")
+            if value < 0:
+                raise ValueError(f"{label} cannot be negative")
+            clean[key] = value
+
+    for key in _LIST_FIELDS:
+        if key in data or not partial:
+            value = data.get(key)
+            if value is None:
+                value = []
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                raise ValueError(f"{key} must be a list of text values")
+            cleaned, seen = [], set()
+            for item in value:
+                text = item.strip()
+                if key == "supportedLayouts":
+                    text = text.lower()  # layouts are matched case-insensitively
+                if text and text.lower() not in seen:  # the DB unique keys ignore case
+                    seen.add(text.lower())
+                    cleaned.append(text)
+            clean[key] = cleaned
+
+    return clean
+
+
+def _sync_names(collection, names):
+    """Make a table-backed list (facilities, layouts, accessibility features) hold
+    exactly `names`, adding and removing only the difference. Replacing the whole
+    list would delete and re-insert unchanged rows in one flush and hit the
+    UNIQUE (venue_id, name) key."""
+    wanted = {n.lower() for n in names}
+    for existing in list(collection):
+        if existing.lower() not in wanted:
+            collection.remove(existing)
+    have = {e.lower() for e in collection}
+    for name in names:
+        if name.lower() not in have:
+            collection.append(name)
+            have.add(name.lower())
 
 
 def create_venue(user_id: int, data: dict) -> Venue:
+    clean = _validate(data, partial=False)
     venue = Venue(
-        name=data.get("name"),
+        name=clean["name"],
         location=data.get("location"),
-        capacity=data.get("capacity"),
+        capacity=clean["capacity"],
         description=data.get("description"),
-        supported_layouts=data.get("supportedLayouts") or [],
-        facilities=data.get("facilities") or [],
-        accessibility_features=data.get("accessibilityFeatures") or [],
         operating_hours=data.get("operatingHours"),
-        setup_minutes=data.get("setupMinutes", 0),
-        turnaround_minutes=data.get("turnaroundMinutes", 0),
+        setup_minutes=clean["setupMinutes"],
+        turnaround_minutes=clean["turnaroundMinutes"],
         created_by=user_id,
+        is_active=True,  # always active on creation, whatever the client sends
     )
-    if not venue.name:
-        raise ValueError("Venue name is required")
-    if not venue.capacity or venue.capacity <= 0:
-        raise ValueError("Venue capacity must be greater than zero")
-    if venue.setup_minutes < 0:
-        raise ValueError("Setup time cannot be negative")
-    if venue.turnaround_minutes < 0:
-        raise ValueError("Turnaround time cannot be negative")
-
+    _sync_names(venue.supported_layouts, clean["supportedLayouts"])
+    _sync_names(venue.facilities, clean["facilities"])
+    _sync_names(venue.accessibility_features, clean["accessibilityFeatures"])
     db.session.add(venue)
     db.session.commit()
     return venue
@@ -43,6 +112,7 @@ def _flag_suitability_change(venue: Venue, reason: str):
     """Re-checks every confirmed booking on this venue against the venue's
     (now-updated) capacity/layout/accessibility and raises a flag for any
     event that no longer fits."""
+    from app.venues.services.availability import add_flag_once
     from app.venues.services.suitability import check_suitability
 
     confirmed = VenueBooking.query.filter(
@@ -56,11 +126,9 @@ def _flag_suitability_change(venue: Venue, reason: str):
             continue
         issues = check_suitability(event, venue)
         if issues:
-            flag = VenueAvailabilityFlag(
-                event_id=event.id, venue_id=venue.id, reason=f"{reason}: {'; '.join(issues)}"
-            )
-            db.session.add(flag)
-            flags.append(flag)
+            flag = add_flag_once(event.id, venue.id, f"{reason}: {'; '.join(issues)}")
+            if flag:
+                flags.append(flag)
     return flags
 
 
@@ -70,6 +138,8 @@ def update_venue(venue: Venue, data: dict):
     accessibility change that no longer suits an existing confirmed
     booking, or (Week 7 change #1) a setup/turnaround time change that
     makes two existing confirmed bookings newly overlap."""
+    clean = _validate(data, partial=True)  # raises ValueError before anything is changed
+    data = {**data, **clean}
     changed_fields = set()
 
     for field, key in (
@@ -84,14 +154,16 @@ def update_venue(venue: Venue, data: dict):
         ("setup_minutes", "setupMinutes"),
         ("turnaround_minutes", "turnaroundMinutes"),
     ):
-        if key in data and data[key] != getattr(venue, field):
+        if key not in data:
+            continue
+        if field in LIST_FIELDS:
+            current = list(getattr(venue, field))
+            if {n.lower() for n in data[key]} != {n.lower() for n in current}:
+                _sync_names(getattr(venue, field), data[key])
+                changed_fields.add(field)
+        elif data[key] != getattr(venue, field):
             setattr(venue, field, data[key])
             changed_fields.add(field)
-
-    if venue.setup_minutes is not None and venue.setup_minutes < 0:
-        raise ValueError("Setup time cannot be negative")
-    if venue.turnaround_minutes is not None and venue.turnaround_minutes < 0:
-        raise ValueError("Turnaround time cannot be negative")
 
     flags = []
     if changed_fields & SUITABILITY_FIELDS:

@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, timezone, date, time
 from werkzeug.security import generate_password_hash
-from app.models.event import Event, EventReview, EventClarificationResponse
+from app.models.event import Event, EventClarificationResponse
 from app.events.routes import _build_display_fields, _require_confirmation  # both pure/stateless, safe to import directly
 from app.models.user import Role, User
 from app.events.services.review import (
@@ -16,7 +16,7 @@ from app.events.services.review import (
     get_full_review_history,
     get_prior_rejection_decisions,
 )
-from app.events.services.status import InvalidTransitionError, change_status
+from app.events.services.status import change_status
 from app.events.services.assignment import assign_coordinator, reassign_coordinator
 from app.extensions import db
 from app.common.text_validation import validate_descriptive_text

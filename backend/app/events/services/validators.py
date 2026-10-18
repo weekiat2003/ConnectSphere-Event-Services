@@ -36,6 +36,9 @@ def validate_for_submission(event) -> list[str]:
     if event.proposed_date is not None and event.proposed_date < date.today():
         errors.append("Proposed date cannot be in the past")
 
+    if event.registration_required and not event.intended_capacity:
+        errors.append("Intended capacity is required when registration is enabled")
+
     if event.intended_capacity is not None and event.intended_capacity <= 0:
         errors.append("Intended capacity must be greater than zero")
 

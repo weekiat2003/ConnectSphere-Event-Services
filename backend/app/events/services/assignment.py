@@ -8,7 +8,6 @@ Coordinator Assignment
 - Coordinators view unassigned/all events for planning visibility (routes.py)
 - Previous coordinator retains read-only visibility after reassignment
 """
-from datetime import datetime
 from app.common.time import utcnow
 
 from sqlalchemy import func

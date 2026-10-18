@@ -11,7 +11,6 @@ from datetime import date, timedelta
 import pytest
 
 from app.events.services import drafts, review
-from app.models.event import Event
 
 FUTURE_DATE = date.today() + timedelta(days=7)
 

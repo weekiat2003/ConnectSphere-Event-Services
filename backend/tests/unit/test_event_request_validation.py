@@ -7,7 +7,6 @@ request-body parsing involved here -- see tests/integration for that.
 """
 from datetime import date, timedelta
 
-import pytest
 
 from app.events.services.validators import validate_for_submission
 from app.models.event import Event, EventEquipmentRequirement

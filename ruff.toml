@@ -1,0 +1,11 @@
+# Ruff settings for the CI `lint` job.
+#
+# Ruff's built-in default rule set has grown over time, so the rules are
+# pinned here explicitly. These are the classic core rules: syntax errors,
+# undefined names, unused imports/variables and similar likely bugs.
+# Add more rule families (e.g. "I" for import sorting) as the team agrees.
+target-version = "py313"
+extend-exclude = ["frontend", "build", "staged"]
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

@@ -196,6 +196,7 @@ def approve_event(event: Event, coordinator_id: int, comments: str = None) -> Ev
         EventReview(event_id=event.id, coordinator_id=coordinator_id, action="approved", comments=comments)
     )
     change_status(event, "approved", changed_by_id=coordinator_id, reason=comments)
+    change_status(event, "planning", changed_by_id=coordinator_id, reason="Approval recorded; planning may begin")
     return event
 
 

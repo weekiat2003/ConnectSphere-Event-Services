@@ -21,6 +21,7 @@ export default {
   resubmitEvent: (id, payload) => apiClient.post(`/events/${id}/resubmit`, payload),
   reassign: (id, newCoordinatorId) => apiClient.post(`/events/${id}/reassign`, { newCoordinatorId }),
   changeStatus: (id, statusValue, reason) => apiClient.post(`/events/${id}/status`, { status: statusValue, reason }),
+  reviewSafety: (id, payload) => apiClient.post(`/events/${id}/safety-review`, payload),
 
   // Added: Coordinators view unassigned events for planning visibility (view-only, no claim/self-assign)
   unassignedEvents: () => apiClient.get("/events/unassigned"),

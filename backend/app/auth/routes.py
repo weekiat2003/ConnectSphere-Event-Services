@@ -40,7 +40,9 @@ def login():
             "user": user.to_dict(),
         }), 200
 
-    except Exception as e:
+    except Exception:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": "An unexpected error occurred"}), 500
 
 
@@ -80,7 +82,7 @@ def logout():
         # Handle missing or invalid JWT claims
         return jsonify({"error": "Invalid token"}), 400
 
-    except Exception as e:
+    except Exception:
         # Handle unexpected errors
         return jsonify({"error": "An unexpected error occurred"}), 500
 

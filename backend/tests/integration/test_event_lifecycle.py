@@ -16,7 +16,11 @@ def test_draft_submit_and_auto_assignment_flow(app, organiser, coordinator):
                 "purpose": "Networking",
                 "description": "A conference for the team",
                 "proposed_date": "2026-12-01",
+                "proposed_time": "09:00",
                 "expected_attendance": 100,
+                "capacity_needed": 120,
+                "required_layout": "theatre",
+                "accessibility_needs": "None",
             },
         )
         assert event.status == "draft"
@@ -26,7 +30,7 @@ def test_draft_submit_and_auto_assignment_flow(app, organiser, coordinator):
         assert event.coordinator_id == coordinator
 
         event = review.approve_event(event, coordinator, comments="Looks good")
-        assert event.status == "approved"
+        assert event.status == "planning"
         assert event.review_outcome == "approved"
 
 
@@ -39,7 +43,11 @@ def test_reject_and_resubmit_creates_new_record(app, organiser, coordinator):
                 "purpose": "Launch",
                 "description": "Launch event",
                 "proposed_date": "2026-11-01",
+                "proposed_time": "09:00",
                 "expected_attendance": 50,
+                "capacity_needed": 60,
+                "required_layout": "theatre",
+                "accessibility_needs": "None",
             },
         )
         event = review.submit_event(event, organiser)

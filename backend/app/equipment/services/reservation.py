@@ -33,6 +33,10 @@ def reserve(
     db.session.add(reservation)
     requirement.status = "confirmed"
     db.session.commit()
+
+    from app.events.services.status import try_advance_to_safety_check
+
+    try_advance_to_safety_check(event, user_id)
     return reservation
 
 
@@ -43,4 +47,12 @@ def release(reservation: EquipmentReservation) -> EquipmentReservation:
         raise ValueError("Only a currently reserved item can be released")
     reservation.status = RELEASED
     db.session.commit()
+
+    from app.events.services.status import reconsider_event_after_arrangement_loss
+
+    reconsider_event_after_arrangement_loss(
+        reservation.event,
+        reservation.created_by,
+        reason=f"Equipment reservation {reservation.id} was released; arrangements need review",
+    )
     return reservation
