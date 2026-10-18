@@ -35,6 +35,13 @@
       <div class="title-row">
         <h2 class="page-title">{{ event.name }}</h2>
         <span class="badge" :class="event.status">{{ statusLabel(event.status) }}</span>
+        <button
+          v-if="isAssignedCoordinator && !showEditForm && ['under_review', 'approved', 'planning'].includes(event.status)"
+          class="btn btn-grey btn-small" @click="openEditForm">Edit
+        </button>
+        <button v-if="isAssignedCoordinator && ['approved', 'planning'].includes(event.status)"
+          class="btn btn-rose btn-small" @click="cancelEvent">Cancel Event
+        </button>
       </div>
       <div v-if="event.reviewDecision?.outcome" class="notice" :class="event.reviewDecision.outcome">
         <strong>
@@ -116,23 +123,20 @@
             </p>
           </div>
           <div v-if="item.response" class="thread-message response">
-              <span class="thread-meta">Organiser · {{ formatDate(item.response.createdAt) }}</span>
-              <p>{{ item.response.comments }}</p>
-              <p v-if="Object.keys(item.response.updatedFields || {}).length" class="thread-fields">
-                Updated: {{ formatFieldNames(Object.keys(item.response.updatedFields)) }}
-              </p>
-            </div>
-            <div v-else-if="item.withdrawn" class="thread-withdrawn">Withdrawn by coordinator</div>
-            <div v-else class="thread-pending">
-              <span>Awaiting organiser's response</span>
-              <button
-                v-if="isAssignedCoordinator"
-                class="btn btn-grey btn-small"
-                @click="deleteClarificationRequest(item.reviewId)"
-              >
-                Delete request
-              </button>
-            </div>
+            <span class="thread-meta">Organiser · {{ formatDate(item.response.createdAt) }}</span>
+            <p>{{ item.response.comments }}</p>
+            <p v-if="Object.keys(item.response.updatedFields || {}).length" class="thread-fields">
+              Updated: {{ formatFieldNames(Object.keys(item.response.updatedFields)) }}
+            </p>
+          </div>
+          <div v-else-if="item.withdrawn" class="thread-withdrawn">Withdrawn by coordinator</div>
+          <div v-else class="thread-pending">
+            <span>Awaiting organiser's response</span>
+            <button v-if="isAssignedCoordinator" class="btn btn-grey btn-small"
+              @click="deleteClarificationRequest(item.reviewId)">
+              Delete request
+            </button>
+          </div>
         </li>
       </ul>
 
@@ -160,13 +164,13 @@
           <p v-if="request.decisionReason" class="change-reason">
             <strong>Coordinator's reason:</strong> {{ request.decisionReason }}
           </p>
-          <router-link
-            v-if="isAssignedCoordinator"
-            :to="{ name: 'change-request-review', query: { id: request.id } }"
-          >Open in review</router-link>
-          <p v-if="request.decidedAt" class="change-reason"><strong>Processed:</strong> {{ formatDate(request.decidedAt) }}</p>
-          <p v-if="request.status === 're_review' && request.reReviewAt" class="change-reason" >
-            <strong>Sent for re-review</strong> by the assigned Coordinator on {{ formatDate(request.reReviewAt) }}. Affected arrangements are flagged for reconsideration; proposed values are not applied yet.
+          <router-link v-if="isAssignedCoordinator"
+            :to="{ name: 'change-request-review', query: { id: request.id } }">Open in review</router-link>
+          <p v-if="request.decidedAt" class="change-reason"><strong>Processed:</strong> {{ formatDate(request.decidedAt)
+          }}</p>
+          <p v-if="request.status === 're_review' && request.reReviewAt" class="change-reason">
+            <strong>Sent for re-review</strong> by the assigned Coordinator on {{ formatDate(request.reReviewAt) }}.
+            Affected arrangements are flagged for reconsideration; proposed values are not applied yet.
           </p>
         </li>
       </ul>
@@ -189,39 +193,118 @@
       <h3 class="section-title">Coordinator Actions</h3>
 
       <div v-if="event.status === 'under_review'" class="action-block">
-  <textarea v-model="comment" placeholder="Comments / reason"></textarea>
+        <textarea v-model="comment" placeholder="Comments / reason"></textarea>
 
-  <div class="field-select">
-    <span class="detail-label">Allow organiser to edit:</span>
-    <div class="checkbox-grid">
-      <label v-for="opt in EDITABLE_FIELD_OPTIONS" :key="opt.key" class="checkbox-option">
-        <input type="checkbox" :value="opt.key" v-model="editableFields" />
-        {{ opt.label }}
-      </label>
-    </div>
-  </div>
-
-  <div v-if="event.clarificationFlag" class="notice">
-    <strong>Clarification requested:</strong> {{ event.clarificationComments }}
-    <div v-if="event.clarificationEditableFields?.length" class="editable-fields-note">
-      Organiser can edit: {{ formatFieldNames(event.clarificationEditableFields) }}
-    </div>
-  </div>
-
-  <p v-if="clarificationError" class="field-error">{{ clarificationError }}</p>
-  <div class="actions">
-    <button class="btn btn-butter" @click="clarify">Request Clarification</button>
-    <button class="btn btn-mint" @click="approve">Approve</button>
-    <button class="btn btn-rose" @click="reject">Reject</button>
-    <button class="btn btn-grey" @click="reject">Reassign Coordinator</button>
-  </div>
-  <p v-if="actionError" class="field-error">{{ actionError }}</p>
-  </div>
-
-      <div v-if="['approved', 'planning'].includes(event.status)" class="action-block">
-        <div class="actions">
-          <button class="btn btn-rose" @click="cancelEvent">Cancel Event</button>
+        <div class="field-select">
+          <span class="detail-label">Allow organiser to edit:</span>
+          <div class="checkbox-grid">
+            <label v-for="opt in EDITABLE_FIELD_OPTIONS" :key="opt.key" class="checkbox-option">
+              <input type="checkbox" :value="opt.key" v-model="editableFields" />
+              {{ opt.label }}
+            </label>
+          </div>
         </div>
+
+        <div v-if="event.clarificationFlag" class="notice">
+          <strong>Clarification requested:</strong> {{ event.clarificationComments }}
+          <div v-if="event.clarificationEditableFields?.length" class="editable-fields-note">
+            Organiser can edit: {{ formatFieldNames(event.clarificationEditableFields) }}
+          </div>
+        </div>
+
+        <p v-if="clarificationError" class="field-error">{{ clarificationError }}</p>
+        <div class="actions">
+          <button class="btn btn-butter" @click="clarify">Request Clarification</button>
+          <button class="btn btn-mint" @click="approve">Approve</button>
+          <button class="btn btn-rose" @click="reject">Reject</button>
+          <button class="btn btn-grey" @click="reject">Reassign Coordinator</button>
+        </div>
+        <p v-if="actionError" class="field-error">{{ actionError }}</p>
+      </div>
+
+      <div v-if="['under_review', 'approved', 'planning'].includes(event.status)" class="action-block">
+        <div class="section-heading">
+          <h3 class="block-title">Edit Event Information</h3>
+          <button v-if="!showEditForm" class="btn btn-grey btn-small" @click="openEditForm">Edit</button>
+        </div>
+
+        <template v-if="showEditForm">
+          <div class="edit-event-form">
+            <div v-for="field in EVENT_EDIT_FIELD_OPTIONS" :key="field.key" class="edit-field"
+              :class="{ 'edit-field-wide': field.type === 'textarea', 'edit-field-inline': field.type === 'checkbox' }">
+              <template v-if="field.type === 'checkbox'">
+                <label :for="`edit-${field.key}`" class="inline-checkbox-label">
+                  <input :id="`edit-${field.key}`" type="checkbox" v-model="editForm[field.key]" />
+                  {{ field.label }}
+                </label>
+              </template>
+              <template v-else>
+                <label :for="`edit-${field.key}`">{{ field.label }}</label>
+                <textarea v-if="field.type === 'textarea'" :id="`edit-${field.key}`" v-model="editForm[field.key]"
+                  rows="3"></textarea>
+                <input v-else-if="field.type === 'number'" :id="`edit-${field.key}`" type="number" min="1"
+                  v-model.number="editForm[field.key]" />
+                <input v-else :id="`edit-${field.key}`" :type="field.type" v-model="editForm[field.key]" />
+              </template>
+              <p v-if="editErrors[field.key]" class="field-error">{{ editErrors[field.key] }}</p>
+            </div>
+          </div>
+
+          <div class="edit-field edit-field-wide">
+            <label>Required facilities</label>
+            <div v-for="(facility, index) in editForm.required_facilities" :key="index" class="facility-row">
+              <input type="text" v-model="editForm.required_facilities[index]" placeholder="e.g. Projector" />
+              <button type="button" class="btn btn-grey btn-small"
+                @click="editForm.required_facilities.splice(index, 1)">Remove</button>
+            </div>
+            <button type="button" class="btn btn-grey btn-small" @click="editForm.required_facilities.push('')">+ Add
+              facility</button>
+            <p v-if="editErrors.required_facilities" class="field-error">{{ editErrors.required_facilities }}</p>
+          </div>
+
+          <div class="edit-field edit-field-wide">
+            <label>Equipment requirements</label>
+            <div v-for="(item, index) in editForm.equipment_requirements" :key="item.id ?? `new-${index}`"
+              class="equipment-row">
+              <input type="text" v-model="item.type" placeholder="Equipment type" />
+              <input type="number" min="1" v-model.number="item.quantity" placeholder="Qty" />
+              <input type="text" v-model="item.technicalNotes" placeholder="Technical notes (optional)" />
+              <button type="button" class="btn btn-grey btn-small"
+                @click="editForm.equipment_requirements.splice(index, 1)">Remove</button>
+              <p v-if="editErrors[`equipment_requirements[${index}].type`]" class="field-error">{{
+                editErrors[`equipment_requirements[${index}].type`] }}</p>
+              <p v-if="editErrors[`equipment_requirements[${index}].quantity`]" class="field-error">{{
+                editErrors[`equipment_requirements[${index}].quantity`] }}</p>
+            </div>
+            <button type="button" class="btn btn-grey btn-small"
+              @click="editForm.equipment_requirements.push({ id: null, type: '', quantity: 1, technicalNotes: '' })">+
+              Add
+              equipment requirement</button>
+            <p v-if="editErrors.equipment_requirements" class="field-error">{{ editErrors.equipment_requirements }}</p>
+          </div>
+
+
+          <div v-if="editTouchesSignificantField" class="offline-review-callout">
+            <label class="checkbox-option">
+              <input type="checkbox" v-model="offlineReviewConfirmed" />
+              I confirm the offline review for this change has been done
+            </label>
+            <p class="offline-review-hint">
+              You're changing a field that may affect existing venue or equipment arrangements
+              (date, time, attendance, capacity, layout, or accessibility needs). Confirm you've
+              coordinated this outside the system before saving.
+            </p>
+          </div>
+
+          <p v-if="editErrors.event" class="field-error">{{ editErrors.event }}</p>
+
+          <div class="actions">
+            <button class="btn btn-primary" :disabled="editSubmitting" @click="submitEdit">
+              {{ editSubmitting ? "Saving..." : "Save Changes" }}
+            </button>
+            <button class="btn btn-grey" :disabled="editSubmitting" @click="showEditForm = false">Cancel</button>
+          </div>
+        </template>
       </div>
 
       <div v-if="event.status === 'confirmed'" class="action-block">
@@ -253,7 +336,8 @@
           </select>
         </label>
         <div class="actions">
-          <button class="btn btn-primary" :disabled="!newCoordinatorId" @click="reassign">Reassign (after offline agreement)</button>
+          <button class="btn btn-primary" :disabled="!newCoordinatorId" @click="reassign">Reassign (after offline
+            agreement)</button>
         </div>
 
       </div>
@@ -345,35 +429,22 @@
           <label class="field-row">
             Your response
             <div>
-              <textarea
-              v-model="openResponseForms[item.reviewId].comments"
-              placeholder="Explain what you changed, or answer the coordinator's question"
-            ></textarea>
+              <textarea v-model="openResponseForms[item.reviewId].comments"
+                placeholder="Explain what you changed, or answer the coordinator's question"></textarea>
             </div>
           </label>
 
           <template v-if="item.request.editableFields?.length">
-            <div
-              v-for="field in EDITABLE_FIELD_OPTIONS.filter((o) => item.request.editableFields.includes(o.key))"
-              :key="field.key"
-              class="field-row"
-            >
+            <div v-for="field in EDITABLE_FIELD_OPTIONS.filter((o) => item.request.editableFields.includes(o.key))"
+              :key="field.key" class="field-row">
               <label>
                 {{ field.label }}
-                <input
-                  v-if="field.type === 'checkbox'"
-                  type="checkbox"
-                  v-model="openResponseForms[item.reviewId].fields[field.key]"
-                />
-                <textarea
-                  v-else-if="field.type === 'textarea'"
-                  v-model="openResponseForms[item.reviewId].fields[field.key]"
-                ></textarea>
-                <input
-                  v-else-if="field.type === 'number'"
-                  type="number"
-                  v-model.number="openResponseForms[item.reviewId].fields[field.key]"
-                />
+                <input v-if="field.type === 'checkbox'" type="checkbox"
+                  v-model="openResponseForms[item.reviewId].fields[field.key]" />
+                <textarea v-else-if="field.type === 'textarea'"
+                  v-model="openResponseForms[item.reviewId].fields[field.key]"></textarea>
+                <input v-else-if="field.type === 'number'" type="number"
+                  v-model.number="openResponseForms[item.reviewId].fields[field.key]" />
                 <input v-else :type="field.type" v-model="openResponseForms[item.reviewId].fields[field.key]" />
               </label>
             </div>
@@ -404,8 +475,10 @@
           <div v-for="field in CHANGE_FIELDS" :key="field.key" class="change-row">
             <span class="detail-label">{{ field.label }}</span>
             <span class="change-current">Current: {{ formatChangeValue(field.key, field.current(event)) }}</span>
-            <textarea v-if="field.type === 'textarea'" v-model="changeForm[field.key]" placeholder="Proposed value"></textarea>
-            <input v-else-if="field.type === 'number'" v-model.number="changeForm[field.key]" type="number" min="1" placeholder="Proposed value" />
+            <textarea v-if="field.type === 'textarea'" v-model="changeForm[field.key]"
+              placeholder="Proposed value"></textarea>
+            <input v-else-if="field.type === 'number'" v-model.number="changeForm[field.key]" type="number" min="1"
+              placeholder="Proposed value" />
             <input v-else v-model="changeForm[field.key]" :type="field.type" placeholder="Proposed value" />
             <p v-if="changeErrors[field.key]" class="field-error">{{ changeErrors[field.key] }}</p>
           </div>
@@ -425,7 +498,8 @@
           <div class="change-row">
             <span class="detail-label">Equipment</span>
             <span class="change-current">Current: {{ currentEquipmentLabel }}</span>
-            <button v-if="changeEquipment === null" type="button" class="btn btn-grey btn-small" @click="startEquipmentChange">
+            <button v-if="changeEquipment === null" type="button" class="btn btn-grey btn-small"
+              @click="startEquipmentChange">
               Change equipment
             </button>
             <template v-else>
@@ -444,10 +518,12 @@
               </div>
               <div class="actions">
                 <button type="button" class="btn btn-grey btn-small" @click="addEquipmentRow">Add item</button>
-                <button type="button" class="btn btn-grey btn-small" @click="changeEquipment = null">Keep current equipment</button>
+                <button type="button" class="btn btn-grey btn-small" @click="changeEquipment = null">Keep current
+                  equipment</button>
               </div>
             </template>
-            <p v-if="changeErrors.equipment_requirements" class="field-error">{{ changeErrors.equipment_requirements }}</p>
+            <p v-if="changeErrors.equipment_requirements" class="field-error">{{ changeErrors.equipment_requirements }}
+            </p>
           </div>
 
           <label class="field-row">
@@ -459,7 +535,8 @@
           <p v-if="changeErrors.event" class="field-error">{{ changeErrors.event }}</p>
 
           <div class="actions">
-            <button class="btn btn-primary" :disabled="changeSubmitting" @click="submitChangeRequest">Submit Change Request</button>
+            <button class="btn btn-primary" :disabled="changeSubmitting" @click="submitChangeRequest">Submit Change
+              Request</button>
             <button class="btn btn-grey" :disabled="changeSubmitting" @click="showChangeForm = false">Cancel</button>
           </div>
         </template>
@@ -487,7 +564,8 @@
             <button class="btn btn-rose" :disabled="withdrawalSubmitting" @click="submitWithdrawalRequest">
               Submit Withdrawal Request
             </button>
-            <button class="btn btn-grey" :disabled="withdrawalSubmitting" @click="showWithdrawalForm = false">Cancel</button>
+            <button class="btn btn-grey" :disabled="withdrawalSubmitting"
+              @click="showWithdrawalForm = false">Cancel</button>
           </div>
         </template>
       </div>
@@ -670,6 +748,22 @@ const EDITABLE_FIELD_OPTIONS = [
   { key: "required_layout", label: "Venue Required", type: "text" },
   { key: "accessibility_needs", label: "Accessibility needs", type: "textarea" },
   { key: "registration_required", label: "Registration required", type: "checkbox" },
+];
+
+const EVENT_EDIT_FIELD_OPTIONS = [
+  { key: "name", label: "Event name", type: "text" },
+  { key: "purpose", label: "Purpose", type: "text" },
+  { key: "description", label: "Description", type: "textarea" },
+  { key: "category", label: "Category", type: "text" },
+  { key: "proposed_date", label: "Proposed date", type: "date" },
+  { key: "proposed_time", label: "Proposed time", type: "time" },
+  { key: "expected_attendance", label: "Expected attendance", type: "number" },
+  { key: "capacity_needed", label: "Capacity needed", type: "number" },
+  { key: "required_layout", label: "Required layout", type: "text" },
+  { key: "accessibility_needs", label: "Accessibility needs", type: "textarea" },
+  { key: "registration_required", label: "Registration required", type: "checkbox" },
+  { key: "intended_capacity", label: "Intended capacity (registration cap)", type: "number" },
+
 ];
 
 const editableFields = ref([]);       // coordinator's selection when requesting clarification
@@ -923,7 +1017,7 @@ async function load() {
   }
 
   clarificationThread.value.filter((item) => item.response === null).forEach(ensureResponseForm);
-  await loadChangeRequests(); 
+  await loadChangeRequests();
 }
 
 async function submitSafetyDecision(decision) {
@@ -1004,6 +1098,115 @@ function initRevisionForm() {
   revisionForm.required_layout = event.value.venueRequirements?.requiredLayout;
   revisionForm.accessibility_needs = event.value.venueRequirements?.accessibilityNeeds;
   revisionForm.registration_required = event.value.registrationRequired;
+}
+
+const SIGNIFICANT_FIELD_KEYS = [
+  "proposed_date", "proposed_time", "expected_attendance",
+  "capacity_needed", "required_layout", "accessibility_needs",
+  "required_facilities", "equipment_requirements",
+];
+
+function valuesEqual(a, b) {
+  if (Array.isArray(a) || Array.isArray(b) || (typeof a === "object" && a !== null) || (typeof b === "object" && b !== null)) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+  return a === b;
+}
+
+const showEditForm = ref(false);
+const editForm = reactive({});
+const editErrors = ref({});
+const editSubmitting = ref(false);
+const offlineReviewConfirmed = ref(false);
+
+const editTouchesSignificantField = computed(() =>
+  SIGNIFICANT_FIELD_KEYS.some((key) => !valuesEqual(editForm[key], initialEditValues[key]))
+);
+
+let initialEditValues = {};
+
+function openEditForm() {
+  const source = {
+    name: event.value.name,
+    purpose: event.value.purpose,
+    description: event.value.description,
+    category: event.value.category,
+    proposed_date: event.value.proposedDate,
+    proposed_time: event.value.proposedTime,
+    expected_attendance: event.value.expectedAttendance,
+    capacity_needed: event.value.capacityNeeded,
+    required_layout: event.value.requiredLayout,
+    accessibility_needs: event.value.accessibilityNeeds,
+    registration_required: event.value.registrationRequired,
+    intended_capacity: event.value.intendedCapacity,
+    required_facilities: [...(event.value.requiredFacilities || [])],
+    equipment_requirements: (event.value.equipmentRequirements || []).map((item) => ({
+      id: item.id,
+      type: item.equipmentType ?? item.type,
+      quantity: item.quantity,
+      technicalNotes: item.technicalNotes ?? "",
+    })),
+  };
+  Object.keys(editForm).forEach((key) => delete editForm[key]);
+  Object.assign(editForm, source);
+  initialEditValues = JSON.parse(JSON.stringify(source)); // deep clone — critical now
+  editErrors.value = {};
+  offlineReviewConfirmed.value = false;
+  showEditForm.value = true;
+}
+
+function buildChangedFields() {
+  const changed = {};
+  for (const key of Object.keys(editForm)) {
+    let value = editForm[key];
+
+    if (key === "required_facilities" && Array.isArray(value)) {
+      value = value.map((v) => String(v || "").trim()).filter(Boolean);
+    }
+
+    if (key === "equipment_requirements" && Array.isArray(value)) {
+      value = value
+        .filter((item) => (item.type && item.type.trim()) || item.id != null)
+        .map((item) => ({
+          ...(item.id != null ? { id: item.id } : {}),
+          type: (item.type || "").trim(),
+          quantity: item.quantity,
+          technicalNotes: (item.technicalNotes || "").trim() || undefined,
+        }));
+    }
+
+    if (!valuesEqual(value, initialEditValues[key])) {
+      changed[key] = value;
+    }
+  }
+  return changed;
+}
+
+async function submitEdit() {
+  editErrors.value = {};
+  const changedFields = buildChangedFields();
+  if (Object.keys(changedFields).length === 0) {
+    showEditForm.value = false;
+    return; // nothing to save
+  }
+  editSubmitting.value = true;
+  try {
+    await eventsApi.updateEvent(event.value.id, {
+      fields: changedFields,
+      offlineReviewConfirmed: offlineReviewConfirmed.value,
+    });
+    showEditForm.value = false;
+    await load();
+  } catch (e) {
+    const data = e.response?.data;
+    if (e.response?.status === 423) {
+      editErrors.value = { event: data?.error || "This event is confirmed and can no longer be edited directly." };
+    } else {
+      editErrors.value = data?.errors || { event: data?.error || "Could not save changes." };
+    }
+  } finally {
+    editSubmitting.value = false;
+  }
 }
 
 function requestActionWithConfirmation(callWithConfirmed) {
@@ -1253,6 +1456,105 @@ onMounted(async () => {
   margin-top: 0.35rem;
   font-size: 0.85rem;
   font-weight: 500;
+}
+
+.edit-event-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 1.25rem;
+  margin: 0.75rem 0 1rem;
+  align-items: start; 
+}
+
+.edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.edit-field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.inline-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.edit-field-wide {
+  grid-column: 1 / -1;
+}
+
+.edit-field label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.edit-field input[type="text"],
+.edit-field input[type="date"],
+.edit-field input[type="time"],
+.edit-field input[type="number"],
+.edit-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border, #e4defa);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.facility-row,
+.equipment-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.facility-row input,
+.equipment-row input {
+  flex: 1;
+}
+
+
+.edit-field textarea {
+  resize: vertical;
+}
+
+.edit-checkbox {
+  width: 1rem;
+  height: 1rem;
+  align-self: flex-start;
+}
+
+.offline-review-callout {
+  background: var(--butter-bg, #fef3c7);
+  border: 1px solid #f3d98b;
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.offline-review-callout .checkbox-option {
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+.offline-review-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted, #6b6890);
+}
+
+@media (max-width: 560px) {
+  .edit-event-form {
+    grid-template-columns: 1fr;
+  }
 }
 
 .notice-inline {
@@ -1547,9 +1849,11 @@ onMounted(async () => {
   border: 1px solid #eee;
   border-radius: 6px;
 }
+
 .detail-block h3 {
   margin-top: 0;
 }
+
 .detail-block ul {
   margin: 0;
   padding-left: 1.25rem;
@@ -1571,36 +1875,149 @@ input {
   font: inherit;
 }
 
-textarea::placeholder, input::placeholder { color: #a5a2c2; }
-textarea:focus, input:focus { outline: none; border-color: var(--primary, #6d5bd0); background: #ffffff; box-shadow: 0 0 0 3px var(--primary-tint, #ebe7ff); }
-textarea { min-height: 4.5rem; resize: vertical; }
+textarea::placeholder,
+input::placeholder {
+  color: #a5a2c2;
+}
+
+textarea:focus,
+input:focus {
+  outline: none;
+  border-color: var(--primary, #6d5bd0);
+  background: #ffffff;
+  box-shadow: 0 0 0 3px var(--primary-tint, #ebe7ff);
+}
+
+textarea {
+  min-height: 4.5rem;
+  resize: vertical;
+}
 
 /* Buttons: colour matches meaning */
-.btn { padding: 0.5rem 1.1rem; border: none; border-radius: 999px; font: inherit; font-size: 0.9rem; font-weight: 500; cursor: pointer; }
-.btn:focus-visible { outline: 2px solid var(--primary, #6d5bd0); outline-offset: 2px; }
-.btn-primary { background: var(--primary, #6d5bd0); color: #ffffff; }
-.btn-primary:hover { background: var(--primary-hover, #5b49bd); }
-.btn-mint { background: var(--mint-bg, #d3f5e3); color: var(--mint-text, #1e6b47); }
-.btn-mint:hover { background: #bdeed3; }
-.btn-rose { background: var(--rose-bg, #ffdce3); color: var(--rose-text, #a12b47); }
-.btn-rose:hover { background: #ffc9d4; }
-.btn-butter { background: var(--butter-bg, #fff1c2); color: var(--butter-text, #8a5a00); }
-.btn-butter:hover { background: #ffe8a0; }
-.btn-sky { background: var(--sky-bg, #d6ecff); color: var(--sky-text, #1f5f99); }
-.btn-sky:hover { background: #bfe0ff; }
-.btn-grey { background: #c6cfd7;  color: #626364; }
-.btn-grey:hover { background: #b0b3b6; }
-.change-row { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.75rem; }
-.change-current { font-size: 0.85rem; color: var(--text-muted, #6b6890); }
-.equipment-row { display: flex; gap: 0.5rem; align-items: center; }
-.equipment-row input:first-child { flex: 1; }
-.equipment-row input[type="number"] { width: 5rem; }
-.change-header { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-.change-list { margin: 0.4rem 0; padding-left: 1.2rem; }
-.change-reason { margin: 0.4rem 0 0; }
-.badge.pending { background: var(--butter-bg, #fff1c2); }
-.badge.processed { background: var(--mint-bg, #d3f5e3); }
-.badge.re_review { background: var(--butter-bg, #fff1c2); color: var(--butter-text, #8a5a00); }
+.btn {
+  padding: 0.5rem 1.1rem;
+  border: none;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--primary, #6d5bd0);
+  outline-offset: 2px;
+}
+
+.btn-primary {
+  background: var(--primary, #6d5bd0);
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover, #5b49bd);
+}
+
+.btn-mint {
+  background: var(--mint-bg, #d3f5e3);
+  color: var(--mint-text, #1e6b47);
+}
+
+.btn-mint:hover {
+  background: #bdeed3;
+}
+
+.btn-rose {
+  background: var(--rose-bg, #ffdce3);
+  color: var(--rose-text, #a12b47);
+}
+
+.btn-rose:hover {
+  background: #ffc9d4;
+}
+
+.btn-butter {
+  background: var(--butter-bg, #fff1c2);
+  color: var(--butter-text, #8a5a00);
+}
+
+.btn-butter:hover {
+  background: #ffe8a0;
+}
+
+.btn-sky {
+  background: var(--sky-bg, #d6ecff);
+  color: var(--sky-text, #1f5f99);
+}
+
+.btn-sky:hover {
+  background: #bfe0ff;
+}
+
+.btn-grey {
+  background: #c6cfd7;
+  color: #626364;
+}
+
+.btn-grey:hover {
+  background: #b0b3b6;
+}
+
+.change-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.change-current {
+  font-size: 0.85rem;
+  color: var(--text-muted, #6b6890);
+}
+
+.equipment-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.equipment-row input:first-child {
+  flex: 1;
+}
+
+.equipment-row input[type="number"] {
+  width: 5rem;
+}
+
+.change-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.change-list {
+  margin: 0.4rem 0;
+  padding-left: 1.2rem;
+}
+
+.change-reason {
+  margin: 0.4rem 0 0;
+}
+
+.badge.pending {
+  background: var(--butter-bg, #fff1c2);
+}
+
+.badge.processed {
+  background: var(--mint-bg, #d3f5e3);
+}
+
+.badge.re_review {
+  background: var(--butter-bg, #fff1c2);
+  color: var(--butter-text, #8a5a00);
+}
+
 .badge.cannot_accommodate,
 .badge.significant { background: var(--rose-bg, #fbdcdc); }
 .badge.routine { background: var(--sky-bg, #d6ecff); }

@@ -155,9 +155,9 @@ def _validate_changes(event: Event, changes: dict) -> dict:
     if "proposed_date" in changes or "proposed_time" in changes:
         proposed_date = changes.get("proposed_date", event.proposed_date)
         proposed_time = changes.get("proposed_time", event.proposed_time)
-        if proposed_date is None:
+        if proposed_date is None and "proposed_date" not in errors:
             errors["proposed_date"] = "Proposed date is required"
-        if proposed_time is None:
+        if proposed_time is None and "proposed_time" not in errors:
             errors["proposed_time"] = "Proposed time is required"
 
     expected_attendance = changes.get("expected_attendance", event.expected_attendance)
@@ -185,9 +185,6 @@ def _validate_changes(event: Event, changes: dict) -> dict:
         and capacity_needed < expected_attendance
     ):
         errors.setdefault("capacity_needed", "Capacity needed cannot be less than expected attendance")
-
-    if "proposed_date" in changes and changes["proposed_date"] is None:
-        errors["proposed_date"] = "Proposed date is required"
 
     if "required_facilities" in changes and not isinstance(changes["required_facilities"], list):
         errors["required_facilities"] = "Required facilities must be a list"
@@ -241,13 +238,17 @@ def _current_field_value(event: Event, field: str):
 
 def _update_equipment_requirements(event: Event, requirements: list):
     existing = {item.id: item for item in event.equipment_requirements}
-    current_items = list(event.equipment_requirements)
-    for index, values in enumerate(requirements):
+    submitted_ids = {values.get("id") for values in requirements if values.get("id") is not None}
+
+    for item_id, item in list(existing.items()):
+        if item_id not in submitted_ids:
+            event.equipment_requirements.remove(item)
+            db.session.delete(item)
+
+    for values in requirements:
         requirement_id = values.get("id")
         if requirement_id is not None:
             item = existing[requirement_id]
-        elif index < len(current_items):
-            item = current_items[index]
         else:
             item = EventEquipmentRequirement(event_id=event.id)
             event.equipment_requirements.append(item)
