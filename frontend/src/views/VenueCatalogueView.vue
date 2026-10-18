@@ -87,6 +87,14 @@
           Description (optional)
           <textarea v-model="form.description" rows="2" />
         </label>
+        <label class="wide">
+          Known restrictions (optional)
+          <textarea
+            v-model="form.knownRestrictions"
+            rows="2"
+            placeholder="e.g. No open flames; east fire exit must stay clear; amplified sound ends 22:00"
+          />
+        </label>
       </div>
 
       <p v-if="formError" class="field-error" role="alert">{{ formError }}</p>
@@ -129,6 +137,7 @@
           Setup {{ v.setupMinutes ?? 0 }} min, turnaround {{ v.turnaroundMinutes ?? 0 }} min
         </p>
         <p v-if="v.description" class="desc">{{ v.description }}</p>
+        <p class="meta">Known restrictions: {{ v.knownRestrictions || "Not specified" }}</p>
 
         <div v-if="v.facilities?.length" class="chips">
           <span class="label">Facilities</span>
@@ -191,6 +200,7 @@ const blankForm = () => ({
   capacity: "",
   description: "",
   operatingHours: "",
+  knownRestrictions: "",
   setupMinutes: "0",
   turnaroundMinutes: "0",
   facilities: "",
@@ -225,6 +235,7 @@ function openEdit(v) {
     capacity: String(v.capacity),
     description: v.description || "",
     operatingHours: v.operatingHours || "",
+    knownRestrictions: v.knownRestrictions || "",
     setupMinutes: String(v.setupMinutes ?? 0),
     turnaroundMinutes: String(v.turnaroundMinutes ?? 0),
     facilities: (v.facilities || []).join(", "),
@@ -282,6 +293,7 @@ function buildPayload() {
     capacity: Number(form.capacity),
     description: form.description.trim() || null,
     operatingHours: form.operatingHours.trim() || null,
+    knownRestrictions: form.knownRestrictions.trim() || null,
     setupMinutes: Number(String(form.setupMinutes).trim() || 0),
     turnaroundMinutes: Number(String(form.turnaroundMinutes).trim() || 0),
     facilities: toList(form.facilities),
