@@ -61,7 +61,7 @@
             <h3>
               {{ booking.eventName || `Event #${booking.eventId}` }}
             </h3>
-            <span class="badge cap">{{ booking.status === "held" ? "Held" : booking.status === "approved" ? "Approved" : "Pending" }}</span>
+            <span class="badge" :class="booking.status === 'approved' ? 'mint' : 'cap'">{{ booking.status === "held" ? "Held" : booking.status === "approved" ? "Approved" : "Pending" }}</span>
           </header>
 
           <p class="meta">Request #{{ booking.id }}</p>
@@ -749,6 +749,11 @@ onMounted(loadPendingBookings);
 .lilac {
   background: var(--lilac-bg, #e9e5fb);
   color: var(--lilac-text, #4b3fa0);
+}
+
+.mint {
+  background: var(--mint-bg, #d3f5e3);
+  color: var(--mint-text, #1e6b47);
 }
 
 .btn-primary {
