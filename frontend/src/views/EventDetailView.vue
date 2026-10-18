@@ -626,9 +626,6 @@ const auth = useAuthStore();
 
 const event = ref(null);
 const comment = ref("");
-const assessedSafetyFactors = ref([]);
-const concernSafetyFactors = ref([]);
-const affectedSafetyArrangements = ref([]);
 const responseNotes = ref("");
 const newCoordinatorId = ref(null);
 const coordinators = ref([]);
@@ -638,9 +635,6 @@ const reviewHistory = ref([]);
 
 const confirmState = ref(null); // { message, onConfirm, onCancel }
 const actionError = ref("");
-const safetyErrors = ref([]);
-const safetyReason = ref("");
-const safetySubmitting = ref(false);
 const { confirm } = useConfirm();
 
 const safetyFactors = [
@@ -657,18 +651,6 @@ const SAFETY_FACTOR_LABELS = Object.fromEntries(safetyFactors.map((f) => [f.key,
 
 const latestSafetyReview = computed(() => event.value?.safetyReviews?.at(-1) || null);
 
-// AC1: approval is only possible once every factor is assessed with no concerns.
-const approveBlockedReason = computed(() => {
-  const remaining = safetyFactors.length - assessedSafetyFactors.value.length;
-  if (remaining > 0) {
-    return `Assess all safety factors to approve (${remaining} remaining).`;
-  }
-  if (concernSafetyFactors.value.length) {
-    return "An event with safety concerns cannot be approved. Reject or request changes instead.";
-  }
-  return "";
-});
-
 function safetyDecisionHeading(decision) {
   if (decision === "approved") return "Safety approved: cleared for preparation";
   if (decision === "rejected") return "Safety arrangement rejected: returned to planning";
@@ -681,31 +663,6 @@ function formatSafetyFactors(keys) {
 
 function formatArrangements(keys) {
   return keys.map((key) => key.charAt(0).toUpperCase() + key.slice(1)).join(" and ");
-}
-
-// A concern is by definition an assessed factor, so keep the two lists in sync
-// rather than letting the officer hit a server-side error for it.
-function onConcernChange(key) {
-  if (concernSafetyFactors.value.includes(key) && !assessedSafetyFactors.value.includes(key)) {
-    assessedSafetyFactors.value = [...assessedSafetyFactors.value, key];
-  }
-}
-
-function onAssessedChange(key) {
-  if (!assessedSafetyFactors.value.includes(key)) {
-    concernSafetyFactors.value = concernSafetyFactors.value.filter((k) => k !== key);
-  }
-}
-
-// AC2: check every required detail up front and show them all together.
-function validateNonApproval() {
-  const errors = [];
-  if (!safetyReason.value.trim()) errors.push("Give a reason for this decision.");
-  if (!concernSafetyFactors.value.length) errors.push("Mark at least one safety factor as a concern.");
-  if (!affectedSafetyArrangements.value.length) {
-    errors.push("Specify affected arrangements: venue, equipment, or both.");
-  }
-  return errors;
 }
 
 const EDITABLE_FIELD_OPTIONS = [
@@ -989,34 +946,6 @@ async function load() {
 
   clarificationThread.value.filter((item) => item.response === null).forEach(ensureResponseForm);
   await loadChangeRequests();
-}
-
-async function submitSafetyDecision(decision) {
-  safetyErrors.value = decision === "approved" ? [] : validateNonApproval();
-  if (safetyErrors.value.length) return;
-
-  safetySubmitting.value = true;
-  try {
-    await eventsApi.reviewSafety(event.value.id, {
-      decision,
-      comments: safetyReason.value.trim() || null,
-      assessedFactors: assessedSafetyFactors.value,
-      concernFactors: concernSafetyFactors.value,
-      affectedArrangements: affectedSafetyArrangements.value,
-    });
-    safetyReason.value = "";
-    assessedSafetyFactors.value = [];
-    concernSafetyFactors.value = [];
-    affectedSafetyArrangements.value = [];
-    await load();
-  } catch (error) {
-    const data = error.response?.data;
-    safetyErrors.value = data?.errors?.length
-      ? data.errors
-      : [data?.error || "Could not submit the safety decision."];
-  } finally {
-    safetySubmitting.value = false;
-  }
 }
 
 async function loadCoordinators() {

@@ -68,6 +68,12 @@ def _validate(data: dict, *, partial: bool) -> dict:
                     cleaned.append(text)
             clean[key] = cleaned
 
+    if "knownRestrictions" in data:
+        restrictions = data.get("knownRestrictions")
+        if restrictions is not None and not isinstance(restrictions, str):
+            raise ValueError("Known restrictions must be text")
+        clean["knownRestrictions"] = (restrictions or "").strip() or None
+
     return clean
 
 
@@ -95,6 +101,7 @@ def create_venue(user_id: int, data: dict) -> Venue:
         capacity=clean["capacity"],
         description=data.get("description"),
         operating_hours=data.get("operatingHours"),
+        known_restrictions=clean.get("knownRestrictions"),
         setup_minutes=clean["setupMinutes"],
         turnaround_minutes=clean["turnaroundMinutes"],
         created_by=user_id,
@@ -151,6 +158,7 @@ def update_venue(venue: Venue, data: dict):
         ("facilities", "facilities"),
         ("accessibility_features", "accessibilityFeatures"),
         ("operating_hours", "operatingHours"),
+        ("known_restrictions", "knownRestrictions"),
         ("setup_minutes", "setupMinutes"),
         ("turnaround_minutes", "turnaroundMinutes"),
     ):
