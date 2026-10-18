@@ -10,7 +10,10 @@ def check_availability(equipment_item: EquipmentItem, quantity_needed: int, star
     equipment already committed to another overlapping event and equipment
     currently under maintenance."""
     if equipment_item.status != ACTIVE:
-        return {"available": False, "reason": "Equipment is not active (under maintenance or retired)"}
+        return {
+            "available": False,
+            "reason": f"Equipment is not active (status: {equipment_item.status})",
+        }
 
     overlapping = EquipmentReservation.query.filter(
         EquipmentReservation.equipment_item_id == equipment_item.id,

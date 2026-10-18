@@ -260,6 +260,8 @@ class EventSafetyReview(db.Model):
     assessed_factors = db.Column(db.JSON, nullable=False, default=list)
     concern_factors = db.Column(db.JSON, nullable=False, default=list)
     affected_arrangements = db.Column(db.JSON, nullable=False, default=list)
+    # {factor_key: notes} recorded alongside each factor's outcome.
+    factor_notes = db.Column(db.JSON, nullable=True)
     created_at = db.Column(db.DateTime, default=utcnow)
 
     safety_officer = db.relationship("User", foreign_keys=[safety_officer_id])
@@ -275,7 +277,39 @@ class EventSafetyReview(db.Model):
             "assessedFactors": self.assessed_factors,
             "concernFactors": self.concern_factors,
             "affectedArrangements": self.affected_arrangements,
+            "factorNotes": self.factor_notes or {},
             "createdAt": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class EventSafetyAssessment(db.Model):
+    """The Safety Officer's in-progress assessment for an event's current
+    safety check: one outcome (satisfactory / concern) and optional notes per
+    factor. Saved so the review can be completed over several visits; it is
+    copied into EventSafetyReview and cleared once a decision is made."""
+
+    __tablename__ = "event_safety_assessments"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    event_id = db.Column(
+        db.BigInteger, db.ForeignKey("events.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    safety_officer_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    # {factor_key: {"outcome": "satisfactory" | "concern" | None, "notes": str | None}}
+    factors = db.Column(db.JSON, nullable=False, default=dict)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    safety_officer = db.relationship("User", foreign_keys=[safety_officer_id])
+    event = db.relationship(
+        "Event", backref=db.backref("safety_assessment", uselist=False, cascade="all, delete-orphan")
+    )
+
+    def to_dict(self):
+        return {
+            "factors": self.factors or {},
+            "safetyOfficerId": self.safety_officer_id,
+            "safetyOfficerName": self.safety_officer.name if self.safety_officer else None,
+            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
