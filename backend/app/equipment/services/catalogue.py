@@ -1,7 +1,10 @@
 """Backs Equipment Availability Checking: Technical Support Staff's real
 inventory, separate from what an Organiser requests on an event."""
+from app.common.time import utcnow
 from app.extensions import db
-from app.models.equipment import EquipmentItem
+from app.models.equipment import EquipmentItem, EquipmentReservation
+
+UNAVAILABLE_REASONS = ("damaged", "maintenance")
 
 
 def create_item(data: dict) -> EquipmentItem:
@@ -29,12 +32,24 @@ def update_item(item: EquipmentItem, data: dict) -> EquipmentItem:
     return item
 
 
-def mark_unavailable(item: EquipmentItem) -> EquipmentItem:
-    """Marks an item as under maintenance/damaged, excluding it from
-    availability checks (Equipment Availability Checking epic)."""
-    item.status = "maintenance"
+def mark_unavailable(item: EquipmentItem, reason) -> EquipmentItem:
+    """Marks an item unavailable (ISP-61). The reason, 'damaged' or
+    'maintenance', is stored as the item's status, which excludes the item
+    from availability checks."""
+    if reason not in UNAVAILABLE_REASONS:
+        raise ValueError("reason must be 'damaged' or 'maintenance'")
+    item.status = reason
     db.session.commit()
     return item
+
+
+def affected_reservations(item: EquipmentItem):
+    """Live reservations on this item that have not ended yet."""
+    return EquipmentReservation.query.filter(
+        EquipmentReservation.equipment_item_id == item.id,
+        EquipmentReservation.status == "reserved",
+        EquipmentReservation.end_datetime > utcnow(),
+    ).all()
 
 
 def mark_active(item: EquipmentItem) -> EquipmentItem:

@@ -52,8 +52,14 @@ def mark_item_unavailable(item_id):
     item = catalogue.get_item(item_id)
     if not item:
         return jsonify({"error": "Equipment item not found"}), 404
-    item = catalogue.mark_unavailable(item)
-    return jsonify(item.to_dict()), 200
+    reason = (request.get_json(silent=True) or {}).get("reason")
+    try:
+        item = catalogue.mark_unavailable(item, reason)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    body = item.to_dict()
+    body["affectedReservations"] = [r.to_dict() for r in catalogue.affected_reservations(item)]
+    return jsonify(body), 200
 
 
 @equipment_bp.post("/items/<int:item_id>/mark-active")
@@ -81,7 +87,9 @@ def check_item_availability(item_id):
     quantity = request.args.get("quantity", type=int, default=1)
     if not start or not end:
         return jsonify({"error": "start and end query params (ISO datetimes) are required"}), 400
-    result = availability.check_availability(item, quantity, datetime.fromisoformat(start), datetime.fromisoformat(end))
+    result = availability.check_availability(
+        item, quantity, datetime.fromisoformat(start), datetime.fromisoformat(end)
+    )
     return jsonify(result), 200
 
 

@@ -21,7 +21,7 @@ class EquipmentItem(db.Model):
     category = db.Column(db.String(100), nullable=True)
     total_quantity = db.Column(db.Integer, nullable=False, default=0)
     status = db.Column(db.String(20), nullable=False, default="active")
-    # active | maintenance | retired
+    # active | maintenance | retired | damaged
     created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
