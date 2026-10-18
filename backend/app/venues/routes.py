@@ -171,6 +171,33 @@ def remove_unavailability(venue_id, block_id):
     return "", 204
 
 
+@venues_bp.put("/<int:venue_id>/unavailability/<int:block_id>")
+@roles_required("venue_staff")
+def update_unavailability(venue_id, block_id):
+    """Shorten, extend or re-describe an unavailable period."""
+    venue = catalogue.get_venue(venue_id)
+    if not venue:
+        return jsonify({"error": "Venue not found"}), 404
+    data = request.get_json(silent=True) or {}
+    changes = {}
+    try:
+        if "start" in data:
+            changes["start"] = _parse_dt(data["start"])
+        if "end" in data:
+            changes["end"] = _parse_dt(data["end"])
+    except (ValueError, TypeError):
+        return jsonify({"error": "start and end must be valid ISO datetimes"}), 400
+    if "reason" in data:
+        changes["reason"] = data["reason"]
+    try:
+        block, flags = availability.update_unavailability(venue, block_id, **changes)
+    except LookupError:
+        return jsonify({"error": "Unavailability period not found"}), 404
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"unavailability": block.to_dict(), "flagsRaised": [f.to_dict() for f in flags]}), 200
+
+
 @venues_bp.get("/flags/mine")
 @roles_required("event_coordinator")
 def my_availability_flags():
@@ -178,7 +205,7 @@ def my_availability_flags():
     assigned to them."""
     user = _current_user()
     flags = availability.list_unresolved_flags_for_coordinator(user.id)
-    return jsonify([f.to_dict() for f in flags]), 200
+    return jsonify([availability.describe_flag(f) for f in flags]), 200
 
 
 @venues_bp.post("/flags/<int:flag_id>/resolve")
@@ -189,6 +216,10 @@ def resolve_availability_flag(flag_id):
     flag = VenueAvailabilityFlag.query.get(flag_id)
     if not flag:
         return jsonify({"error": "Flag not found"}), 404
+    user = _current_user()
+    event = db.session.get(Event, flag.event_id)
+    if event is None or event.coordinator_id != user.id:
+        return jsonify({"error": "Only the coordinator of this event can resolve its flag"}), 403
     flag = availability.resolve_flag(flag)
     return jsonify(flag.to_dict()), 200
 

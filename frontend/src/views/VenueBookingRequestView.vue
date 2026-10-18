@@ -166,6 +166,16 @@
         </button>
       </div>
 
+      <!-- A booked venue became unavailable: the event is kept, a replacement is needed -->
+      <div v-if="unavailabilityNotices.length" class="unavailable-notices" role="alert">
+        <div v-for="n in unavailabilityNotices" :key="n.id" class="unavailable-notice">
+          <strong>{{ n.venueName || "A venue" }} is no longer available for {{ n.eventName || `event #${n.eventId}` }}.</strong>
+          <p>{{ n.reason || "The venue was marked unavailable." }} Alternative arrangements are required; the event itself has not been cancelled.</p>
+          <p v-for="p in n.unavailablePeriods" :key="p.id">Unavailable {{ new Date(p.start).toLocaleString() }} to {{ new Date(p.end).toLocaleString() }}</p>
+          <router-link to="/venues/search">Find a replacement venue</router-link>
+        </div>
+      </div>
+
       <!-- Simple confirmation notices for approved venue bookings -->
       <div v-if="confirmationNotices.length" class="confirmation-notices" role="status">
         <p v-for="notice in confirmationNotices" :key="notice.bookingId">
@@ -280,6 +290,7 @@ const resubmittingFromId = ref(null);
 const myBookings = ref([]);
 const confirmationNotices = ref([]);
 const rejectionNotices = ref([]);
+const unavailabilityNotices = ref([]);
 
 // No separate notification service: notices come from the existing booking list.
 const holdNotices = computed(() => {
@@ -482,6 +493,15 @@ async function loadRejectionNotices() {
   }
 }
 
+async function loadUnavailabilityNotices() {
+  try {
+    const { data } = await venuesApi.myFlags();
+    unavailabilityNotices.value = Array.isArray(data) ? data : [];
+  } catch {
+    unavailabilityNotices.value = [];
+  }
+}
+
 async function loadMyBookings() {
   statusLoading.value = true;
   statusError.value = "";
@@ -489,7 +509,7 @@ async function loadMyBookings() {
   try {
     const response = await venuesApi.getMyBookings();
     myBookings.value = response.data;
-    await Promise.all([loadConfirmationNotices(), loadRejectionNotices()]);
+    await Promise.all([loadConfirmationNotices(), loadRejectionNotices(), loadUnavailabilityNotices()]);
   } catch (error) {
     myBookings.value = []; // Never display outdated statuses after a failed refresh.
     statusError.value =
@@ -609,6 +629,9 @@ onMounted(async () => {
 .rejection-notices { margin: 0 0 1rem; padding: .8rem 1rem; border: 1px solid #f3b4c4; border-radius: 10px; background: #fde8ee; color: #a12b47; }
 .rejection-notice + .rejection-notice { border-top: 1px solid #f3b4c4; margin-top: .7rem; padding-top: .7rem; }
 .rejection-notice p { margin: .4rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.unavailable-notices { margin: 0 0 1rem; padding: .8rem 1rem; border: 1px solid var(--butter-text, #b45309); border-radius: 10px; background: var(--butter-bg, #fef3c7); color: var(--butter-text, #92400e); }
+.unavailable-notice + .unavailable-notice { border-top: 1px solid var(--butter-text, #b45309); margin-top: .7rem; padding-top: .7rem; }
+.unavailable-notice p { margin: .3rem 0; }
 .confirmation-notices {
   margin: 0 0 1rem;
   padding: .8rem 1rem;

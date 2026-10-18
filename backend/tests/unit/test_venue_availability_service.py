@@ -33,7 +33,21 @@ from app.venues.services.availability import (
     remove_unavailability,
     resolve_flag,
 )
-from app.venues.services.booking import has_confirmed_conflict
+from app.venues.services.availability import (
+    describe_flag,
+    find_unavailability_overlap,
+    resolve_flags_for_booking,
+    update_unavailability,
+)
+from app.venues.services.booking import (
+    approve_booking,
+    cancel_booking,
+    has_confirmed_conflict,
+    manage_hold,
+)
+from app.models.venue import BOOKING_CANCELLED, BOOKING_HELD
+from app.common.time import utcnow
+from datetime import timedelta
 DEFAULT_REASON = "Venue marked unavailable during this event's scheduled time"
 
 def dt(day, hour, minute=0):
@@ -527,3 +541,314 @@ def test_fits_operating_hours_with_only_a_start_checks_open_inclusive_close_excl
 def test_fits_operating_hours_is_always_true_without_usable_hours():
     assert fits_operating_hours(_hours_venue(None), time(3), time(4)) is True
     assert fits_operating_hours(_hours_venue(None), time(3)) is True
+
+
+# ---------------------------------------------------------------------------
+# Week 7 change #2, part 2: edit a period, block-aware approval, richer flags
+# ---------------------------------------------------------------------------
+class TestUpdateUnavailability:
+    def test_shortening_a_period_keeps_its_start_and_reason(self, app):
+        venue = _venue()
+        block, _ = add_unavailability(venue, 1, dt(5, 9), dt(5, 17), "Repairs")
+
+        updated, flags = update_unavailability(venue, block.id, end=dt(5, 12))
+
+        assert (updated.start_datetime, updated.end_datetime) == (dt(5, 9), dt(5, 12))
+        assert updated.reason == "Repairs"
+        assert flags == []
+
+    def test_extending_over_an_approved_booking_flags_it(self, app):
+        venue = _venue()
+        booking = _booking(venue, dt(5, 14), dt(5, 16))
+        block, _ = add_unavailability(venue, 1, dt(5, 9), dt(5, 12), "Repairs")
+
+        _, flags = update_unavailability(venue, block.id, end=dt(5, 17))
+
+        assert [f.event_id for f in flags] == [booking.event_id]
+        assert VenueBooking.query.get(booking.id).status == BOOKING_APPROVED
+
+    def test_extending_twice_does_not_duplicate_the_flag(self, app):
+        venue = _venue()
+        _booking(venue, dt(5, 14), dt(5, 16))
+        block, _ = add_unavailability(venue, 1, dt(5, 9), dt(5, 12), "Repairs")
+        update_unavailability(venue, block.id, end=dt(5, 17))
+
+        _, second = update_unavailability(venue, block.id, end=dt(5, 18))
+
+        assert second == [] and VenueAvailabilityFlag.query.count() == 1
+
+    def test_reason_can_be_changed_and_cleared(self, app):
+        venue = _venue()
+        block, _ = add_unavailability(venue, 1, dt(5, 9), dt(5, 17), "Repairs")
+
+        assert update_unavailability(venue, block.id, reason="  Fire drill ")[0].reason == "Fire drill"
+        assert update_unavailability(venue, block.id, reason="   ")[0].reason is None
+        assert update_unavailability(venue, block.id, reason=None)[0].reason is None
+
+    @pytest.mark.parametrize("kwargs", [{"end": dt(5, 9)}, {"end": dt(5, 8)}, {"start": dt(5, 18)}])
+    def test_end_must_stay_after_start_and_nothing_changes(self, app, kwargs):
+        venue = _venue()
+        block, _ = add_unavailability(venue, 1, dt(5, 9), dt(5, 17))
+
+        with pytest.raises(ValueError, match="after start"):
+            update_unavailability(venue, block.id, **kwargs)
+
+        db.session.refresh(block)
+        assert (block.start_datetime, block.end_datetime) == (dt(5, 9), dt(5, 17))
+
+    def test_non_datetime_values_are_rejected(self, app):
+        venue = _venue()
+        block, _ = add_unavailability(venue, 1, dt(5, 9), dt(5, 17))
+
+        with pytest.raises(ValueError, match="ISO datetimes"):
+            update_unavailability(venue, block.id, end="2026-12-05T12:00")
+
+    @pytest.mark.parametrize("reason", [123, ["x"], "x" * 256])
+    def test_invalid_reason_is_rejected(self, app, reason):
+        venue = _venue()
+        block, _ = add_unavailability(venue, 1, dt(5, 9), dt(5, 17))
+
+        with pytest.raises(ValueError):
+            update_unavailability(venue, block.id, reason=reason)
+
+    def test_unknown_or_other_venues_period_raises_lookup_error(self, app):
+        venue, other = _venue(name="A"), _venue(name="B")
+        block, _ = add_unavailability(other, 1, dt(5, 9), dt(5, 17))
+
+        with pytest.raises(LookupError):
+            update_unavailability(venue, block.id, end=dt(5, 12))
+        with pytest.raises(LookupError):
+            update_unavailability(venue, 9999, end=dt(5, 12))
+
+
+class TestFindUnavailabilityOverlap:
+    def test_overlapping_period_is_found(self, app):
+        venue = _venue()
+        block, _ = add_unavailability(venue, 1, dt(5, 9), dt(5, 17))
+
+        assert find_unavailability_overlap(venue.id, dt(5, 16), dt(5, 18)).id == block.id
+
+    def test_touching_boundaries_do_not_overlap(self, app):
+        venue = _venue()
+        add_unavailability(venue, 1, dt(5, 9), dt(5, 17))
+
+        assert find_unavailability_overlap(venue.id, dt(5, 17), dt(5, 19)) is None
+        assert find_unavailability_overlap(venue.id, dt(5, 7), dt(5, 9)) is None
+
+    def test_other_venues_periods_are_ignored(self, app):
+        venue, other = _venue(name="A"), _venue(name="B")
+        add_unavailability(other, 1, dt(5, 9), dt(5, 17))
+
+        assert find_unavailability_overlap(venue.id, dt(5, 10), dt(5, 12)) is None
+
+    def test_earliest_overlapping_period_is_returned(self, app):
+        venue = _venue()
+        add_unavailability(venue, 1, dt(5, 14), dt(5, 16), "Later")
+        add_unavailability(venue, 1, dt(5, 9), dt(5, 11), "Earlier")
+
+        assert find_unavailability_overlap(venue.id, dt(5, 8), dt(5, 18)).reason == "Earlier"
+
+
+class TestApprovalRespectsUnavailability:
+    def test_pending_request_inside_a_blocked_period_is_refused(self, app):
+        venue = _venue(created_by=7)
+        booking = _booking(venue, dt(5, 10), dt(5, 12), status=BOOKING_PENDING)
+        add_unavailability(venue, 1, dt(5, 9), dt(5, 17), "Roof repairs")
+
+        with pytest.raises(ValueError, match="unavailable.*Roof repairs"):
+            approve_booking(booking, decided_by=7)
+
+        assert VenueBooking.query.get(booking.id).status == BOOKING_PENDING
+
+    def test_request_outside_the_blocked_period_is_approved(self, app):
+        venue = _venue(created_by=7)
+        booking = _booking(venue, dt(6, 10), dt(6, 12), status=BOOKING_PENDING)
+        add_unavailability(venue, 1, dt(5, 9), dt(5, 17))
+
+        assert approve_booking(booking, decided_by=7).status == BOOKING_APPROVED
+
+    def test_setup_time_counts_towards_the_blocked_period(self, app):
+        venue = _venue(created_by=7, setup_minutes=30)
+        clash = _booking(venue, dt(5, 10, 30), dt(5, 12), status=BOOKING_PENDING)  # needs the room from 10:00
+        add_unavailability(venue, 1, dt(5, 9), dt(5, 10, 15))
+
+        with pytest.raises(ValueError, match="unavailable"):
+            approve_booking(clash, decided_by=7)
+
+    def test_a_period_ending_exactly_when_setup_starts_is_fine(self, app):
+        venue = _venue(created_by=7, setup_minutes=30)
+        fine = _booking(venue, dt(5, 10, 30), dt(5, 12), status=BOOKING_PENDING)  # needs the room from 10:00
+        add_unavailability(venue, 1, dt(5, 9), dt(5, 10))
+
+        assert approve_booking(fine, decided_by=7).status == BOOKING_APPROVED
+
+    def test_removing_the_period_allows_approval_again(self, app):
+        venue = _venue(created_by=7)
+        booking = _booking(venue, dt(5, 10), dt(5, 12), status=BOOKING_PENDING)
+        block, _ = add_unavailability(venue, 1, dt(5, 9), dt(5, 17))
+        remove_unavailability(venue, block.id)
+
+        assert approve_booking(booking, decided_by=7).status == BOOKING_APPROVED
+
+
+class TestDescribeFlag:
+    def _flagged(self, coordinator_id=None):
+        venue = _venue(name="Main Hall")
+        booking = _booking(venue, dt(5, 10), dt(5, 12), coordinator_id=coordinator_id)
+        block, flags = add_unavailability(venue, 1, dt(5, 9), dt(5, 17), "Roof repairs")
+        return venue, booking, block, flags[0]
+
+    def test_includes_event_venue_booking_and_the_unavailable_period(self, app):
+        venue, booking, block, flag = self._flagged()
+
+        info = describe_flag(flag)
+
+        assert info["eventName"] == "Event" and info["venueName"] == "Main Hall"
+        assert info["bookingId"] == booking.id
+        assert (info["bookingStart"], info["bookingEnd"]) == ("2026-12-05T10:00:00", "2026-12-05T12:00:00")
+        assert info["reason"] == "Roof repairs"
+        assert [p["id"] for p in info["unavailablePeriods"]] == [block.id]
+
+    def test_only_periods_that_overlap_the_booking_are_listed(self, app):
+        venue, _, block, flag = self._flagged()
+        add_unavailability(venue, 1, dt(20, 9), dt(20, 17), "Unrelated")
+
+        assert [p["id"] for p in describe_flag(flag)["unavailablePeriods"]] == [block.id]
+
+    def test_period_disappears_once_it_is_removed(self, app):
+        venue, _, block, flag = self._flagged()
+        remove_unavailability(venue, block.id)
+
+        assert describe_flag(flag)["unavailablePeriods"] == []
+
+    def test_flag_still_describes_itself_after_the_booking_is_gone(self, app):
+        venue, booking, _, flag = self._flagged()
+        VenueBooking.query.filter_by(id=booking.id).update({"status": BOOKING_CANCELLED})
+        db.session.commit()
+
+        info = describe_flag(flag)
+
+        assert info["bookingId"] is None and info["unavailablePeriods"] == []
+        assert info["eventName"] == "Event"
+
+
+class TestFlagsResolvedWhenBookingIsCancelled:
+    def test_resolve_flags_for_booking_only_touches_that_event_and_venue(self, app):
+        venue = _venue()
+        mine = _booking(venue, dt(5, 10), dt(5, 12))
+        other = _booking(venue, dt(6, 10), dt(6, 12))
+        add_flag_once(mine.event_id, venue.id, "Repairs")
+        add_flag_once(other.event_id, venue.id, "Repairs")
+        db.session.commit()
+
+        assert resolve_flags_for_booking(mine.event_id, venue.id) == 1
+        db.session.commit()
+
+        assert VenueAvailabilityFlag.query.filter_by(event_id=mine.event_id).one().resolved is True
+        assert VenueAvailabilityFlag.query.filter_by(event_id=other.event_id).one().resolved is False
+
+    def test_cancelling_the_booking_closes_its_flags_and_frees_the_venue(self, app):
+        venue = _venue(created_by=7)
+        booking = _booking(venue, dt(5, 10), dt(5, 12), coordinator_id=3)
+        add_unavailability(venue, 1, dt(5, 9), dt(5, 17), "Roof repairs")
+        assert len(list_unresolved_flags_for_coordinator(3)) == 1
+
+        cancel_booking(booking, decided_by=7, reason="Venue unavailable")
+
+        assert VenueBooking.query.get(booking.id).status == BOOKING_CANCELLED
+        assert list_unresolved_flags_for_coordinator(3) == []
+        assert get_calendar(venue.id, dt(5, 0), dt(6, 0))["confirmedBookings"] == []
+
+    def test_event_information_is_preserved_when_the_booking_is_cancelled(self, app):
+        venue = _venue(created_by=7)
+        booking = _booking(venue, dt(5, 10), dt(5, 12), coordinator_id=3)
+        event = db.session.get(Event, booking.event_id)
+        name, date_before = event.name, event.proposed_date
+
+        cancel_booking(booking, decided_by=7)
+
+        db.session.refresh(event)
+        assert event.name == name and event.proposed_date == date_before
+        assert event.status != "cancelled"
+
+
+class TestHoldsRespectUnavailability:
+    """Tentative holds (Week 7 change #4) must not be able to reserve a closed venue."""
+
+    def test_a_hold_cannot_be_placed_inside_an_unavailable_period(self, app):
+        venue = _venue(created_by=7)
+        booking = _booking(venue, dt(5, 10), dt(5, 12), status=BOOKING_PENDING)
+        add_unavailability(venue, 1, dt(5, 9), dt(5, 17), "Roof repairs")
+
+        with pytest.raises(ValueError, match="unavailable.*Roof repairs"):
+            manage_hold(booking.id, 7, "place", utcnow() + timedelta(days=1))
+
+        assert VenueBooking.query.get(booking.id).status == BOOKING_PENDING
+
+    def test_a_hold_outside_the_period_is_still_allowed(self, app):
+        venue = _venue(created_by=7)
+        booking = _booking(venue, dt(6, 10), dt(6, 12), status=BOOKING_PENDING)
+        add_unavailability(venue, 1, dt(5, 9), dt(5, 17))
+
+        held = manage_hold(booking.id, 7, "place", utcnow() + timedelta(days=1))
+
+        assert held.status == BOOKING_HELD
+
+    def test_a_held_booking_cannot_be_approved_once_its_time_is_blocked(self, app):
+        venue = _venue(created_by=7)
+        booking = _booking(venue, dt(5, 10), dt(5, 12), status=BOOKING_PENDING)
+        manage_hold(booking.id, 7, "place", utcnow() + timedelta(days=1))
+        add_unavailability(venue, 1, dt(5, 9), dt(5, 17), "Roof repairs")
+
+        with pytest.raises(ValueError, match="unavailable"):
+            approve_booking(booking, decided_by=7)
+
+        assert VenueBooking.query.get(booking.id).status == BOOKING_HELD
+
+
+
+# ---------------------------------------------------------------------------
+# Week 7 change #1: approving a booking counts setup and turnaround time
+# ---------------------------------------------------------------------------
+class TestApprovalUsesSetupAndTurnaround:
+    def test_a_booking_starting_inside_the_previous_turnaround_is_refused(self, app):
+        venue = _venue(created_by=7, turnaround_minutes=30)
+        _booking(venue, dt(1, 10), dt(1, 12))  # venue is busy until 12:30
+        too_early = _booking(venue, dt(1, 12, 15), dt(1, 13), status=BOOKING_PENDING)
+
+        with pytest.raises(ValueError, match="Conflicts"):
+            approve_booking(too_early, decided_by=7)
+
+        assert VenueBooking.query.get(too_early.id).status == BOOKING_PENDING
+
+    def test_a_booking_starting_when_the_turnaround_ends_is_approved(self, app):
+        venue = _venue(created_by=7, turnaround_minutes=30)
+        _booking(venue, dt(1, 10), dt(1, 12))
+        on_time = _booking(venue, dt(1, 12, 30), dt(1, 13), status=BOOKING_PENDING)
+
+        assert approve_booking(on_time, decided_by=7).status == BOOKING_APPROVED
+
+    def test_the_new_bookings_own_setup_time_counts(self, app):
+        venue = _venue(created_by=7, setup_minutes=30)
+        _booking(venue, dt(1, 10), dt(1, 12))
+        clash = _booking(venue, dt(1, 12, 15), dt(1, 13), status=BOOKING_PENDING)  # needs the room from 11:45
+
+        with pytest.raises(ValueError, match="Conflicts"):
+            approve_booking(clash, decided_by=7)
+
+    def test_the_week_7_example_blocks_0930_to_1245(self, app):
+        venue = _venue(created_by=7, setup_minutes=30, turnaround_minutes=45)
+        _booking(venue, dt(1, 10), dt(1, 12))  # occupies the venue 09:30-12:45
+        inside = _booking(venue, dt(1, 13), dt(1, 14), status=BOOKING_PENDING)  # needs it from 12:30
+        clear = _booking(venue, dt(1, 13, 30), dt(1, 14), status=BOOKING_PENDING)  # needs it from 13:00
+
+        with pytest.raises(ValueError, match="Conflicts"):
+            approve_booking(inside, decided_by=7)
+        assert approve_booking(clear, decided_by=7).status == BOOKING_APPROVED
+
+    def test_bookings_that_exactly_touch_are_both_approved(self, app):
+        venue = _venue(created_by=7)
+        _booking(venue, dt(1, 10), dt(1, 12))
+        next_one = _booking(venue, dt(1, 12), dt(1, 14), status=BOOKING_PENDING)
+
+        assert approve_booking(next_one, decided_by=7).status == BOOKING_APPROVED

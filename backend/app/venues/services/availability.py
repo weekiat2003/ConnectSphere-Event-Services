@@ -243,6 +243,105 @@ def remove_unavailability(venue: Venue, block_id: int):
     db.session.commit()
 
 
+_UNSET = object()
+
+
+def update_unavailability(venue: Venue, block_id: int, start=_UNSET, end=_UNSET, reason=_UNSET):
+    """Venue Staff change an unavailable period, e.g. shorten it when the work
+    finishes early or extend it. Returns (block, flags_raised); an extension that
+    now overlaps approved bookings flags them exactly as adding a period does.
+    Raises LookupError if the period is not this venue's, ValueError if invalid."""
+    block = VenueUnavailability.query.filter_by(id=block_id, venue_id=venue.id).first()
+    if block is None:
+        raise LookupError("Unavailability period not found")
+
+    new_start = block.start_datetime if start is _UNSET else start
+    new_end = block.end_datetime if end is _UNSET else end
+    if not isinstance(new_start, datetime) or not isinstance(new_end, datetime):
+        raise ValueError("start and end must be ISO datetimes")
+    if new_end <= new_start:
+        raise ValueError("End time must be after start time")
+
+    if reason is not _UNSET:
+        if reason is not None and not isinstance(reason, str):
+            raise ValueError("Reason must be text")
+        reason = reason.strip() or None if reason is not None else None
+        if reason is not None and len(reason) > 255:
+            raise ValueError("Reason must not exceed 255 characters")
+        block.reason = reason
+
+    block.start_datetime = new_start
+    block.end_datetime = new_end
+    flags = _flag_affected_events(venue, new_start, new_end, block.reason)
+    db.session.commit()
+    return block, flags
+
+
+def find_unavailability_overlap(venue_id: int, start, end):
+    """The first unavailable period of this venue overlapping [start, end), or None."""
+    return (
+        VenueUnavailability.query.filter(
+            VenueUnavailability.venue_id == venue_id,
+            VenueUnavailability.start_datetime < end,
+            VenueUnavailability.end_datetime > start,
+        )
+        .order_by(VenueUnavailability.start_datetime)
+        .first()
+    )
+
+
+def describe_flag(flag: VenueAvailabilityFlag) -> dict:
+    """A flag plus what the coordinator needs in order to act on it: the event and
+    venue names, the affected booking and the unavailable period(s) causing it.
+    Looked up live, so the flag table needs no schema change."""
+    from app.models.event import Event
+
+    data = flag.to_dict()
+    venue = db.session.get(Venue, flag.venue_id)
+    event = db.session.get(Event, flag.event_id)
+    booking = (
+        VenueBooking.query.filter_by(
+            event_id=flag.event_id, venue_id=flag.venue_id, status=BOOKING_APPROVED
+        )
+        .order_by(VenueBooking.start_datetime)
+        .first()
+    )
+    periods = []
+    if booking is not None and venue is not None:
+        window_start, window_end = compute_booking_window(booking, venue)
+        blocks = (
+            VenueUnavailability.query.filter(
+                VenueUnavailability.venue_id == venue.id,
+                VenueUnavailability.start_datetime < window_end,
+                VenueUnavailability.end_datetime > window_start,
+            )
+            .order_by(VenueUnavailability.start_datetime)
+            .all()
+        )
+        periods = [b.to_dict() for b in blocks]
+    data.update(
+        {
+            "eventName": event.name if event else None,
+            "venueName": venue.name if venue else None,
+            "bookingId": booking.id if booking else None,
+            "bookingStart": booking.start_datetime.isoformat() if booking else None,
+            "bookingEnd": booking.end_datetime.isoformat() if booking else None,
+            "unavailablePeriods": periods,
+        }
+    )
+    return data
+
+
+def resolve_flags_for_booking(event_id: int, venue_id: int) -> int:
+    """When the affected booking is cancelled the flag has done its job.
+    Resolves every open flag for this event at this venue. The caller commits."""
+    from app.common.time import utcnow
+
+    return VenueAvailabilityFlag.query.filter_by(
+        event_id=event_id, venue_id=venue_id, resolved=False
+    ).update({"resolved": True, "resolved_at": utcnow()}, synchronize_session=False)
+
+
 def list_flags_for_event(event_id: int):
     return VenueAvailabilityFlag.query.filter_by(event_id=event_id).order_by(
         VenueAvailabilityFlag.created_at.desc()
