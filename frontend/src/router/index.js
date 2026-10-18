@@ -19,6 +19,9 @@ import VenueCatalogueView from "../views/VenueCatalogueView.vue";
 import VenueAvailabilityView from "../views/VenueAvailabilityView.vue";
 import VenueBookingApprovalView from "../views/VenueBookingApprovalView.vue";
 import ChangeRequestReviewView from "../views/ChangeRequestReviewView.vue";
+import SafetyReviewListView from "../views/SafetyReviewListView.vue";
+import SafetyAssessmentView from "../views/SafetyAssessmentView.vue";
+import AccessDeniedView from "../views/AccessDeniedView.vue";
 
 
 const routes = [
@@ -141,6 +144,26 @@ const routes = [
     roles: ["venue_staff"],
   },
   },
+  // Operational Safety Check. showAccessDenied: other roles are told they
+  // are not allowed, instead of being silently sent to the Dashboard.
+  {
+    path: "/safety-reviews",
+    name: "safety-reviews",
+    component: SafetyReviewListView,
+    meta: { requiresAuth: true, roles: ["safety_officer"], showAccessDenied: true },
+  },
+  {
+    path: "/safety-reviews/:id",
+    name: "safety-assessment",
+    component: SafetyAssessmentView,
+    meta: { requiresAuth: true, roles: ["safety_officer"], showAccessDenied: true },
+  },
+  {
+    path: "/access-denied",
+    name: "access-denied",
+    component: AccessDeniedView,
+    meta: { requiresAuth: true },
+  },
   { path: "/change-requests", 
     name: "change-request-review", 
     component: ChangeRequestReviewView, 
@@ -173,6 +196,11 @@ router.beforeEach((to) => {
   }
 
   if (to.meta.roles && !to.meta.roles.some((role) => auth.hasRole(role))) {
+    // Safety pages tell other roles they are not allowed, instead of
+    // silently sending them to the Dashboard.
+    if (to.meta.showAccessDenied) {
+      return { name: "access-denied", query: { roles: to.meta.roles } };
+    }
     return { name: "dashboard" };
   }
 });

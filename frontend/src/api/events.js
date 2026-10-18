@@ -23,6 +23,11 @@ export default {
   reassign: (id, newCoordinatorId) => apiClient.post(`/events/${id}/reassign`, { newCoordinatorId }),
   changeStatus: (id, statusValue, reason) => apiClient.post(`/events/${id}/status`, { status: statusValue, reason }),
   reviewSafety: (id, payload) => apiClient.post(`/events/${id}/safety-review`, payload),
+  // Operational Safety Check (Safety Officer only)
+  listSafetyReviews: () => apiClient.get("/events/safety-reviews"),
+  getSafetyAssessment: (id) => apiClient.get(`/events/${id}/safety-assessment`),
+  saveSafetyAssessment: (id, factorAssessments) =>
+    apiClient.put(`/events/${id}/safety-assessment`, { factorAssessments }),
 
   // Added: Coordinators view unassigned events for planning visibility (view-only, no claim/self-assign)
   unassignedEvents: () => apiClient.get("/events/unassigned"),
