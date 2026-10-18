@@ -39,9 +39,20 @@
           v-if="isAssignedCoordinator && !showEditForm && ['under_review', 'approved', 'planning'].includes(event.status)"
           class="btn btn-grey btn-small" @click="openEditForm">Edit
         </button>
-        <button v-if="isAssignedCoordinator && ['approved', 'planning'].includes(event.status)"
-          class="btn btn-rose btn-small" @click="cancelEvent">Cancel Event
+        <button
+          v-if="isAssignedCoordinator && ['approved', 'planning', 'safety_check'].includes(event.status) && !showCancelForm"
+          class="btn btn-rose btn-small" @click="openCancelForm">Cancel Event
         </button>
+      </div>
+      <div v-if="event.cancellation" class="notice cancelled">
+        <strong>Coordinator cancelled this event</strong>
+        <p class="decision-meta">
+          By {{ event.cancellation.coordinatorName || `Coordinator #${event.cancellation.coordinatorId}` }}
+          on {{ formatDate(event.cancellation.timestamp) }}
+        </p>
+        <p v-if="event.cancellation.reason" class="decision-reason">
+          <strong>Reason:</strong> {{ event.cancellation.reason }}
+        </p>
       </div>
       <div v-if="event.reviewDecision?.outcome" class="notice" :class="event.reviewDecision.outcome">
         <strong>
@@ -163,8 +174,7 @@
           </p>
           <router-link v-if="isAssignedCoordinator"
             :to="{ name: 'change-request-review', query: { id: request.id } }">Open in review</router-link>
-          <p v-if="request.decidedAt" class="change-reason"><strong>Processed:</strong> {{ formatDate(request.decidedAt)
-          }}</p>
+          <p v-if="request.decidedAt" class="change-reason"><strong>Decided:</strong> {{ formatDate(request.decidedAt) }}</p>
           <p v-if="request.status === 're_review' && request.reReviewAt" class="change-reason">
             <strong>Sent for re-review</strong> by the assigned Coordinator on {{ formatDate(request.reReviewAt) }}.
             Affected arrangements are flagged for reconsideration; proposed values are not applied yet.
@@ -188,6 +198,16 @@
     <!-- Coordinator Actions: Event Review and Approval + Coordinator Assignment + Event Status Management -->
     <section v-if="isAssignedCoordinator">
       <h3 class="section-title">Coordinator Actions</h3>
+
+      <div v-if="showCancelForm" class="action-block">
+        <h3 class="block-title">Cancel Event</h3>
+        <textarea v-model="cancelReason" placeholder="Reason for cancelling (required)"></textarea>
+        <p v-if="cancelError" class="field-error">{{ cancelError }}</p>
+        <div class="actions">
+          <button class="btn btn-rose" :disabled="cancelSubmitting" @click="cancelEvent">Confirm Cancellation</button>
+          <button class="btn btn-grey" :disabled="cancelSubmitting" @click="showCancelForm = false">Back</button>
+        </div>
+      </div>
 
       <div v-if="event.status === 'under_review'" class="action-block">
         <textarea v-model="comment" placeholder="Comments / reason"></textarea>
@@ -1182,21 +1202,6 @@ async function reject() {
   }
 }
 
-async function cancelEvent() {
-  actionError.value = "";
-  try {
-    const data = await requestActionWithConfirmation((confirmed) =>
-      eventsApi.cancelEvent(event.value.id, comment.value, confirmed)
-    );
-    if (data) {
-      comment.value = "";
-      await load();
-    }
-  } catch (e) {
-    actionError.value = e.response?.data?.error || "Could not cancel this event.";
-  }
-}
-
 async function deleteClarificationRequest(reviewId) {
   actionError.value = "";
 
@@ -1252,6 +1257,37 @@ async function resubmit() {
 async function autoAssign() {
   await eventsApi.autoAssign(event.value.id);
   await load();
+}
+
+const showCancelForm = ref(false);
+const cancelReason = ref("");
+const cancelError = ref("");
+const cancelSubmitting = ref(false);
+
+function openCancelForm() {
+  cancelReason.value = "";
+  cancelError.value = "";
+  showCancelForm.value = true;
+}
+
+async function cancelEvent() {
+  cancelError.value = "";
+  cancelSubmitting.value = true;
+  try {
+    const data = await requestActionWithConfirmation((confirmed) =>
+      eventsApi.cancelEvent(event.value.id, cancelReason.value, confirmed)
+    );
+    if (data) {
+      showCancelForm.value = false;
+      cancelReason.value = "";
+      await load();
+    }
+  } catch (e) {
+    const data = e.response?.data;
+    cancelError.value = data?.errors?.reason || data?.error || "Could not cancel this event.";
+  } finally {
+    cancelSubmitting.value = false;
+  }
 }
 
 onMounted(async () => {
@@ -1568,6 +1604,11 @@ onMounted(async () => {
 }
 
 .notice.rejected {
+  background: var(--rose-bg, #fbdcdc);
+  color: var(--rose-text, #a12b47);
+}
+
+.notice.cancelled {
   background: var(--rose-bg, #fbdcdc);
   color: var(--rose-text, #a12b47);
 }
@@ -1918,7 +1959,6 @@ textarea {
   color: var(--butter-text, #8a5a00);
 }
 
-.badge.cannot_accommodate,
 .badge.significant {
   background: var(--rose-bg, #fbdcdc);
 }

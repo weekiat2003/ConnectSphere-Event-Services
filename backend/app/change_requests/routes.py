@@ -16,6 +16,7 @@ from app.change_requests.services import (
     process_routine_change,
     trigger_re_review,
     apply_re_reviewed_change,
+    reject_change_request,
 
 )
 from app.models.event import Event
@@ -147,6 +148,39 @@ def catalogue():
     ).mappings().all()
 
     return jsonify({"venues": venues, "equipment": [dict(row) for row in rows]}), 200
+
+@change_requests_bp.post("/<int:request_id>/reject")
+@roles_required("event_coordinator")
+def reject_change(request_id):
+    user = _current_user()
+    data = request.get_json() or {}
+    reason = data.get("reason")
+
+    try:
+        # Validate first, so nobody is asked to confirm something that would fail.
+        reject_change_request(request_id, user.id, reason, dry_run=True)
+
+        if data.get("confirmed") is not True:
+            return jsonify({
+                "requiresConfirmation": True,
+                "message": (
+                    "Reject this change request? Nothing about the event will change, "
+                    "and the organiser will be shown your reason."
+                ),
+            }), 409
+
+        rejected = reject_change_request(request_id, user.id, reason)
+    except LookupError:
+        return jsonify({"error": "Change request not found"}), 404
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except ChangeRequestError as e:
+        return jsonify({
+            "error": "This change request could not be rejected",
+            "errors": e.errors,
+        }), 400
+
+    return jsonify(rejected.to_dict()), 200
 
 @change_requests_bp.post("/<int:request_id>/re-review")
 @roles_required("event_coordinator")

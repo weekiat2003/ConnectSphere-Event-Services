@@ -109,6 +109,16 @@
             {{ ACTION_LABELS[action] }}
           </button>
         </div>
+        <div v-if="showRejectForm && !detail.decision" class="reject-form">
+          <label>
+            Reason for rejecting
+            <textarea v-model="rejectReason" placeholder="Explain why this change cannot go ahead"></textarea>
+          </label>
+          <div class="actions">
+            <button class="btn btn-rose" :disabled="processing" @click="rejectChange">Confirm rejection</button>
+            <button class="btn btn-grey" :disabled="processing" @click="showRejectForm = false">Back</button>
+          </div>
+        </div>
         <p v-if="actionError" class="field-error">{{ actionError }}</p>
         <ul v-if="Object.keys(actionErrors).length" class="field-error">
           <li v-for="(message, field) in actionErrors" :key="field">
@@ -135,6 +145,8 @@
   const processing = ref(false);
   const actionError = ref("");
   const actionErrors = ref({});
+  const showRejectForm = ref(false);
+  const rejectReason = ref("");
   
   const FIELD_LABELS = {
     proposed_date: "Date",
@@ -152,14 +164,19 @@
     category: "Category",
     venue_id: "Venue",
     equipment_requirements: "Equipment",
+    process_change: "Process change",
+    trigger_re_review: "Trigger re-review",
+    apply_change: "Record change is going ahead",
+    reject_change: "Reject",
+    cancel_event: "Cancel event",
   };
   const ACTION_LABELS = {
     process_change: "Process change",
     trigger_re_review: "Trigger re-review",
     apply_change: "Record change is going ahead",
-    cannot_accommodate: "Cannot accommodate",
+    reject_change: "Reject",
     cancel_event: "Cancel event",
-  };
+};
   
   const labelFor = (field) => FIELD_LABELS[field] || field;
   const statusLabel = (value) => String(value || "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -248,7 +265,7 @@
   function actionClass(action) {
     if (action === "trigger_re_review") return "btn-butter";
     if (action === "apply_change") return "btn-mint";
-    if (action === "cancel_event" || action === "cannot_accommodate") return "btn-rose";
+    if (action === "cancel_event" || action === "reject_change") return "btn-rose";
     return "btn-primary";
   }
 
@@ -256,7 +273,41 @@
     if (action === "process_change") return processChange();
     if (action === "trigger_re_review") return triggerReReview();
     if (action === "apply_change") return applyReReview();
+    if (action === "reject_change") {
+      actionError.value = "";
+      actionErrors.value = {};
+      showRejectForm.value = true;
+    }
   }
+
+  async function rejectChange() {
+  actionError.value = "";
+  actionErrors.value = {};
+  const id = detail.value.request.id;
+  processing.value = true;
+  try {
+    try {
+      await changeRequestsApi.rejectChange(id, rejectReason.value);
+    } catch (e) {
+      if (e.response?.status === 409 && e.response.data?.requiresConfirmation) {
+        if (!(await confirm(e.response.data.message))) return;
+        await changeRequestsApi.rejectChange(id, rejectReason.value, true);
+      } else {
+        throw e;
+      }
+    }
+    showRejectForm.value = false;
+    rejectReason.value = "";
+    await loadQueue();
+    await openRequest(id); // shows the rejection, who made it and when
+  } catch (e) {
+    const data = e.response?.data;
+    actionError.value = data?.errors ? "" : data?.error || "Could not reject this change request.";
+    actionErrors.value = data?.errors || {};
+  } finally {
+    processing.value = false;
+  }
+}
 
   async function triggerReReview() {
     actionError.value = "";
