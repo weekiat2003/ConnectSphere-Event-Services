@@ -141,3 +141,28 @@ def test_approval_api_records_name_and_time_and_rejects_repeat_decision(
     assert repeated.status_code == 409
     with client.application.app_context():
         assert EventSafetyReview.query.filter_by(event_id=event_id).count() == 1
+
+
+def test_nonapproval_api_lists_all_validation_errors_and_keeps_event_open(
+    client, auth_header, organiser, make_user, make_event
+):
+    make_user("safety-all-errors-api@test.com", ["safety_officer"])
+    event_id = make_event(organiser, status="safety_check")
+
+    response = client.post(
+        f"/api/events/{event_id}/safety-review",
+        headers=auth_header("safety-all-errors-api@test.com"),
+        json={"decision": "changes_requested", "assessedFactors": ["crowd_movement"]},
+    )
+
+    assert response.status_code == 400
+    body = response.get_json()
+    assert len(body["errors"]) == 3
+    assert "reason" in body["error"]
+    assert "at least one safety factor" in body["error"]
+    assert "affected arrangements" in body["error"]
+    with client.application.app_context():
+        event = db.session.get(Event, event_id)
+        assert event.status == "safety_check"
+        assert event.status != "cancelled"
+        assert EventSafetyReview.query.filter_by(event_id=event_id).count() == 0
