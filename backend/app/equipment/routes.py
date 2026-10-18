@@ -110,6 +110,43 @@ def check_item_availability(item_id):
         return jsonify({"error": str(e)}), 400
     return jsonify(availability.check_availability(item, quantity, start, end)), 200
 
+@equipment_bp.get("/events/<int:event_id>/availability")
+@roles_required("technical_support_staff", "event_coordinator")
+def check_event_availability(event_id):
+    event = Event.query.get(event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+    try:
+        start, end, _ = _parse_availability_args(request.args)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    requirements = (
+        EventEquipmentRequirement.query.filter_by(event_id=event.id)
+        .order_by(EventEquipmentRequirement.id)
+        .all()
+    )
+    results = []
+    for req in requirements:
+        item = catalogue.get_item_by_name(req.equipment_type)
+        if item:
+            result = availability.check_availability(item, req.quantity, start, end)
+        else:
+            result = {
+                "available": False,
+                "requestedQuantity": req.quantity,
+                "reason": f"No catalogue item named '{req.equipment_type}'",
+            }
+        results.append({"requirementId": req.id, "type": req.equipment_type, **result})
+
+    return jsonify({
+        "eventId": event.id,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "results": results,
+        "available": all(r["available"] for r in results),
+    }), 200
+
 
 # ---------------------------------------------------------------------
 # Equipment Reservation

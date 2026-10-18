@@ -4,6 +4,7 @@ import pytest
 
 from app.extensions import db
 from app.models.equipment import EquipmentItem, EquipmentReservation
+from app.models.event import EventEquipmentRequirement
 
 BASE = "/api/equipment/items"
 START = datetime(2026, 12, 1, 10, 0)
@@ -133,3 +134,80 @@ def test_result_shows_item_quantity_period_free_total(client, tech_headers, item
     for key in ("item", "requestedQuantity", "start", "end", "freeQuantity", "totalQuantity"):
         assert key in body
     assert body["requestedQuantity"] == 2
+
+EVENT_BASE = "/api/equipment/events"
+
+
+def period():
+    return f"start={START.isoformat()}&end={END.isoformat()}"
+
+
+def add_requirement(event_id, equipment_type, quantity):
+    r = EventEquipmentRequirement(event_id=event_id, equipment_type=equipment_type, quantity=quantity)
+    db.session.add(r)
+    db.session.commit()
+    return r.id
+
+
+def add_item(name, total):
+    db.session.add(EquipmentItem(name=name, total_quantity=total))
+    db.session.commit()
+
+
+def check_event(client, headers, event_id, query=None):
+    return client.get(f"{EVENT_BASE}/{event_id}/availability?{query or period()}", headers=headers)
+
+
+def test_event_check_gives_each_requirement_its_own_result(client, tech_headers, item, organiser, make_event):  # AC7
+    add_item("Microphone", 2)
+    event_id = make_event(organiser)
+    add_requirement(event_id, "Projector", 4)
+    add_requirement(event_id, "Microphone", 2)
+    res = check_event(client, tech_headers, event_id)
+    body = res.get_json()
+    assert res.status_code == 200
+    assert len(body["results"]) == 2
+    by_type = {r["type"]: r for r in body["results"]}
+    assert by_type["Projector"]["freeQuantity"] == 10
+    assert by_type["Microphone"]["requestedQuantity"] == 2
+    assert body["available"] is True
+
+
+def test_event_check_not_available_if_any_requirement_fails(client, tech_headers, item, organiser, make_event):  # AC7
+    add_item("Microphone", 2)
+    event_id = make_event(organiser)
+    add_requirement(event_id, "Projector", 4)
+    add_requirement(event_id, "Microphone", 3)
+    body = check_event(client, tech_headers, event_id).get_json()
+    by_type = {r["type"]: r for r in body["results"]}
+    assert by_type["Projector"]["available"] is True
+    assert by_type["Microphone"]["available"] is False
+    assert by_type["Microphone"]["shortfall"] == 1
+    assert body["available"] is False
+
+
+def test_event_requirement_without_catalogue_item_is_not_available(client, tech_headers, organiser, make_event):  # AC7
+    event_id = make_event(organiser)
+    add_requirement(event_id, "Laser Pointer", 1)
+    body = check_event(client, tech_headers, event_id).get_json()
+    assert body["results"][0]["available"] is False
+    assert "Laser Pointer" in body["results"][0]["reason"]
+    assert body["available"] is False
+
+
+def test_event_check_unknown_event_returns_404(client, tech_headers):  # AC7
+    res = check_event(client, tech_headers, 9999)
+    assert res.status_code == 404
+    assert res.get_json()["error"] == "Event not found"
+
+
+def test_event_check_missing_period_returns_400(client, tech_headers, organiser, make_event):  # AC7
+    res = check_event(client, tech_headers, make_event(organiser), query="end=2026-12-01T11:00:00")
+    assert res.status_code == 400
+    assert "start" in res.get_json()["error"]
+
+
+def test_event_check_organiser_denied(client, make_user, auth_header, organiser, make_event):  # AC7, AC8
+    make_user("org2@test.com", ["event_organiser"])
+    res = check_event(client, auth_header("org2@test.com"), make_event(organiser))
+    assert res.status_code == 403
