@@ -9,10 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.extensions import db
-from datetime import datetime
-
-from app.models.event import Event
-from app.models.venue import Venue, VenueAvailabilityFlag, VenueBooking, VenueUnavailability
+from app.models.venue import Venue, VenueUnavailability
 from app.venues.services.suitability import check_suitability
 
 URL = "/api/venues"
