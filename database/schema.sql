@@ -559,3 +559,26 @@ CREATE TABLE event_field_edit_logs (
     CONSTRAINT fk_efel_user FOREIGN KEY (changed_by) REFERENCES users(id),
     INDEX idx_efel_event (event_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- ---------------------------------------------------------------------
+-- Operational Safety Check: review list and per-factor assessment.
+-- For an existing database, run just this block.
+-- ---------------------------------------------------------------------
+
+ALTER TABLE venues
+    ADD COLUMN known_restrictions TEXT NULL;
+
+ALTER TABLE event_safety_reviews
+    ADD COLUMN factor_notes JSON NULL;
+
+-- One in-progress assessment per event: outcome (satisfactory / concern) and
+-- notes per factor. Cleared once the Safety Officer records a decision.
+CREATE TABLE event_safety_assessments (
+    id                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    event_id            BIGINT UNSIGNED NOT NULL,
+    safety_officer_id   BIGINT UNSIGNED NOT NULL,
+    factors             JSON NOT NULL,
+    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_esa_event UNIQUE (event_id),
+    CONSTRAINT fk_esa_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+    CONSTRAINT fk_esa_safety_officer FOREIGN KEY (safety_officer_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

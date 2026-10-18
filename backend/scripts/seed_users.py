@@ -20,7 +20,7 @@ from werkzeug.security import generate_password_hash  # noqa: E402
 
 from app import create_app  # noqa: E402
 from app.extensions import db  # noqa: E402
-from app.models.event import Event  # noqa: E402  (adjust if your Event model lives elsewhere)
+from app.models.event import Event, EventEquipmentRequirement  # noqa: E402  (adjust if your Event model lives elsewhere)
 from app.models.user import Organisation, Role, User  # noqa: E402
 from app.models.venue import Venue, VenueBooking
 
@@ -45,6 +45,7 @@ TEST_VENUES = [
         "capacity": 300,
         "accessibility_info": "Wheelchair accessible",
         "operating_hours": "08:00-22:00",
+        "known_restrictions": "No open flames or pyrotechnics. Aisles must stay clear during sessions.",
         "accessibility_features": ["Wheelchair accessible"],
         "facilities": ["Microphone", "Projector", "Wi-Fi"],
         "setup_minutes": 30,
@@ -80,6 +81,7 @@ TEST_VENUES = [
         "capacity": 72,
         "accessibility_info": "Step-free access and adjustable-height tables",
         "operating_hours": "07:00-22:00",
+        "known_restrictions": "Single fire exit on the east wall must stay clear. Max 2 extension cords per power outlet.",
         "accessibility_features": ["Step-free access", "Hearing loop"],
         "facilities": ["Projector", "Whiteboard", "Power outlets", "Wi-Fi"],
         "setup_minutes": 20,
@@ -128,6 +130,7 @@ TEST_VENUES = [
         "capacity": 500,
         "accessibility_info": "Step-free viewing area",
         "operating_hours": "08:00-22:00",
+        "known_restrictions": "Amplified sound must end by 22:00. Events may be stopped in lightning warnings. No vehicles on the lawn.",
         "accessibility_features": ["Step-free access"],
         "facilities": ["Outdoor stage", "PA system", "Power outlets"],
         "setup_minutes": 60,
@@ -399,6 +402,9 @@ with app.app_context():
                         getattr(venue, field).append(normalized)
                         existing_values.add(normalized.casefold())
                         venues_enriched += 1
+            if not venue.known_restrictions and entry.get("known_restrictions"):
+                venue.known_restrictions = entry["known_restrictions"]
+                venues_enriched += 1
             continue
         db.session.add(Venue(**entry))
         venues_created += 1
@@ -465,6 +471,25 @@ with app.app_context():
         db.session.flush()  # so a later event can reference this one's id
         events_created += 1
 
+    db.session.commit()
+
+    # Equipment for the safety-check demo (the Community Fair demo deliberately
+    # has none, so "Not specified" can be seen in the safety assessment).
+    SAFETY_DEMO_EQUIPMENT = {
+        "Hackathon Safety Check Demo": [
+            ("Projector", 2, "Ceiling-mounted; cables routed overhead"),
+            ("Extension cord", 6, "Run along walls and taped down"),
+        ],
+    }
+    for event_name, items in SAFETY_DEMO_EQUIPMENT.items():
+        event = Event.query.filter_by(name=event_name, organiser_id=organiser.id).first()
+        if event and not event.equipment_requirements:
+            for equipment_type, quantity, notes in items:
+                event.equipment_requirements.append(
+                    EventEquipmentRequirement(
+                        equipment_type=equipment_type, quantity=quantity, technical_notes=notes
+                    )
+                )
     db.session.commit()
 
 
@@ -540,6 +565,23 @@ with app.app_context():
             "status": "pending",
             "start_hour": 20,
             "duration": 2,
+            "coordinator": "coordinator1@example.com",
+        },
+        # Safety-check demos need booked venues for the Safety Officer to assess.
+        {
+            "event": "Hackathon Safety Check Demo",
+            "venue": "Collaborative Workshop Studio",
+            "status": "approved",
+            "start_hour": 9,
+            "duration": 8,
+            "coordinator": "coordinator2@example.com",
+        },
+        {
+            "event": "Community Fair Safety Check Demo",
+            "venue": "Outdoor Amphitheatre",
+            "status": "approved",
+            "start_hour": 11,
+            "duration": 6,
             "coordinator": "coordinator1@example.com",
         },
         {

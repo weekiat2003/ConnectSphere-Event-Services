@@ -618,6 +618,44 @@ def cancel_event_route(event_id):
     return jsonify(event.to_dict()), 200
 
 
+# ---------------------------------------------------------------------
+# Operational Safety Check (Safety Officer only)
+# ---------------------------------------------------------------------
+
+@events_bp.get("/safety-reviews")
+@roles_required("safety_officer")
+def list_safety_reviews():
+    """Events awaiting a safety check, with name, date, venues and attendance."""
+    return jsonify(safety.list_awaiting_safety_check()), 200
+
+
+@events_bp.get("/<int:event_id>/safety-assessment")
+@roles_required("safety_officer")
+def get_safety_assessment(event_id):
+    event = Event.query.get(event_id)
+    if not event or event.status == "draft":
+        return jsonify({"error": "Event not found"}), 404
+    return jsonify(safety.build_safety_review(event)), 200
+
+
+@events_bp.put("/<int:event_id>/safety-assessment")
+@roles_required("safety_officer")
+def save_safety_assessment(event_id):
+    event = Event.query.get(event_id)
+    if not event or event.status == "draft":
+        return jsonify({"error": "Event not found"}), 404
+
+    data = request.get_json() or {}
+    try:
+        safety.save_assessment(event, _current_user(), data.get("factorAssessments"))
+    except safety.SafetyReviewConflictError as e:
+        return jsonify({"error": str(e)}), 409
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    return jsonify(safety.build_safety_review(event)), 200
+
+
 @events_bp.post("/<int:event_id>/safety-review")
 @roles_required("safety_officer")
 def review_event_safety(event_id):
@@ -636,9 +674,12 @@ def review_event_safety(event_id):
             data.get("assessedFactors"),
             data.get("concernFactors"),
             data.get("affectedArrangements"),
+            data.get("factorAssessments"),
         )
     except safety.SafetyReviewConflictError as e:
         return jsonify({"error": str(e)}), 409
+    except safety.SafetyReviewValidationError as e:
+        return jsonify({"error": str(e), "errors": e.errors}), 400
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
