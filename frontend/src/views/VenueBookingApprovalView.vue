@@ -102,6 +102,7 @@
           </p>
 
           <p v-if="booking.status === 'held'" class="hold-info">Tentative hold until {{ formatHoldExpiry(booking.holdExpiresAt) }}</p>
+          <p v-if="booking.advisory" class="hold-info">{{ booking.advisory.message }}</p>
           <div v-if="activeTab === 'pending'" class="booking-decision-actions">
             <button v-if="booking.status === 'pending'" type="button" class="btn-ghost" @click="openHold(booking, 'place')">Place hold</button>
             <button v-if="booking.status === 'held'" type="button" class="btn-ghost" @click="openHold(booking, 'extend')">Extend hold</button>
@@ -109,7 +110,7 @@
           <button
             type="button"
             class="btn-ghost approve-btn"
-            :disabled="approvingId !== null || rejectingId !== null"
+            :disabled="approvingId !== null || rejectingId !== null || booking.canApprove === false"
             @click="openApprovalConfirmation(booking)"
           >
             {{ approvingId === booking.id ? "Approving..." : "Approve booking" }}

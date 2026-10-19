@@ -1009,7 +1009,7 @@ def set_padding(venue_id, setup=0, turnaround=0):
     venue.turnaround_minutes = turnaround
     db.session.commit()
 
-
+# Double booking
 # AC1: overlap with another event's approved booking is blocked, and the
 # message names the venue, the conflicting date and the time period.
 
@@ -1217,3 +1217,62 @@ def test_conflict_ac7_conflict_message_wins_over_active_booking_message(
     assert len(errors) == 1  # one venue_id error per venue
     assert "unavailable" in errors[0]["message"]
     assert "already has an active booking" not in errors[0]["message"]
+
+# Booking advisory
+
+def _mine(client, ctx, event_id):
+    res = client.get(f"{BASE}/bookings/my", headers=ctx.coord).get_json()
+    return next(b for b in res if b["eventId"] == event_id)
+
+
+def test_advisory_ac1_ac2_pending_overlap_warns_without_other_event_details(client, ctx, other_event_id):
+    add_other_booking(ctx, other_event_id, ctx.hall_a, status="pending")
+    res = submit(client, ctx, [entry(ctx.hall_a, startTime="11:00", endTime="13:00")])
+    assert res.status_code == 201
+    booking = res.get_json()[0]
+    assert booking["status"] == "pending"
+    adv = booking["advisory"]
+    assert adv["type"] == "possible_conflict" and adv["overlapCount"] == 1
+    assert "Hall A" in adv["message"] and "not guaranteed" in adv["message"]
+    assert "11:00 to 12:00" in adv["message"]
+    assert "@" not in adv["message"] and "Event" not in adv["message"]
+
+
+def test_advisory_ac4_no_warning_cases(client, ctx, other_event_id):
+    add_other_booking(ctx, other_event_id, ctx.hall_a, status="pending")
+    # different venue, and non-overlapping time
+    res = submit(client, ctx, [entry(ctx.hall_b),
+                               entry(ctx.hall_a, startTime="14:00", endTime="15:00")])
+    assert all(b["advisory"] is None for b in res.get_json())
+
+
+@pytest.mark.parametrize("status", ["rejected", "withdrawn"])
+def test_advisory_ac4_inactive_overlaps_ignored(client, ctx, other_event_id, status):
+    add_other_booking(ctx, other_event_id, ctx.hall_a, status=status)
+    assert submit(client, ctx, [entry(ctx.hall_a)]).get_json()[0]["advisory"] is None
+
+
+def test_advisory_ac5_ac6_earlier_request_warned_then_cleared(client, ctx, other_event_id):
+    add_other_booking(ctx, other_event_id, ctx.hall_a, status="pending")
+    new_id = submit(client, ctx, [entry(ctx.hall_a)]).get_json()[0]["id"]
+
+    assert _mine(client, ctx, other_event_id)["advisory"]["overlapCount"] == 1
+
+    client.post(f"{BASE}/bookings/{new_id}/withdraw", headers=ctx.coord)
+    assert _mine(client, ctx, other_event_id)["advisory"] is None
+
+
+def test_advisory_ac7_confirmed_overlap_replaces_warning_and_blocks_approval(client, ctx, other_event_id):
+    add_other_booking(ctx, other_event_id, ctx.hall_a, status="pending")
+    new_id = submit(client, ctx, [entry(ctx.hall_a)]).get_json()[0]["id"]
+    other_id = next(b.id for b in all_bookings() if b.event_id == other_event_id)
+
+    assert client.post(f"{BASE}/bookings/{other_id}/approve", headers=ctx.staff).status_code == 200
+
+    adv = _mine(client, ctx, ctx.event_id)["advisory"]
+    assert adv["type"] == "venue_confirmed"
+    assert "confirmed for another event" in adv["message"]
+    assert client.post(f"{BASE}/bookings/{new_id}/approve", headers=ctx.staff).status_code == 409
+
+    pending = client.get(f"{BASE}/bookings/pending", headers=ctx.staff).get_json()
+    assert next(b for b in pending if b["id"] == new_id)["canApprove"] is False

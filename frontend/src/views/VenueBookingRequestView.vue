@@ -153,6 +153,9 @@
         </form>
       </div>
       <div v-if="successMessage" class="success-message">{{ successMessage }}</div>
+      <div v-if="submitAdvisories.length" class="advisory possible_conflict" role="status">
+        <p v-for="a in submitAdvisories" :key="a.id">{{ a.message }}</p>
+      </div>
     </div>
 
     <section v-if="activeTab === 'status'" class="card status-section">
@@ -223,6 +226,10 @@
             <p><strong>End:</strong> {{ formatBookingDate(booking.endDatetime) }}</p>
             <p><strong>Submitted:</strong> {{ formatBookingDate(booking.createdAt) }}</p>
           </div>
+          <p v-if="booking.advisory" class="advisory" :class="booking.advisory.type" role="status">
+            <strong>{{ booking.advisory.type === 'venue_confirmed' ? 'Venue now confirmed for another event:' : 'Advisory:' }}</strong>
+            {{ booking.advisory.message }}
+          </p>
           <p v-if="booking.status === 'cancelled'" class="cancellation-reason">
             <strong>Booking cancelled.</strong> This venue is no longer confirmed for your event.
             <span v-if="booking.decisionReason"><br /><strong>Reason:</strong> {{ booking.decisionReason }}</span>
@@ -351,6 +358,8 @@ const emptyVenue = () => ({
 });
 const venueRequests = ref([emptyVenue()]);
 
+const submitAdvisories = ref([]);
+
 function formatFacilities(value) {
   if (Array.isArray(value)) return value.length ? value.join(", ") : "Not specified";
   return value || "Not specified";
@@ -452,7 +461,10 @@ async function submitBooking() {
       })),
     };
 
-    await venuesApi.submitBooking(payload);
+    const { data: created } = await venuesApi.submitBooking(payload);
+    submitAdvisories.value = (created || [])
+      .filter((b) => b.advisory)
+      .map((b) => ({ id: b.id, message: b.advisory.message }));
     successMessage.value = resubmittingFromId.value !== null
       ? "Resubmission created as a new pending booking. The original rejection remains on record."
       : "Venue booking request submitted successfully.";
@@ -733,6 +745,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary, #6
 .resubmission-banner-icon { font-size: 18px; line-height: 1.3; flex-shrink: 0; }
 .resubmission-banner-detail { display: block; margin-top: 3px; }
 .resubmission-banner + .section { padding-top: 16px; }
+
+.advisory { margin: 1rem 0 0; padding: .75rem; border-radius: 8px; font-size: .875rem; }
+.advisory p { margin: .2rem 0; }
+.advisory.possible_conflict { background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
+.advisory.venue_confirmed { background: #fde8ee; border: 1px solid #f3b4c4; color: #a12b47; }
 
 </style>
 

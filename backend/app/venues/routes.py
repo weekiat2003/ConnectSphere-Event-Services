@@ -9,7 +9,7 @@ from app.extensions import db
 from app.models.event import Event
 from app.models.user import User
 from app.models.venue import Venue, VenueBooking
-from app.venues.services import availability, booking, booking_requests, catalogue, search, suitability, preparation
+from app.venues.services import availability, booking, booking_requests, catalogue, search, suitability, preparation, advisory
 from app.venues.services.booking_requests import BookingRequestError
 
 venues_bp = Blueprint("venues", __name__)
@@ -455,7 +455,7 @@ def submit_booking():
         results = booking_requests.submit_booking_requests(event, venue_requests, user.id)
     except BookingRequestError as e:
         return jsonify({"error": "Booking request could not be submitted", "errors": e.errors}), 400
-    return jsonify([b.to_dict() for b in results]), 201
+    return jsonify([{**b.to_dict(), "advisory": advisory.get_advisory(b)} for b in results]), 201
 
 
 @venues_bp.get("/events/<int:event_id>/bookings")
@@ -556,6 +556,7 @@ def get_my_booking_requests():
             "equipment": booking_row.equipment,
             "catering": booking_row.catering,
             "otherRequirements": booking_row.other_requirements,
+            "advisory": advisory.get_advisory(booking_row),
         })
 
     return jsonify(results), 200
@@ -625,6 +626,7 @@ def list_pending_bookings():
 
         event = booking_row.event
         venue = booking_row.venue
+        adv = advisory.get_advisory(booking_row)
 
         data.update({
             "eventName": event.name if event else None,
@@ -634,6 +636,8 @@ def list_pending_bookings():
             ),
             "venueName": venue.name if venue else None,
             "venueLocation": venue.location if venue else None,
+            "advisory": adv,
+            "canApprove": adv is None or adv["canApprove"],
         })
 
         results.append(data)
