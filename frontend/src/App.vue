@@ -16,6 +16,9 @@
         <router-link v-if="auth.hasRole('technical_support_staff')" to="/equipment">Equipment</router-link>
         <router-link v-if="auth.hasRole('venue_staff') || auth.hasRole('event_coordinator')" to="/venues">Venue Catalogue</router-link>
         <router-link v-if="auth.hasRole('venue_staff') || auth.hasRole('event_coordinator')" to="/venues/availability">Venue Availability</router-link>
+        <router-link v-if="auth.hasRole('attendee')" to="/attendee/events">Events</router-link>
+        <router-link v-if="auth.hasRole('attendee')" to="/my-registrations">My Registrations</router-link>
+        <router-link v-if="auth.hasRole('event_organiser') || auth.hasRole('event_coordinator')" to="/registrations/manage">Registrations</router-link>
         <span class="spacer" />
         <span class="user-name">{{ auth.user?.name }}</span>
         <button class="logout" @click="handleLogout">Logout</button>
