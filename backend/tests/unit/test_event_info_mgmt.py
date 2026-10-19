@@ -277,7 +277,99 @@ class TestUpdateEventFields:
 
             assert "status" in exc_info.value.field_errors
 
+# Equipment deletion
+    def test_equipment_requirement_removed_when_omitted_from_payload(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator)
+            keep = EventEquipmentRequirement(event_id=event_id, equipment_type="Projector", quantity=1)
+            remove = EventEquipmentRequirement(event_id=event_id, equipment_type="Speaker", quantity=2)
+            db.session.add_all([keep, remove])
+            db.session.commit()
+            keep_id, remove_id = keep.id, remove.id
 
+            update_event_fields(
+                Event.query.get(event_id), User.query.get(coordinator),
+                {"equipment_requirements": [{"id": keep_id, "type": "Projector", "quantity": 1}]},
+                offline_review_confirmed=True,
+            )
+
+            remaining = EventEquipmentRequirement.query.filter_by(event_id=event_id).all()
+            assert [r.id for r in remaining] == [keep_id]
+            assert EventEquipmentRequirement.query.get(remove_id) is None
+
+    def test_removing_all_equipment_requirements_rejected(self, app, coordinator, make_event):
+        """_validate_changes requires at least one item when the key is present."""
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator)
+            req = EventEquipmentRequirement(event_id=event_id, equipment_type="Projector", quantity=1)
+            db.session.add(req)
+            db.session.commit()
+
+            with pytest.raises(EventValidationError) as exc_info:
+                update_event_fields(
+                    Event.query.get(event_id), User.query.get(coordinator),
+                    {"equipment_requirements": []},
+                    offline_review_confirmed=True,
+                )
+
+            assert "equipment_requirements" in exc_info.value.field_errors
+            assert EventEquipmentRequirement.query.get(req.id) is not None  # untouched
+
+# Atomicity of mixed ordinary + significant edits
+    def test_mixed_ordinary_and_significant_edit_blocked_atomically(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator, name="Original")
+            event = Event.query.get(event_id)
+            user = User.query.get(coordinator)
+
+            with pytest.raises(OfflineReviewNotConfirmedError):
+                update_event_fields(event, user, {"name": "Updated Name", "expected_attendance": 80})
+
+            refreshed = Event.query.get(event_id)
+            assert refreshed.name == "Original"
+            assert refreshed.expected_attendance != 80
+
+# Boundary: capacity exactly equals attendance
+    def test_capacity_equal_to_attendance_is_valid_boundary(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator,
+                                   expected_attendance=50, capacity_needed=60)
+            event = Event.query.get(event_id)
+            user = User.query.get(coordinator)
+
+            update_event_fields(event, user, {"capacity_needed": 50}, offline_review_confirmed=True)
+
+            assert Event.query.get(event_id).capacity_needed == 50
+
+# Audit log correctly marks ordinary-only edits as not significant:
+    def test_ordinary_only_edit_logged_as_not_significant(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator)
+            event = Event.query.get(event_id)
+            user = User.query.get(coordinator)
+
+            update_event_fields(event, user, {"purpose": "Updated purpose"})
+
+            log = Event.query.get(event_id).field_edit_logs[-1]
+            assert log.was_significant is False
+
+
+    def test_required_facilities_can_be_empty_list(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator)
+            event = Event.query.get(event_id)
+            user = User.query.get(coordinator)
+
+            update_event_fields(event, user, {"required_facilities": []}, offline_review_confirmed=True)
+
+            refreshed = Event.query.get(event_id)
+            assert refreshed.required_facilities == []           
 # test venue preparation service
 
 
