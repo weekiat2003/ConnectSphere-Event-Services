@@ -25,6 +25,10 @@ import SafetyReviewListView from "../views/SafetyReviewListView.vue";
 import SafetyAssessmentView from "../views/SafetyAssessmentView.vue";
 import AccessDeniedView from "../views/AccessDeniedView.vue";
 
+import AttendeeEventsView from "../views/AttendeeEventsView.vue";
+import AttendeeEventDetailView from "../views/AttendeeEventDetailView.vue";
+import MyRegistrationsView from "../views/MyRegistrationsView.vue";
+import RegistrationManageView from "../views/RegistrationManageView.vue";
 
 const routes = [
   {
@@ -181,6 +185,34 @@ const routes = [
     component: ChangeRequestReviewView, 
     meta: { 
       requiresAuth: true }
+  },
+  { path: "/attendee/events", 
+    name: "attendee-events", 
+    component: AttendeeEventsView, 
+    meta: { 
+      requiresAuth: true, 
+      roles: ["attendee"] } 
+  },
+  { path: "/attendee/events/:id", 
+    name: "attendee-event-detail", 
+    component: AttendeeEventDetailView, 
+    meta: { 
+      requiresAuth: true, 
+      roles: ["attendee"] } 
+  },
+  { path: "/my-registrations", 
+    name: "my-registrations", 
+    component: MyRegistrationsView, 
+    meta: { 
+      requiresAuth: true, 
+      roles: ["attendee"] } 
+  },
+  { path: "/registrations/manage", 
+    name: "registration-manage", 
+    component: RegistrationManageView, 
+    meta: { 
+      requiresAuth: true, 
+      roles: ["event_organiser", "event_coordinator"] } 
   },
 ];
 
