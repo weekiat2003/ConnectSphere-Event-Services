@@ -22,12 +22,13 @@ Expected input from the route layer (already parsed into date/time objects):
 The whole request is all-or-nothing: if any venue has a problem, nothing is saved
 and every problem is reported, each tagged with its venue and field.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.common.time import utcnow
 from app.extensions import db
 from app.models.event import Event
-from app.models.venue import Venue, VenueBooking
+from app.models.venue import BOOKING_APPROVED, Venue, VenueBooking
+from app.venues.services.availability import compute_booking_window, pad_window
 from app.venues.services.booking import PENDING
 
 ACTIVE_BOOKING_MESSAGE = "this event already has an active booking for this venue"
@@ -94,6 +95,43 @@ def _has_active_booking(event_id, venue_id):
         is not None
     )
 
+def _find_confirmed_conflict(event_id, venue, start_at, end_at):
+    """Return an APPROVED booking for a *different* event whose effective
+    (setup/turnaround-padded) window overlaps the requested one, else None."""
+    new_start, new_end = pad_window(start_at, end_at, venue)
+    buffer = timedelta(minutes=(venue.setup_minutes or 0) + (venue.turnaround_minutes or 0))
+
+    # Cheap SQL pre-filter, then confirm with the exact padded windows.
+    candidates = (
+        VenueBooking.query.filter(
+            VenueBooking.venue_id == venue.id,
+            VenueBooking.status == BOOKING_APPROVED,
+            VenueBooking.event_id != event_id,
+            VenueBooking.start_datetime < new_end + buffer,
+            VenueBooking.end_datetime > new_start - buffer,
+        )
+        .order_by(VenueBooking.start_datetime.asc())
+        .all()
+    )
+    for other in candidates:
+        other_start, other_end = compute_booking_window(other, venue)
+        if other_start < new_end and new_start < other_end:
+            return other
+    return None
+
+
+def _format_period(start: datetime, end: datetime) -> str:
+    if start.date() == end.date():
+        return f"{start:%Y-%m-%d}, {start:%H:%M} to {end:%H:%M}"
+    return f"{start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M}"
+
+
+def _conflict_message(venue, other: VenueBooking) -> str:
+    return (
+        f"{venue.name} is unavailable. It already has a confirmed booking on "
+        f"{_format_period(other.start_datetime, other.end_datetime)}, "
+        f"which overlaps your requested time. Choose a different time or venue."
+    )
 
 def submit_booking_requests(event: Event, venue_requests: list, user_id: int, today=None):
     """Create one pending VenueBooking per venue, linked to `event`.
@@ -116,15 +154,32 @@ def submit_booking_requests(event: Event, venue_requests: list, user_id: int, to
 
         item_errors, start_at, end_at = _validate_timing(item, venue_id, venue_label, today)
 
-        problem = (
-            "venue not found"
-            if venue is None
-            else ACTIVE_BOOKING_MESSAGE
-            if venue_id in seen_venue_ids or _has_active_booking(event.id, venue_id)
-            else None
-        )
+        # Check for a confirmed conflict first, so it takes priority over the
+        # generic "already has an active booking" message.
+        conflict = None
+        if venue is not None and start_at and end_at:
+            conflict = _find_confirmed_conflict(event.id, venue, start_at, end_at)
+
+        if venue is None:
+            problem = "venue not found"
+        elif conflict:
+            problem = None  # reported below
+        elif venue_id in seen_venue_ids or _has_active_booking(event.id, venue_id):
+            problem = ACTIVE_BOOKING_MESSAGE
+        else:
+            problem = None
+
         if problem:
             item_errors.append(_error(venue_id, venue_label, "venue_id", problem))
+        elif conflict:
+            item_errors.append(
+                {
+                    "venue_id": venue_id,
+                    "venue": venue_label,
+                    "field": "venue_id",
+                    "message": _conflict_message(venue, conflict),
+                }
+            )
         seen_venue_ids.add(venue_id)
 
         if item_errors:

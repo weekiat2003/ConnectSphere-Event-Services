@@ -36,11 +36,11 @@
         <h2 class="page-title">{{ event.name }}</h2>
         <span class="badge" :class="event.status">{{ statusLabel(event.status) }}</span>
         <button
-          v-if="isAssignedCoordinator && !showEditForm && ['under_review', 'approved', 'planning'].includes(event.status)"
+          v-if="isAssignedCoordinator && !showEditForm && ['under_review', 'approved', 'planning', 'confirmed'].includes(event.status)"
           class="btn btn-grey btn-small" @click="openEditForm">Edit
         </button>
         <button
-          v-if="isAssignedCoordinator && ['approved', 'planning', 'safety_check'].includes(event.status) && !showCancelForm"
+          v-if="isAssignedCoordinator && ['approved', 'planning', 'safety_check', 'confirmed'].includes(event.status) && !showCancelForm"
           class="btn btn-rose btn-small" @click="openCancelForm">Cancel Event
         </button>
       </div>
