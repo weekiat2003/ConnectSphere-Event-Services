@@ -9,7 +9,6 @@ from app.events.services import update as update_service
 from app.models.event import Event
 from app.models.user import User
 
-from app.common.text_validation import validate_descriptive_text
 
 events_bp = Blueprint("events", __name__)
 
@@ -594,49 +593,11 @@ def change_event_status(event_id):
 @events_bp.post("/<int:event_id>/cancel")
 @roles_required("event_coordinator")
 def cancel_event_route(event_id):
-    """Dedicated cancel endpoint, mirroring approve/reject: requires
-    confirmation and a descriptive reason, same rules as rejection."""
     user = _current_user()
-    event = Event.query.get(event_id)
-    if not event:
-        return jsonify({"error": "Event not found"}), 404
-    if event.coordinator_id != user.id:
-        return jsonify({"error": "Only the assigned Coordinator can cancel this event"}), 403
-
     data = request.get_json() or {}
-    # confirmation = _require_confirmation(event, data, "cancel")
-    # if confirmation:
-    #     return confirmation
-
     reason = data.get("reason")
     try:
-        validate_descriptive_text(reason, "cancellation reason")
-        # event = status_service.change_status(event, "cancelled", user.id, reason)
-    except (ValueError, status_service.InvalidTransitionError) as e:
-        return jsonify({"error": str(e)}), 400
-    
-    if data.get("confirmed") is not True:
-        return jsonify({
-            "requiresConfirmation": True,
-            "message": "Cancel this event? Its venue bookings and equipment reservations will be released. This cannot be undone.",
-        }), 409
-    
-    try:
-        event = status_service.change_status(event, "cancelled", user.id, reason)
-    except (ValueError, status_service.InvalidTransitionError) as e:
-        return jsonify({"error": str(e)}), 400
-
-    return jsonify(event.to_dict()), 200
-
-@events_bp.post("/<int:event_id>/cancel")
-@roles_required("event_coordinator")
-def cancel(event_id):
-    user = _current_user()          # use whatever helper the neighbouring routes use
-    data = request.get_json() or {}
-    reason = data.get("comment")
-    try:
         # Validate first, so nobody is asked to confirm something that would fail.
-        validate_descriptive_text(reason, "cancellation reason")
         status_service.cancel_event(event_id, user.id, reason, dry_run=True)
 
         if data.get("confirmed") is not True:
@@ -651,9 +612,35 @@ def cancel(event_id):
     except PermissionError as e:
         return jsonify({"error": str(e)}), 403
     except status_service.EventActionError as e:
-        # "error" carries the message too, because the Vue view reads data.error
         return jsonify({"error": next(iter(e.errors.values())), "errors": e.errors}), 400
     return jsonify(event.to_dict()), 200
+
+# @events_bp.post("/<int:event_id>/cancel")
+# @roles_required("event_coordinator")
+# def cancel(event_id):
+#     user = _current_user()          # use whatever helper the neighbouring routes use
+#     data = request.get_json() or {}
+#     reason = data.get("comment")
+#     try:
+#         # Validate first, so nobody is asked to confirm something that would fail.
+#         validate_descriptive_text(reason, "cancellation reason")
+#         status_service.cancel_event(event_id, user.id, reason, dry_run=True)
+
+#         if data.get("confirmed") is not True:
+#             return jsonify({
+#                 "requiresConfirmation": True,
+#                 "message": "Cancel this event? Its venue bookings and equipment reservations will be released. This cannot be undone.",
+#             }), 409
+
+#         event = status_service.cancel_event(event_id, user.id, reason)
+#     except LookupError:
+#         return jsonify({"error": "Event not found"}), 404
+#     except PermissionError as e:
+#         return jsonify({"error": str(e)}), 403
+#     except status_service.EventActionError as e:
+#         # "error" carries the message too, because the Vue view reads data.error
+#         return jsonify({"error": next(iter(e.errors.values())), "errors": e.errors}), 400
+#     return jsonify(event.to_dict()), 200
 
 # ---------------------------------------------------------------------
 # Operational Safety Check (Safety Officer only)

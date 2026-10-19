@@ -212,16 +212,6 @@ def cancel_event(event_id: int, coordinator_id: int, reason, dry_run: bool = Fal
         return event
 
     old_status = event.status
-    event.status = "cancelled"
-    db.session.add(EventStatusHistory(
-        event_id=event.id,
-        old_status=old_status,
-        new_status="cancelled",
-        changed_by=coordinator_id,
-        reason=reason,
-        changed_at=utcnow(),
-    ))
-    old_status = event.status
     now = utcnow()
     event.status = "cancelled"
     db.session.add(EventStatusHistory(
