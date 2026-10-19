@@ -192,15 +192,51 @@ def list_all_events():
     return jsonify([e.to_dict() for e in events]), 200
 
 
+# to confirm whether the logs are actually visible???
+
 @events_bp.get("/<int:event_id>")
 @jwt_required()
 def get_event(event_id):
     user = _current_user()
     event = Event.query.get(event_id)
+
     if not event or not _can_view(event, user):
         return jsonify({"error": "Event not found"}), 404
+
     payload = event.to_dict()
     payload["canResubmit"] = review.can_be_resubmitted(event)
+
+    sorted_logs = sorted(
+        event.field_edit_logs,
+        key=lambda log: (
+            log.created_at is None,
+            log.created_at
+        )
+    )
+
+    payload["fieldEditLogs"] = [
+        {
+            "id": log.id,
+            "changedBy": log.changed_by,
+            "changedByName": (
+                User.query.get(log.changed_by).name
+                if log.changed_by and 
+            User.query.get(log.changed_by)
+                else None
+            ),
+            "wasSignificant": log.was_significant,
+            "wasRejected": log.was_rejected,
+            "oldValues": log.old_values,
+            "newValues": log.new_values,
+            "createdAt": (
+                log.created_at.isoformat()
+                if log.created_at
+                else None
+            ),
+        }
+        for log in sorted_logs
+    ]
+
     return jsonify(payload), 200
 
 # ---------------------------------------------------------------------
