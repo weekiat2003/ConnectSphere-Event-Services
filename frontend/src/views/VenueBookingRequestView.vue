@@ -169,39 +169,6 @@
         </button>
       </div>
 
-      <!-- A booked venue became unavailable: the event is kept, a replacement is needed -->
-      <div v-if="unavailabilityNotices.length" class="unavailable-notices" role="alert">
-        <div v-for="n in unavailabilityNotices" :key="n.id" class="unavailable-notice">
-          <strong>{{ n.venueName || "A venue" }} is no longer available for {{ n.eventName || `event #${n.eventId}` }}.</strong>
-          <p>{{ n.reason || "The venue was marked unavailable." }} Alternative arrangements are required; the event itself has not been cancelled.</p>
-          <p v-for="p in n.unavailablePeriods" :key="p.id">Unavailable {{ new Date(p.start).toLocaleString() }} to {{ new Date(p.end).toLocaleString() }}</p>
-          <router-link to="/venues/search">Find a replacement venue</router-link>
-        </div>
-      </div>
-
-      <!-- Simple confirmation notices for approved venue bookings -->
-      <div v-if="confirmationNotices.length" class="confirmation-notices" role="status">
-        <p v-for="notice in confirmationNotices" :key="notice.bookingId">
-          ✓ {{ notice.message }}
-        </p>
-      </div>
-
-      <!-- Hold notices derived from the coordinator's booking records -->
-      <div v-if="holdNotices.length" class="hold-notices" role="status">
-        <p v-for="notice in holdNotices" :key="notice.bookingId" :class="notice.kind">
-          <strong>{{ notice.title }}</strong> {{ notice.message }}
-        </p>
-      </div>
-
-      <!-- Rejection notices derived from rejected bookings -->
-      <div v-if="rejectionNotices.length" class="rejection-notices" role="status">
-        <div v-for="notice in rejectionNotices" :key="notice.bookingId" class="rejection-notice">
-          <strong>{{ notice.message }}</strong>
-          <p v-if="notice.reason"><strong>Reason:</strong> {{ notice.reason }}</p>
-          <p v-if="notice.alternativeSuggestion"><strong>Alternative suggestion:</strong> {{ notice.alternativeSuggestion }}</p>
-        </div>
-      </div>
-
       <p v-if="statusError" class="error-message" role="alert">{{ statusError }}</p>
       <p v-if="withdrawNotice" class="success-message" role="status">{{ withdrawNotice }}</p>
       <p v-if="statusLoading" class="status-message">Loading booking requests...</p>
@@ -295,28 +262,6 @@ const successMessage = ref("");
 const resubmittingFromId = ref(null);
 
 const myBookings = ref([]);
-const confirmationNotices = ref([]);
-const rejectionNotices = ref([]);
-const unavailabilityNotices = ref([]);
-
-// No separate notification service: notices come from the existing booking list.
-const holdNotices = computed(() => {
-  const now = Date.now();
-  return myBookings.value.flatMap((booking) => {
-    const label = booking.venueName || `Venue #${booking.venueId}`;
-    const expiry = parseHoldExpiry(booking.holdExpiresAt ?? booking.hold_expires_at);
-    if (booking.status === "expired") {
-      return [{ bookingId: booking.id, kind: "expired", title: "Hold expired:",
-        message: `Your tentative hold for ${label} has expired. The venue is available to others.` }];
-    }
-    if (booking.status === "held" && expiry && expiry.getTime() > now &&
-        expiry.getTime() - now <= 24 * 60 * 60 * 1000) {
-      return [{ bookingId: booking.id, kind: "warning", title: "Hold expiring soon:",
-        message: `Your tentative hold for ${label} expires on ${formatHoldExpiry(expiry)}.` }];
-    }
-    return [];
-  });
-});
 
 function parseHoldExpiry(value) {
   if (!value) return null;
@@ -485,35 +430,6 @@ async function submitBooking() {
   }
 }
 
-async function loadConfirmationNotices() {
-  try {
-    const { data } = await venuesApi.getConfirmationNotices();
-    confirmationNotices.value = Array.isArray(data) ? data : [];
-  } catch (error) {
-    confirmationNotices.value = [];
-    console.error("Unable to load booking confirmations", error);
-  }
-}
-
-async function loadRejectionNotices() {
-  try {
-    const { data } = await venuesApi.getRejectionNotices();
-    rejectionNotices.value = Array.isArray(data) ? data : [];
-  } catch (error) {
-    rejectionNotices.value = [];
-    console.error("Unable to load booking rejections", error);
-  }
-}
-
-async function loadUnavailabilityNotices() {
-  try {
-    const { data } = await venuesApi.myFlags();
-    unavailabilityNotices.value = Array.isArray(data) ? data : [];
-  } catch {
-    unavailabilityNotices.value = [];
-  }
-}
-
 async function loadMyBookings() {
   statusLoading.value = true;
   statusError.value = "";
@@ -521,7 +437,6 @@ async function loadMyBookings() {
   try {
     const response = await venuesApi.getMyBookings();
     myBookings.value = response.data;
-    await Promise.all([loadConfirmationNotices(), loadRejectionNotices(), loadUnavailabilityNotices()]);
   } catch (error) {
     myBookings.value = []; // Never display outdated statuses after a failed refresh.
     statusError.value =
@@ -632,28 +547,8 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.hold-notices { margin: 0 0 1rem; }
-.hold-notices p { margin: .35rem 0; padding: .8rem 1rem; border-radius: 10px; }
-.hold-notices .warning { background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
-.hold-notices .expired { background: #f1f5f9; border: 1px solid #cbd5e1; color: #334155; }
 .status-pill.held { background: #fef3c7; color: #92400e; }
 .status-pill.expired, .status-pill.released { background: #e2e8f0; color: #475569; }
-.rejection-notices { margin: 0 0 1rem; padding: .8rem 1rem; border: 1px solid #f3b4c4; border-radius: 10px; background: #fde8ee; color: #a12b47; }
-.rejection-notice + .rejection-notice { border-top: 1px solid #f3b4c4; margin-top: .7rem; padding-top: .7rem; }
-.rejection-notice p { margin: .4rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.unavailable-notices { margin: 0 0 1rem; padding: .8rem 1rem; border: 1px solid var(--butter-text, #b45309); border-radius: 10px; background: var(--butter-bg, #fef3c7); color: var(--butter-text, #92400e); }
-.unavailable-notice + .unavailable-notice { border-top: 1px solid var(--butter-text, #b45309); margin-top: .7rem; padding-top: .7rem; }
-.unavailable-notice p { margin: .3rem 0; }
-.confirmation-notices {
-  margin: 0 0 1rem;
-  padding: .8rem 1rem;
-  border: 1px solid #86efac;
-  border-radius: 10px;
-  background: var(--mint-bg, #dcfce7);
-  color: var(--mint-text, #166534);
-  font-weight: 500;
-}
-.confirmation-notices p { margin: .3rem 0; }
 
 .page-title { margin: 0 0 1rem; font-size: 1.5rem; font-weight: 600; color: var(--text, #2d2a4a); }
 .card { background: var(--surface, #fff); border: 1px solid var(--border, #e4defa); border-radius: 14px; box-shadow: 0 4px 16px rgba(109, 91, 208, .08); overflow: hidden; }

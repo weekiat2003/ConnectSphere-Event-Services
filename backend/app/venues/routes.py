@@ -562,44 +562,6 @@ def get_my_booking_requests():
     return jsonify(results), 200
 
 
-@venues_bp.get("/bookings/confirmation-notices")
-@roles_required("event_coordinator")
-def booking_confirmation_notices():
-    """Simple in-app notices, derived from approved bookings (no new table)."""
-    user = _current_user()
-    approved = (VenueBooking.query
-                .join(Event, VenueBooking.event_id == Event.id)
-                .filter(Event.coordinator_id == user.id,
-                        VenueBooking.status == "approved")
-                .order_by(VenueBooking.decided_at.desc()).all())
-    return jsonify([{
-        "bookingId": b.id,
-        "eventId": b.event_id,
-        "message": f"Venue confirmed: {b.venue.name if b.venue else 'Venue'} "
-                   f"for {b.event.name if b.event else 'your event'}.",
-        "confirmedAt": b.decided_at.isoformat() if b.decided_at else None,
-    } for b in approved]), 200
-
-@venues_bp.get("/bookings/rejection-notices")
-@roles_required("event_coordinator")
-def booking_rejection_notices():
-    user = _current_user()
-    rejected = (VenueBooking.query
-                .join(Event, VenueBooking.event_id == Event.id)
-                .filter(Event.coordinator_id == user.id,
-                        VenueBooking.status == "rejected")
-                .order_by(VenueBooking.decided_at.desc()).all())
-    return jsonify([{
-        "bookingId": b.id,
-        "eventId": b.event_id,
-        "message": f"Venue booking rejected: {b.venue.name if b.venue else 'Venue'} "
-                   f"for {b.event.name if b.event else 'your event'}.",
-        "reason": b.decision_reason,
-        "alternativeSuggestion": b.alternative_suggestion,
-        "rejectedAt": b.decided_at.isoformat() if b.decided_at else None,
-    } for b in rejected]), 200
-
-
 @venues_bp.get("/bookings/pending")
 @roles_required("venue_staff")
 def list_pending_bookings():
@@ -751,33 +713,6 @@ def _manage_booking_hold(booking_id, action):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 409 if "conflict" in str(exc).lower() else 400
     return jsonify(result.to_dict()), 200
-
-@venues_bp.get("/bookings/hold-notices")
-@roles_required("event_coordinator")
-def hold_notices():
-    """In-app notifications on request; a background worker is needed for push alerts."""
-    from datetime import timedelta
-    from app.common.time import utcnow
-    now = utcnow()
-    records = VenueBooking.query.filter(
-        VenueBooking.requested_by == _current_user().id,
-        VenueBooking.hold_expires_at.isnot(None),
-        VenueBooking.status.in_(("held", "expired")),
-    ).all()
-    notices = []
-    for b in records:
-        if b.hold_expires_at <= now:
-            kind = "expired"
-            message = "Your tentative venue hold has expired."
-        elif b.hold_expires_at <= now + timedelta(hours=24):
-            kind = "expiring"
-            message = "Your tentative venue hold expires within 24 hours."
-        else:
-            continue
-        notices.append({"bookingId": b.id, "eventId": b.event_id, "type": kind,
-                        "message": message, "expiresAt": b.hold_expires_at.isoformat()})
-    return jsonify(notices), 200
-
 
 @venues_bp.put("/bookings/<int:booking_id>/preparation")
 @roles_required("venue_staff")

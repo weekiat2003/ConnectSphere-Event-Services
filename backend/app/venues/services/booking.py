@@ -469,8 +469,6 @@ def manage_hold(booking_id, staff_id, action, expiry=None):
             _refuse_if_venue_unavailable(venue, *compute_booking_window(current, venue))
             current.status = HELD
             current.hold_expires_at = expiry
-            current.hold_warning_sent_at = None
-            current.hold_expired_notified_at = None
         elif action == "release":
             if current.status != HELD or not current.hold_expires_at or current.hold_expires_at <= now:
                 raise ValueError("Only an active hold can be released")

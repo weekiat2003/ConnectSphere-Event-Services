@@ -107,18 +107,6 @@ export default {
       payload
     ),
 
-  // Event Coordinator: approval notifications
-  getConfirmationNotices: () =>
-    apiClient.get(
-      "/venues/bookings/confirmation-notices"
-    ),
-
-  // Event Coordinator: rejection notifications
-  getRejectionNotices: () =>
-    apiClient.get(
-      "/venues/bookings/rejection-notices"
-    ),
-
   getApprovedBookings: () =>
     apiClient.get("/venues/bookings/approved"),
 
