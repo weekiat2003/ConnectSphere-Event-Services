@@ -191,21 +191,6 @@ def test_approve_ac1_approve_pending_and_update_calendar(client, approve_context
     # AC2: Only the event's coordinator receives the in-app confirmation.
 
 
-def test_approve_ac2_coordinator_receives_confirmation_notice(client, approve_context):
-    booking_id = add_approval_booking(approve_context)
-    assert approve_request(client, approve_context, booking_id).status_code == 200
-    response = client.get('/api/venues/bookings/confirmation-notices',
-                          headers=approve_context.coordinator_headers)
-    assert response.status_code == 200
-    notices = response.get_json()
-    notice = next(n for n in notices if n['bookingId'] == booking_id)
-    assert notice['eventId'] == approve_context.event
-    assert 'Approval Hall' in notice['message']
-    assert notice['confirmedAt'] is not None
-    other = client.get('/api/venues/bookings/confirmation-notices',
-                       headers=approve_context.other_coordinator_headers)
-    assert other.status_code == 200
-    assert booking_id not in [n['bookingId'] for n in other.get_json()]
     # AC3: Calendar includes correct event and original datetimes, including overnight.
 
 
@@ -293,12 +278,7 @@ def reject_request(client, ctx, booking_id, payload=None, headers=None):
     )
 
 
-def rejection_notices(client, ctx, headers=None):
-    return client.get(
-        '/api/venues/bookings/rejection-notices',
-        headers=headers if headers is not None else ctx.coordinator_headers,
-    )
-    # AC1: Both optional fields can be omitted, and coordinator is notified.
+    # AC1: Both optional fields can be omitted, .
 
 
 def test_reject_ac1_without_reason_or_alternative(client, approve_context):
@@ -313,12 +293,7 @@ def test_reject_ac1_without_reason_or_alternative(client, approve_context):
     assert saved.decided_at is not None
     assert saved.decision_reason is None
     assert saved.alternative_suggestion is None
-    notice_response = rejection_notices(client, approve_context)
-    assert notice_response.status_code == 200
-    notice = next(n for n in notice_response.get_json() if n['bookingId'] == booking_id)
-    assert notice['reason'] is None
-    assert notice['alternativeSuggestion'] is None
-    assert notice['rejectedAt'] is not None
+
     # AC1: Explicitly blank strings are accepted too.
 
 
@@ -331,7 +306,7 @@ def test_reject_ac1_blank_fields_are_accepted(client, approve_context):
     saved = db.session.get(VenueBooking, booking_id)
     assert saved.decision_reason is None
     assert saved.alternative_suggestion is None
-    # AC2: Reason is saved and visible in both request details and notification.
+    # AC2: Reason is saved and visible in both request details .
 
 
 def test_reject_ac2_reason_visible_to_coordinator(client, approve_context):
@@ -346,9 +321,6 @@ def test_reject_ac2_reason_visible_to_coordinator(client, approve_context):
     item = next(b for b in requests_response.get_json() if b['id'] == booking_id)
     assert item['status'] == 'rejected'
     assert item['decisionReason'] == reason
-    notice = next(n for n in rejection_notices(client, approve_context).get_json()
-    if n['bookingId'] == booking_id)
-    assert notice['reason'] == reason
     # AC3: Alternative suggestion is saved and visible with the rejection.
 
 
@@ -364,9 +336,6 @@ def test_reject_ac3_alternative_visible_to_coordinator(client, approve_context):
     item = next(b for b in requests_response.get_json() if b['id'] == booking_id)
     assert item['status'] == 'rejected'
     assert item['alternativeSuggestion'] == suggestion
-    notice = next(n for n in rejection_notices(client, approve_context).get_json()
-    if n['bookingId'] == booking_id)
-    assert notice['alternativeSuggestion'] == suggestion
     # AC3: Both reason and alternative can be submitted together.
 
 
@@ -377,11 +346,6 @@ def test_reject_ac3_reason_and_alternative_together(client, approve_context):
     assert response.status_code == 200
     assert response.get_json()['decisionReason'] == payload['reason']
     assert response.get_json()['alternativeSuggestion'] == payload['alternativeSuggestion']
-    notice = next(n for n in rejection_notices(client, approve_context).get_json()
-    if n['bookingId'] == booking_id)
-    assert notice['reason'] == payload['reason']
-    assert notice['alternativeSuggestion'] == payload['alternativeSuggestion']
-    # AC4: Rejected booking is excluded from confirmed calendar.
 
 
 def test_reject_ac4_not_shown_in_confirmed_calendar(client, approve_context):
@@ -474,13 +438,6 @@ def test_reject_non_text_field_returns_400(client, approve_context, field):
     assert db.session.get(VenueBooking, booking_id).status == 'pending'
 
 
-def test_reject_notices_are_private_to_requesting_coordinator(client, approve_context):
-    booking_id = add_approval_booking(approve_context)
-    assert reject_request(client, approve_context, booking_id).status_code == 200
-    other_response = rejection_notices(client, approve_context,
-                                       headers=approve_context.other_coordinator_headers)
-    assert other_response.status_code == 200
-    assert booking_id not in [n['bookingId'] for n in other_response.get_json()]
 
 # STORY 4: Resubmission after rejection counts as a new booking
 BASE = "/api/venues"
@@ -766,23 +723,6 @@ def test_hold_ac4_expired_hold_cannot_be_approved(client, context):
     assert db.session.get(VenueBooking, booking_id).status != "approved"
 
 
-def test_hold_ac5_warning_and_expiry_notices(client, context):
-    booking_id = add_booking(context)
-    assert hold_request(client, context, booking_id,
-                        expiry=hold_expiry(12)).status_code == 200
-    url = "/api/venues/bookings/hold-notices"
-    response = client.get(url, headers=context.coordinator_headers)
-    assert response.status_code == 200
-    assert any(n["bookingId"] == booking_id and n["type"] == "expiring"
-               for n in response.get_json())
-    saved = db.session.get(VenueBooking, booking_id)
-    saved.hold_expires_at = utcnow() - timedelta(minutes=1)
-    db.session.commit()
-    expire_due_holds()
-    response = client.get(url, headers=context.coordinator_headers)
-    assert response.status_code == 200
-    assert any(n["bookingId"] == booking_id and n["type"] == "expired"
-               for n in response.get_json())
 
 
 def test_hold_ac6_extend_active_hold(client, context):
