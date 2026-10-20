@@ -334,3 +334,39 @@ def test_isp60_check_preserves_existing_reservation(
     after = db.session.get(EquipmentReservation, reservation_id)
     assert after.to_dict() == before
     assert EquipmentReservation.query.count() == 1
+
+RESERVE_URL = "/api/equipment/reservations"
+
+
+def reserve_payload(event_id, requirement_id, item_id, start, end):
+    return {
+        "eventId": event_id,
+        "requirementId": requirement_id,
+        "equipmentItemId": item_id,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+    }
+
+
+def test_isp60_reservation_uses_same_overlap_rule(
+    client, tech_headers, item, reserve, organiser, make_event
+):
+    reserve(item, 3, start=datetime(2026, 12, 1, 9), end=datetime(2026, 12, 1, 12))
+    event_b = make_event(organiser)
+    req_b = add_requirement(event_b, "Projector", 8)
+
+    overlap = client.post(
+        RESERVE_URL,
+        json=reserve_payload(event_b, req_b, item, START, END),
+        headers=tech_headers,
+    )
+    assert overlap.status_code == 400
+
+    back_to_back = client.post(
+        RESERVE_URL,
+        json=reserve_payload(
+            event_b, req_b, item, datetime(2026, 12, 1, 12), datetime(2026, 12, 1, 13)
+        ),
+        headers=tech_headers,
+    )
+    assert back_to_back.status_code == 201
