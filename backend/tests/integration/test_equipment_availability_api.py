@@ -370,3 +370,60 @@ def test_isp60_reservation_uses_same_overlap_rule(
         headers=tech_headers,
     )
     assert back_to_back.status_code == 201
+
+
+# ---------------------------------------------------------------------
+# ISP-64: reservations reduce availability for overlapping events
+# ---------------------------------------------------------------------
+
+
+def test_isp64_two_overlapping_reservations_reduce_free(client, tech_headers, item, reserve):
+    reserve(item, 3, start=datetime(2026, 12, 1, 9), end=datetime(2026, 12, 1, 12))
+    reserve(item, 2, start=datetime(2026, 12, 1, 10), end=datetime(2026, 12, 1, 13))
+
+    body = get(client, tech_headers, item, q(1)).get_json()
+
+    assert body["freeQuantity"] == 5
+    assert body["available"] is True
+
+
+def test_isp64_all_units_reserved_means_not_available(client, tech_headers, item, reserve):
+    reserve(item, 10)
+
+    body = get(client, tech_headers, item, q(1)).get_json()
+
+    assert body["available"] is False
+    assert body["freeQuantity"] == 0
+    assert body["shortfall"] == 1
+
+
+def test_isp64_free_is_never_negative_when_total_edited_below_reserved(
+    client, tech_headers, item, reserve
+):
+    reserve(item, 5)
+    db.session.get(EquipmentItem, item).total_quantity = 2
+    db.session.commit()
+
+    body = get(client, tech_headers, item, q(1)).get_json()
+
+    assert body["freeQuantity"] == 0
+    assert body["totalQuantity"] == 2
+    assert body["available"] is False
+
+
+def test_isp64_released_reservation_restores_quantity(client, tech_headers, item, reserve):
+    reservation_id = reserve(item, 4)
+    assert get(client, tech_headers, item, q(1)).get_json()["freeQuantity"] == 6
+
+    db.session.get(EquipmentReservation, reservation_id).status = "released"
+    db.session.commit()
+
+    assert get(client, tech_headers, item, q(1)).get_json()["freeQuantity"] == 10
+
+
+def test_isp64_new_reservation_is_reflected_immediately(client, tech_headers, item, reserve):
+    assert get(client, tech_headers, item, q(1)).get_json()["freeQuantity"] == 10
+
+    reserve(item, 3)
+
+    assert get(client, tech_headers, item, q(1)).get_json()["freeQuantity"] == 7

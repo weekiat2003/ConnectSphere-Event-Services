@@ -110,3 +110,14 @@ def test_exclude_event_id_ignores_only_that_events_reservation(projector, organi
             start_datetime=START, end_datetime=END, status="reserved",
         ))
     db.session.commit()
+
+def test_free_quantity_is_never_negative(projector, reserve):
+    projector.total_quantity = 2
+    db.session.commit()
+    reserve(projector.id, 5)
+
+    r = check_availability(projector, 1, START, END)
+
+    assert r["freeQuantity"] == 0
+    assert r["available"] is False
+    assert r["shortfall"] == 1
