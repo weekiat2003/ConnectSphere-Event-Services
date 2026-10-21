@@ -50,7 +50,7 @@ class Event(db.Model):
 
     resubmitted_from_event_id = db.Column(db.BigInteger, db.ForeignKey("events.id"))
 
-    created_at = db.Column(db.DateTime, default=utcnow())
+    created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     submitted_at = db.Column(db.DateTime)
 
@@ -165,7 +165,7 @@ class EventEquipmentRequirement(db.Model):
     quantity = db.Column(db.Integer, nullable=False)
     technical_notes = db.Column(db.Text)
     status = db.Column(db.String(20), default="requested")
-    created_at = db.Column(db.DateTime, default=utcnow())
+    created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     testing_status = db.Column(db.String(20), nullable=False, default="pending")
     installation_status = db.Column(db.String(20), nullable=False, default="pending")
@@ -244,7 +244,7 @@ class EventStatusHistory(db.Model):
     new_status = db.Column(db.String(20), nullable=False)
     changed_by = db.Column(db.BigInteger, db.ForeignKey("users.id"))
     reason = db.Column(db.Text)
-    changed_at = db.Column(db.DateTime, default=utcnow())
+    changed_at = db.Column(db.DateTime, default=utcnow)
     changed_by_user = db.relationship("User", foreign_keys=[changed_by])
 
 
@@ -318,7 +318,7 @@ class EventCoordinatorHistory(db.Model):
     id = db.Column(db.BigInteger, primary_key=True)
     event_id = db.Column(db.BigInteger, db.ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
     coordinator_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
-    assigned_at = db.Column(db.DateTime, default=utcnow())
+    assigned_at = db.Column(db.DateTime, default=utcnow)
     unassigned_at = db.Column(db.DateTime)
     assignment_type = db.Column(db.String(20), default="auto")  # auto | reassignment
 class EventFieldEditLog(db.Model):
