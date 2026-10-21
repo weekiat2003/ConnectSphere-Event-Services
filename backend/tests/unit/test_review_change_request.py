@@ -12,6 +12,8 @@ from app.change_requests.services import (
     list_review_queue,
     request_withdrawal,
     submit_change_request,
+    reject_change_request,
+    ChangeRequestError,
 )
 from app.common.time import utcnow
 from app.extensions import db
@@ -143,7 +145,7 @@ def test_queue_rows_show_event_organiser_time_and_marking(app):
         assert rows[routine.id]["isSignificant"] is False
 
 
-@pytest.mark.parametrize("decided_status", ["processed", "rejected", "cannot_accommodate"])
+@pytest.mark.parametrize("decided_status", ["processed", "rejected"])
 def test_queue_leaves_out_decided_requests(app, decided_status):
     with app.app_context():
         organiser, coordinator, _ = _people()
@@ -266,25 +268,25 @@ def test_reviewing_changes_nothing(app):
 # 5. Available actions and decisions
 # ---------------------------------------------------------------------
 
-def test_pending_routine_request_offers_process_and_cannot_accommodate(app):
+def test_pending_routine_request_offers_process_and_rejection(app):
     with app.app_context():
         organiser, coordinator, _ = _people()
         change = _routine(_event(organiser, coordinator))
 
         detail = get_review_detail(change.id, coordinator)
 
-        assert detail["availableActions"] == ["process_change", "cannot_accommodate"]
+        assert detail["availableActions"] == ["process_change", "reject_change"]
         assert detail["decision"] is None
 
 
-def test_pending_significant_request_offers_re_review_and_cannot_accommodate(app):
+def test_pending_significant_request_offers_re_review_and_rejection(app):
     with app.app_context():
         organiser, coordinator, _ = _people()
         change = _significant(_event(organiser, coordinator))
 
         detail = get_review_detail(change.id, coordinator)
 
-        assert detail["availableActions"] == ["trigger_re_review", "cannot_accommodate"]
+        assert detail["availableActions"] == ["trigger_re_review", "reject_change"]
 
 
 def test_pending_withdrawal_appears_in_the_queue_and_offers_cancel(app):
@@ -296,11 +298,11 @@ def test_pending_withdrawal_appears_in_the_queue_and_offers_cancel(app):
         detail = get_review_detail(withdrawal.id, coordinator)
 
         assert (row["id"], row["requestType"]) == (withdrawal.id, "withdrawal")
-        assert detail["availableActions"] == ["cancel_event", "cannot_accommodate"]
+        assert detail["availableActions"] == ["cancel_event", "reject_change"]
         assert detail["changes"] == []
 
 
-@pytest.mark.parametrize("decided_status", ["processed", "rejected", "cannot_accommodate"])
+@pytest.mark.parametrize("decided_status", ["processed", "rejected"])
 def test_decided_request_is_read_only_and_shows_the_decision(app, decided_status):
     with app.app_context():
         organiser, coordinator, _ = _people()
@@ -318,6 +320,50 @@ def test_decided_request_is_read_only_and_shows_the_decision(app, decided_status
         assert detail["decision"]["decidedBy"] == "Carlos Coordinator"
         assert detail["decision"]["reason"] == "The venue is fully booked."
         datetime.fromisoformat(detail["decision"]["decidedAt"])
+
+def test_reject_records_decision_and_changes_nothing(app):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _event(organiser, coordinator)
+        change = _significant(event)
+        before = (event.name, event.proposed_date, event.expected_attendance, event.status)
+
+        reject_change_request(change.id, coordinator, "The venue cannot hold 120 people.")
+
+        db.session.refresh(change)
+        db.session.refresh(event)
+        assert change.status == "rejected"
+        assert change.coordinator_id == coordinator
+        assert change.decision_reason == "The venue cannot hold 120 people."
+        assert change.decided_at is not None
+        assert change.requested_changes["expected_attendance"]["to"] == 120  # kept, not deleted
+        assert (event.name, event.proposed_date, event.expected_attendance, event.status) == before
+
+
+@pytest.mark.parametrize("reason", [None, "", "   ", "12345", "!!!???"])
+def test_reject_needs_a_descriptive_reason(app, reason):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        change = _routine(_event(organiser, coordinator))
+
+        with pytest.raises(ChangeRequestError) as caught:
+            reject_change_request(change.id, coordinator, reason)
+
+        assert "reason" in caught.value.errors
+        db.session.refresh(change)
+        assert change.status == "pending"
+
+
+def test_unassigned_coordinator_cannot_reject(app):
+    with app.app_context():
+        organiser, coordinator, other = _people()
+        change = _routine(_event(organiser, coordinator))
+
+        with pytest.raises(PermissionError, match="assigned"):
+            reject_change_request(change.id, other, "This is a valid reason.")
+
+        db.session.refresh(change)
+        assert change.status == "pending"
 
 
 # ---------------------------------------------------------------------
@@ -392,7 +438,7 @@ def test_detail_endpoint_returns_the_full_review_payload(app):
     body = response.get_json()
     assert set(body) == {"request", "event", "changes", "affectedArrangements", "availableActions", "decision", "reReview"}
     assert body["changes"] == [{"field": "expected_attendance", "current": 80, "proposed": 120}]
-    assert body["availableActions"] == ["trigger_re_review", "cannot_accommodate"]
+    assert body["availableActions"] == ["trigger_re_review", "reject_change"]
     assert body["decision"] is None
 
 

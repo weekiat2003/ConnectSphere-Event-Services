@@ -153,6 +153,9 @@
         </form>
       </div>
       <div v-if="successMessage" class="success-message">{{ successMessage }}</div>
+      <div v-if="submitAdvisories.length" class="advisory possible_conflict" role="status">
+        <p v-for="a in submitAdvisories" :key="a.id">{{ a.message }}</p>
+      </div>
     </div>
 
     <section v-if="activeTab === 'status'" class="card status-section">
@@ -164,29 +167,6 @@
         <button type="button" class="btn secondary" @click="loadMyBookings" :disabled="statusLoading">
           {{ statusLoading ? "Refreshing..." : "Refresh Status" }}
         </button>
-      </div>
-
-      <!-- Simple confirmation notices for approved venue bookings -->
-      <div v-if="confirmationNotices.length" class="confirmation-notices" role="status">
-        <p v-for="notice in confirmationNotices" :key="notice.bookingId">
-          ✓ {{ notice.message }}
-        </p>
-      </div>
-
-      <!-- Hold notices derived from the coordinator's booking records -->
-      <div v-if="holdNotices.length" class="hold-notices" role="status">
-        <p v-for="notice in holdNotices" :key="notice.bookingId" :class="notice.kind">
-          <strong>{{ notice.title }}</strong> {{ notice.message }}
-        </p>
-      </div>
-
-      <!-- Rejection notices derived from rejected bookings -->
-      <div v-if="rejectionNotices.length" class="rejection-notices" role="status">
-        <div v-for="notice in rejectionNotices" :key="notice.bookingId" class="rejection-notice">
-          <strong>{{ notice.message }}</strong>
-          <p v-if="notice.reason"><strong>Reason:</strong> {{ notice.reason }}</p>
-          <p v-if="notice.alternativeSuggestion"><strong>Alternative suggestion:</strong> {{ notice.alternativeSuggestion }}</p>
-        </div>
       </div>
 
       <p v-if="statusError" class="error-message" role="alert">{{ statusError }}</p>
@@ -213,6 +193,10 @@
             <p><strong>End:</strong> {{ formatBookingDate(booking.endDatetime) }}</p>
             <p><strong>Submitted:</strong> {{ formatBookingDate(booking.createdAt) }}</p>
           </div>
+          <p v-if="booking.advisory" class="advisory" :class="booking.advisory.type" role="status">
+            <strong>{{ booking.advisory.type === 'venue_confirmed' ? 'Venue now confirmed for another event:' : 'Advisory:' }}</strong>
+            {{ booking.advisory.message }}
+          </p>
           <p v-if="booking.status === 'cancelled'" class="cancellation-reason">
             <strong>Booking cancelled.</strong> This venue is no longer confirmed for your event.
             <span v-if="booking.decisionReason"><br /><strong>Reason:</strong> {{ booking.decisionReason }}</span>
@@ -278,27 +262,6 @@ const successMessage = ref("");
 const resubmittingFromId = ref(null);
 
 const myBookings = ref([]);
-const confirmationNotices = ref([]);
-const rejectionNotices = ref([]);
-
-// No separate notification service: notices come from the existing booking list.
-const holdNotices = computed(() => {
-  const now = Date.now();
-  return myBookings.value.flatMap((booking) => {
-    const label = booking.venueName || `Venue #${booking.venueId}`;
-    const expiry = parseHoldExpiry(booking.holdExpiresAt ?? booking.hold_expires_at);
-    if (booking.status === "expired") {
-      return [{ bookingId: booking.id, kind: "expired", title: "Hold expired:",
-        message: `Your tentative hold for ${label} has expired. The venue is available to others.` }];
-    }
-    if (booking.status === "held" && expiry && expiry.getTime() > now &&
-        expiry.getTime() - now <= 24 * 60 * 60 * 1000) {
-      return [{ bookingId: booking.id, kind: "warning", title: "Hold expiring soon:",
-        message: `Your tentative hold for ${label} expires on ${formatHoldExpiry(expiry)}.` }];
-    }
-    return [];
-  });
-});
 
 function parseHoldExpiry(value) {
   if (!value) return null;
@@ -339,6 +302,8 @@ const emptyVenue = () => ({
   otherRequirements: "",
 });
 const venueRequests = ref([emptyVenue()]);
+
+const submitAdvisories = ref([]);
 
 function formatFacilities(value) {
   if (Array.isArray(value)) return value.length ? value.join(", ") : "Not specified";
@@ -441,7 +406,10 @@ async function submitBooking() {
       })),
     };
 
-    await venuesApi.submitBooking(payload);
+    const { data: created } = await venuesApi.submitBooking(payload);
+    submitAdvisories.value = (created || [])
+      .filter((b) => b.advisory)
+      .map((b) => ({ id: b.id, message: b.advisory.message }));
     successMessage.value = resubmittingFromId.value !== null
       ? "Resubmission created as a new pending booking. The original rejection remains on record."
       : "Venue booking request submitted successfully.";
@@ -462,26 +430,6 @@ async function submitBooking() {
   }
 }
 
-async function loadConfirmationNotices() {
-  try {
-    const { data } = await venuesApi.getConfirmationNotices();
-    confirmationNotices.value = Array.isArray(data) ? data : [];
-  } catch (error) {
-    confirmationNotices.value = [];
-    console.error("Unable to load booking confirmations", error);
-  }
-}
-
-async function loadRejectionNotices() {
-  try {
-    const { data } = await venuesApi.getRejectionNotices();
-    rejectionNotices.value = Array.isArray(data) ? data : [];
-  } catch (error) {
-    rejectionNotices.value = [];
-    console.error("Unable to load booking rejections", error);
-  }
-}
-
 async function loadMyBookings() {
   statusLoading.value = true;
   statusError.value = "";
@@ -489,7 +437,6 @@ async function loadMyBookings() {
   try {
     const response = await venuesApi.getMyBookings();
     myBookings.value = response.data;
-    await Promise.all([loadConfirmationNotices(), loadRejectionNotices()]);
   } catch (error) {
     myBookings.value = []; // Never display outdated statuses after a failed refresh.
     statusError.value =
@@ -600,25 +547,8 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.hold-notices { margin: 0 0 1rem; }
-.hold-notices p { margin: .35rem 0; padding: .8rem 1rem; border-radius: 10px; }
-.hold-notices .warning { background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
-.hold-notices .expired { background: #f1f5f9; border: 1px solid #cbd5e1; color: #334155; }
 .status-pill.held { background: #fef3c7; color: #92400e; }
 .status-pill.expired, .status-pill.released { background: #e2e8f0; color: #475569; }
-.rejection-notices { margin: 0 0 1rem; padding: .8rem 1rem; border: 1px solid #f3b4c4; border-radius: 10px; background: #fde8ee; color: #a12b47; }
-.rejection-notice + .rejection-notice { border-top: 1px solid #f3b4c4; margin-top: .7rem; padding-top: .7rem; }
-.rejection-notice p { margin: .4rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.confirmation-notices {
-  margin: 0 0 1rem;
-  padding: .8rem 1rem;
-  border: 1px solid #86efac;
-  border-radius: 10px;
-  background: var(--mint-bg, #dcfce7);
-  color: var(--mint-text, #166534);
-  font-weight: 500;
-}
-.confirmation-notices p { margin: .3rem 0; }
 
 .page-title { margin: 0 0 1rem; font-size: 1.5rem; font-weight: 600; color: var(--text, #2d2a4a); }
 .card { background: var(--surface, #fff); border: 1px solid var(--border, #e4defa); border-radius: 14px; box-shadow: 0 4px 16px rgba(109, 91, 208, .08); overflow: hidden; }
@@ -710,6 +640,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary, #6
 .resubmission-banner-icon { font-size: 18px; line-height: 1.3; flex-shrink: 0; }
 .resubmission-banner-detail { display: block; margin-top: 3px; }
 .resubmission-banner + .section { padding-top: 16px; }
+
+.advisory { margin: 1rem 0 0; padding: .75rem; border-radius: 8px; font-size: .875rem; }
+.advisory p { margin: .2rem 0; }
+.advisory.possible_conflict { background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
+.advisory.venue_confirmed { background: #fde8ee; border: 1px solid #f3b4c4; color: #a12b47; }
 
 </style>
 

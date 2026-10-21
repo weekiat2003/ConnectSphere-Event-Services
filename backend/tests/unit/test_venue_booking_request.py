@@ -975,3 +975,304 @@ def test_withdraw_ac6_other_coordinator_cannot_withdraw(
         b["id"] != booking_id
         for b in my_res.get_json()
     )
+
+# --------------------------------------------------------------------------
+# User Story: Block a booking request when the venue has a confirmed
+# booking for another event at an overlapping time
+# --------------------------------------------------------------------------
+
+@pytest.fixture()
+def other_event_id(organiser, make_event, ctx):
+    """A second event, coordinated by the same Coordinator."""
+    return make_event(organiser, coordinator_id=ctx.coord_id)
+
+
+def add_other_booking(ctx, event_id, venue_id, status="approved",
+                      start=None, end=None):
+    """A booking for a given event, defaulting to day(30) 10:00-12:00."""
+    db.session.add(
+        VenueBooking(
+            event_id=event_id,
+            venue_id=venue_id,
+            status=status,
+            requested_by=ctx.coord_id,
+            start_datetime=start or at(day(30), 10),
+            end_datetime=end or at(day(30), 12),
+        )
+    )
+    db.session.commit()
+
+
+def set_padding(venue_id, setup=0, turnaround=0):
+    venue = db.session.get(Venue, venue_id)
+    venue.setup_minutes = setup
+    venue.turnaround_minutes = turnaround
+    db.session.commit()
+
+# Double booking
+# AC1: overlap with another event's approved booking is blocked, and the
+# message names the venue, the conflicting date and the time period.
+
+def test_conflict_ac1_overlapping_confirmed_booking_blocks_request(
+    client, ctx, other_event_id,
+):
+    add_other_booking(ctx, other_event_id, ctx.hall_a)
+
+    res = submit(client, ctx, [entry(ctx.hall_a, startTime="11:00", endTime="13:00")])
+
+    assert res.status_code == 400
+    assert error_pairs(res) == {("Hall A", "venue_id")}
+
+    message = res.get_json()["errors"][0]["message"]
+    assert "Hall A" in message
+    assert "unavailable" in message
+    assert day(30).isoformat() in message
+    assert "10:00 to 12:00" in message
+
+    # Only the pre-existing approved booking exists; nothing was saved.
+    assert len(all_bookings()) == 1
+
+
+@pytest.mark.parametrize(
+    "start, end",
+    [
+        ("09:00", "11:00"),   # overlaps the start
+        ("11:00", "13:00"),   # overlaps the end
+        ("10:30", "11:30"),   # inside the existing booking
+        ("09:00", "13:00"),   # contains the existing booking
+        ("10:00", "12:00"),   # identical period
+    ],
+)
+def test_conflict_ac1_every_kind_of_overlap_is_blocked(
+    client, ctx, other_event_id, start, end,
+):
+    add_other_booking(ctx, other_event_id, ctx.hall_a)
+
+    res = submit(client, ctx, [entry(ctx.hall_a, startTime=start, endTime=end)])
+
+    assert res.status_code == 400
+    assert error_pairs(res) == {("Hall A", "venue_id")}
+    assert "unavailable" in res.get_json()["errors"][0]["message"]
+    assert len(all_bookings()) == 1
+
+
+# AC2: bookings that merely touch, or that do not overlap, are allowed.
+
+@pytest.mark.parametrize(
+    "booking_date, start, end",
+    [
+        (30, "12:00", "14:00"),   # starts exactly when the other ends
+        (30, "08:00", "10:00"),   # ends exactly when the other starts
+        (30, "14:00", "16:00"),   # later the same day
+        (31, "10:00", "12:00"),   # same hours, next day
+    ],
+)
+def test_conflict_ac2_non_overlapping_request_is_accepted(
+    client, ctx, other_event_id, booking_date, start, end,
+):
+    add_other_booking(ctx, other_event_id, ctx.hall_a)
+
+    res = submit(
+        client, ctx,
+        [entry(ctx.hall_a, date=day(booking_date).isoformat(),
+               startTime=start, endTime=end)],
+    )
+
+    assert res.status_code == 201
+    assert len(all_bookings()) == 2
+
+
+def test_conflict_ac2_other_venue_is_not_affected(client, ctx, other_event_id):
+    add_other_booking(ctx, other_event_id, ctx.hall_a)
+
+    res = submit(client, ctx, [entry(ctx.hall_b)])  # same time, different venue
+
+    assert res.status_code == 201
+
+
+# AC3: only APPROVED bookings block. Pending, rejected, withdrawn and
+# cancelled bookings of other events do not.
+
+@pytest.mark.parametrize(
+    "other_status",
+    ["pending", "rejected", "withdrawn", "cancelled"],
+)
+def test_conflict_ac3_only_approved_bookings_block(
+    client, ctx, other_event_id, other_status,
+):
+    add_other_booking(ctx, other_event_id, ctx.hall_a, status=other_status)
+
+    res = submit(client, ctx, [entry(ctx.hall_a)])
+
+    assert res.status_code == 201
+
+
+# AC4: setup and turnaround time count as part of the overlap.
+
+def test_conflict_ac4_setup_time_makes_adjacent_request_conflict(
+    client, ctx, other_event_id,
+):
+    set_padding(ctx.hall_a, setup=30)
+    add_other_booking(ctx, other_event_id, ctx.hall_a)  # 10:00-12:00
+
+    # Requested 12:00-14:00 needs the venue from 11:30, inside the other booking.
+    res = submit(client, ctx, [entry(ctx.hall_a, startTime="12:00", endTime="14:00")])
+
+    assert res.status_code == 400
+    assert error_pairs(res) == {("Hall A", "venue_id")}
+    assert "unavailable" in res.get_json()["errors"][0]["message"]
+
+
+def test_conflict_ac4_turnaround_time_blocks_until_it_has_passed(
+    client, ctx, other_event_id,
+):
+    set_padding(ctx.hall_a, turnaround=30)
+    add_other_booking(ctx, other_event_id, ctx.hall_a)  # busy until 12:30
+
+    blocked = submit(client, ctx, [entry(ctx.hall_a, startTime="12:15", endTime="14:00")])
+    assert blocked.status_code == 400
+    assert error_pairs(blocked) == {("Hall A", "venue_id")}
+
+    allowed = submit(client, ctx, [entry(ctx.hall_a, startTime="12:30", endTime="14:00")])
+    assert allowed.status_code == 201
+
+
+# AC5: the message handles bookings that span midnight.
+
+def test_conflict_ac5_message_shows_full_period_for_overnight_booking(
+    client, ctx, other_event_id,
+):
+    start = at(day(30), 22)
+    end = at(day(31), 2)
+    add_other_booking(ctx, other_event_id, ctx.hall_a, start=start, end=end)
+
+    res = submit(
+        client, ctx,
+        [entry(ctx.hall_a, date=day(31).isoformat(), startTime="01:00", endTime="03:00")],
+    )
+
+    assert res.status_code == 400
+    message = res.get_json()["errors"][0]["message"]
+    assert f"{day(30).isoformat()} 22:00" in message
+    assert f"{day(31).isoformat()} 02:00" in message
+
+
+# AC6: the request is all-or-nothing and every conflict is reported.
+
+def test_conflict_ac6_one_conflicting_venue_saves_nothing(
+    client, ctx, other_event_id,
+):
+    add_other_booking(ctx, other_event_id, ctx.hall_a)
+
+    res = submit(client, ctx, [entry(ctx.hall_a), entry(ctx.hall_b)])
+
+    assert res.status_code == 400
+    assert error_pairs(res) == {("Hall A", "venue_id")}  # Hall B is fine
+    assert len(all_bookings()) == 1                      # only the pre-existing one
+
+
+def test_conflict_ac6_all_conflicting_venues_are_reported(
+    client, ctx, other_event_id,
+):
+    add_other_booking(ctx, other_event_id, ctx.hall_a)
+    add_other_booking(ctx, other_event_id, ctx.hall_b)
+
+    res = submit(client, ctx, [entry(ctx.hall_a), entry(ctx.hall_b)])
+
+    assert res.status_code == 400
+    assert error_pairs(res) == {("Hall A", "venue_id"), ("Hall B", "venue_id")}
+
+
+# AC7: the event's own bookings are not "another event", and the conflict
+# message takes priority over the generic active-booking message.
+
+def test_conflict_ac7_own_approved_booking_gives_active_booking_message(
+    client, ctx,
+):
+    add_booking(ctx, ctx.hall_a, "approved")  # same event, 10:00-12:00
+
+    res = submit(client, ctx, [entry(ctx.hall_a)])
+
+    assert res.status_code == 400
+    message = res.get_json()["errors"][0]["message"]
+    assert "already has an active booking" in message
+    assert "unavailable" not in message
+
+
+def test_conflict_ac7_conflict_message_wins_over_active_booking_message(
+    client, ctx, other_event_id,
+):
+    # This event already has a pending request for Hall A on another day...
+    add_booking(ctx, ctx.hall_a, "pending")
+    # ...and another event holds an approved booking at the requested time.
+    add_other_booking(
+        ctx, other_event_id, ctx.hall_a,
+        start=at(day(40), 10), end=at(day(40), 12),
+    )
+
+    res = submit(client, ctx, [entry(ctx.hall_a, date=day(40).isoformat())])
+
+    assert res.status_code == 400
+    errors = res.get_json()["errors"]
+    assert len(errors) == 1  # one venue_id error per venue
+    assert "unavailable" in errors[0]["message"]
+    assert "already has an active booking" not in errors[0]["message"]
+
+# Booking advisory
+
+def _mine(client, ctx, event_id):
+    res = client.get(f"{BASE}/bookings/my", headers=ctx.coord).get_json()
+    return next(b for b in res if b["eventId"] == event_id)
+
+
+def test_advisory_ac1_ac2_pending_overlap_warns_without_other_event_details(client, ctx, other_event_id):
+    add_other_booking(ctx, other_event_id, ctx.hall_a, status="pending")
+    res = submit(client, ctx, [entry(ctx.hall_a, startTime="11:00", endTime="13:00")])
+    assert res.status_code == 201
+    booking = res.get_json()[0]
+    assert booking["status"] == "pending"
+    adv = booking["advisory"]
+    assert adv["type"] == "possible_conflict" and adv["overlapCount"] == 1
+    assert "Hall A" in adv["message"] and "not guaranteed" in adv["message"]
+    assert "11:00 to 12:00" in adv["message"]
+    assert "@" not in adv["message"] and "Event" not in adv["message"]
+
+
+def test_advisory_ac4_no_warning_cases(client, ctx, other_event_id):
+    add_other_booking(ctx, other_event_id, ctx.hall_a, status="pending")
+    # different venue, and non-overlapping time
+    res = submit(client, ctx, [entry(ctx.hall_b),
+                               entry(ctx.hall_a, startTime="14:00", endTime="15:00")])
+    assert all(b["advisory"] is None for b in res.get_json())
+
+
+@pytest.mark.parametrize("status", ["rejected", "withdrawn"])
+def test_advisory_ac4_inactive_overlaps_ignored(client, ctx, other_event_id, status):
+    add_other_booking(ctx, other_event_id, ctx.hall_a, status=status)
+    assert submit(client, ctx, [entry(ctx.hall_a)]).get_json()[0]["advisory"] is None
+
+
+def test_advisory_ac5_ac6_earlier_request_warned_then_cleared(client, ctx, other_event_id):
+    add_other_booking(ctx, other_event_id, ctx.hall_a, status="pending")
+    new_id = submit(client, ctx, [entry(ctx.hall_a)]).get_json()[0]["id"]
+
+    assert _mine(client, ctx, other_event_id)["advisory"]["overlapCount"] == 1
+
+    client.post(f"{BASE}/bookings/{new_id}/withdraw", headers=ctx.coord)
+    assert _mine(client, ctx, other_event_id)["advisory"] is None
+
+
+def test_advisory_ac7_confirmed_overlap_replaces_warning_and_blocks_approval(client, ctx, other_event_id):
+    add_other_booking(ctx, other_event_id, ctx.hall_a, status="pending")
+    new_id = submit(client, ctx, [entry(ctx.hall_a)]).get_json()[0]["id"]
+    other_id = next(b.id for b in all_bookings() if b.event_id == other_event_id)
+
+    assert client.post(f"{BASE}/bookings/{other_id}/approve", headers=ctx.staff).status_code == 200
+
+    adv = _mine(client, ctx, ctx.event_id)["advisory"]
+    assert adv["type"] == "venue_confirmed"
+    assert "confirmed for another event" in adv["message"]
+    assert client.post(f"{BASE}/bookings/{new_id}/approve", headers=ctx.staff).status_code == 409
+
+    pending = client.get(f"{BASE}/bookings/pending", headers=ctx.staff).get_json()
+    assert next(b for b in pending if b["id"] == new_id)["canApprove"] is False

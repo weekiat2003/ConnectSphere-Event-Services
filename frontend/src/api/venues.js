@@ -55,6 +55,12 @@ export default {
       `/venues/${id}/unavailability/${blockId}`
     ),
 
+  updateUnavailability: (id, blockId, payload) =>
+    apiClient.put(
+      `/venues/${id}/unavailability/${blockId}`,
+      payload
+    ),
+
   myFlags: () =>
     apiClient.get("/venues/flags/mine"),
 
@@ -99,18 +105,6 @@ export default {
     apiClient.post(
       `/venues/bookings/${bookingId}/reject`,
       payload
-    ),
-
-  // Event Coordinator: approval notifications
-  getConfirmationNotices: () =>
-    apiClient.get(
-      "/venues/bookings/confirmation-notices"
-    ),
-
-  // Event Coordinator: rejection notifications
-  getRejectionNotices: () =>
-    apiClient.get(
-      "/venues/bookings/rejection-notices"
     ),
 
   getApprovedBookings: () =>

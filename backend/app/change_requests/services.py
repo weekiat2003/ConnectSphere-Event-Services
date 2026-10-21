@@ -13,7 +13,7 @@ REVIEWABLE_STATUSES = ("pending", "re_review")
 RECONSIDERATION_REASON = "Needs reconsideration"
 CHANGEABLE_STATUSES = ("approved", "planning", "confirmed")
 STATUS_MESSAGE = "Changes can only be requested for an event that is approved, planning or confirmed"
-DECIDED_STATUSES = ("processed", "rejected", "cannot_accommodate")
+DECIDED_STATUSES = ("processed", "rejected")
 
 # Changing these can affect arrangements already made, so the request is
 # marked significant. Everything else the organiser may change is routine.
@@ -348,12 +348,12 @@ def _affected_arrangements(event: Event) -> list:
 def _available_actions(change_request: ChangeRequest) -> list:
     if change_request.status == "pending":
         if change_request.request_type == "withdrawal":
-            return ["cancel_event", "cannot_accommodate"]
+            return ["cancel_event", "reject_change"]
 
         if change_request.is_significant:
-            return ["trigger_re_review", "cannot_accommodate"]
+            return ["trigger_re_review", "reject_change"]
 
-        return ["process_change", "cannot_accommodate"]
+        return ["process_change", "reject_change"]
 
     if change_request.status == "re_review":
         return ["apply_change"]
@@ -487,6 +487,33 @@ def process_routine_change(request_id: int, coordinator_id: int, dry_run: bool =
 
     change_request.status = "processed"
     change_request.coordinator_id = coordinator_id
+    change_request.decided_at = utcnow()
+    db.session.commit()
+    return change_request
+
+def reject_change_request(
+    request_id: int, coordinator_id: int, reason, dry_run: bool = False
+) -> ChangeRequest:
+    """Reject a pending change request. Nothing on the event, its venue
+    bookings or its equipment is touched. dry_run runs every check and
+    writes nothing."""
+    change_request = _get_locked_request(request_id)
+    _assert_assigned_coordinator(change_request, coordinator_id)  # PermissionError otherwise
+
+    if change_request.status != "pending":
+        raise ChangeRequestError({"request": "Only a pending change request can be rejected"})
+
+    try:
+        validate_descriptive_text(reason if isinstance(reason, str) else "", "reason")
+    except ValueError as problem:
+        raise ChangeRequestError({"reason": str(problem)})
+
+    if dry_run:
+        return change_request
+
+    change_request.status = "rejected"
+    change_request.coordinator_id = coordinator_id
+    change_request.decision_reason = reason.strip()
     change_request.decided_at = utcnow()
     db.session.commit()
     return change_request

@@ -415,9 +415,9 @@ CREATE TABLE change_requests (
   is_significant TINYINT(1) NOT NULL DEFAULT 0,
   reason TEXT NOT NULL,
 
-  -- pending | re_review | processed | rejected | cannot_accommodate
+  -- pending | re_review | processed | rejected
   status ENUM(
-    'pending', 're_review', 'processed', 'rejected', 'cannot_accommodate'
+    'pending', 're_review', 'processed', 'rejected'
   ) NOT NULL DEFAULT 'pending',
 
   coordinator_id BIGINT UNSIGNED NULL, -- who recorded the final outcome
@@ -581,4 +581,17 @@ CREATE TABLE event_safety_assessments (
     CONSTRAINT uq_esa_event UNIQUE (event_id),
     CONSTRAINT fk_esa_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
     CONSTRAINT fk_esa_safety_officer FOREIGN KEY (safety_officer_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE registrations
+  DROP INDEX uq_registration,
+  ADD COLUMN active_attendee_id BIGINT UNSIGNED GENERATED ALWAYS AS
+      (CASE WHEN status <> 'withdrawn' THEN attendee_id END) STORED,
+  ADD UNIQUE KEY uq_registration_active (event_id, active_attendee_id);
+
+CREATE TABLE event_registration_settings (
+    event_id    BIGINT UNSIGNED PRIMARY KEY,
+    is_open     TINYINT(1) NOT NULL DEFAULT 0,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_regset_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

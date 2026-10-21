@@ -21,10 +21,19 @@
       <ul>
         <li v-for="f in flags" :key="f.id">
           <span>
-            <router-link :to="`/events/${f.eventId}`">Event #{{ f.eventId }}</router-link>
-            at {{ venueName(f.venueId) }}: {{ f.reason || "Venue availability changed" }}
+            <router-link :to="`/events/${f.eventId}`">{{ f.eventName || `Event #${f.eventId}` }}</router-link>
+            at {{ f.venueName || venueName(f.venueId) }} is affected: {{ f.reason || "venue availability changed" }}.
+            <span v-if="f.bookingStart" class="flag-detail">
+              Booked {{ fmt(f.bookingStart) }} to {{ fmt(f.bookingEnd) }}.
+            </span>
+            <span v-for="p in f.unavailablePeriods" :key="p.id" class="flag-detail">
+              Unavailable {{ fmt(p.start) }} to {{ fmt(p.end) }}.
+            </span>
           </span>
-          <button type="button" class="btn-ghost" @click="resolveFlag(f)">Mark resolved</button>
+          <span class="flag-actions">
+            <router-link to="/venues/search" class="btn-primary">Find replacement venue</router-link>
+            <button type="button" class="btn-ghost" @click="resolveFlag(f)">Mark resolved</button>
+          </span>
         </li>
       </ul>
     </div>
@@ -59,6 +68,30 @@
       <button type="submit" class="btn-primary" :disabled="saving">
         {{ saving ? "Saving..." : "Mark unavailable" }}
       </button>
+    </form>
+
+    <!-- Venue Staff: change an unavailable period -->
+    <form v-if="isStaff && editing" class="card block-form" novalidate @submit.prevent="saveEdit">
+      <h3>Change unavailable period for {{ editing.venue }}</h3>
+      <div class="fields">
+        <label>
+          From
+          <input v-model="editForm.start" type="datetime-local" />
+        </label>
+        <label>
+          Until
+          <input v-model="editForm.end" type="datetime-local" />
+        </label>
+        <label>
+          Reason
+          <input v-model="editForm.reason" type="text" maxlength="255" />
+        </label>
+      </div>
+      <p v-if="editError" class="field-error" role="alert">{{ editError }}</p>
+      <div class="edit-actions">
+        <button type="submit" class="btn-primary" :disabled="saving">Save changes</button>
+        <button type="button" class="btn-ghost" @click="closeEdit">Cancel</button>
+      </div>
     </form>
 
     <!-- Week + venue controls -->
@@ -151,14 +184,18 @@
                 </span>
               </td>
               <td>{{ it.detail }}</td>
-              <td v-if="isStaff">
+              <td v-if="isStaff" class="row-actions">
+                <template v-if="it.type === 'blocked'">
+                  <button type="button" class="btn-ghost" @click="openEdit(it)">Edit</button>
+                  <button type="button" class="btn-danger" @click="removeBlock(it)">Remove</button>
+                </template>
                 <button
-                  v-if="it.type === 'blocked'"
+                  v-else-if="it.type === 'booked'"
                   type="button"
                   class="btn-danger"
-                  @click="removeBlock(it)"
+                  @click="cancelBooking(it)"
                 >
-                  Remove
+                  Cancel booking
                 </button>
               </td>
             </tr>
@@ -322,6 +359,7 @@ const items = computed(() =>
       ...(r.confirmedBookings || []).map((b) => ({
         key: `b${b.id}`,
         type: "booked",
+        bookingId: b.id,
         venue: r.venue?.name,
         start: b.startDatetime,
         end: b.endDatetime,
@@ -444,6 +482,69 @@ async function removeBlock(item) {
   }
 }
 
+// ---- Venue Staff: edit a period, cancel an affected booking ----
+const editing = ref(null);
+const editForm = reactive({ start: "", end: "", reason: "" });
+const editError = ref("");
+const toInput = (iso) => String(iso).slice(0, 16);
+
+function openEdit(item) {
+  editing.value = item;
+  editError.value = "";
+  Object.assign(editForm, {
+    start: toInput(item.start),
+    end: toInput(item.end),
+    reason: item.detail === "No reason given" ? "" : item.detail,
+  });
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+function closeEdit() {
+  editing.value = null;
+  editError.value = "";
+}
+
+async function saveEdit() {
+  editError.value = "";
+  if (!editForm.start || !editForm.end || editForm.end <= editForm.start) {
+    editError.value = "End must be after the start.";
+    return;
+  }
+  saving.value = true;
+  try {
+    const { data } = await venuesApi.updateUnavailability(editing.value.venueId, editing.value.id, {
+      start: `${editForm.start}:00`,
+      end: `${editForm.end}:00`,
+      reason: editForm.reason.trim() || null,
+    });
+    const affected = data.flagsRaised?.length || 0;
+    notice.value = affected
+      ? `Period updated. ${affected} booked event(s) now overlap it and were flagged for their coordinators.`
+      : "Period updated.";
+    closeEdit();
+    await load();
+  } catch (error) {
+    editError.value = error.response?.data?.error || "Could not update the period.";
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function cancelBooking(item) {
+  const ok = await confirm(
+    `Cancel the booking for ${item.venue}? The event goes back to planning and its coordinator will need a replacement venue.`
+  );
+  if (!ok) return;
+  notice.value = "";
+  pageError.value = "";
+  try {
+    await venuesApi.cancelBooking(item.bookingId, { reason: "Venue became unavailable" });
+    notice.value = "Booking cancelled. The coordinator can now request a replacement venue.";
+    await load();
+  } catch (error) {
+    pageError.value = error.response?.data?.error || "Could not cancel the booking.";
+  }
+}
+
 onMounted(async () => {
   pickDefaultDay();
   try {
@@ -489,6 +590,8 @@ h3 { margin: 0 0 0.75rem; }
 
 .flags { border-color: var(--butter-text); }
 .flags ul { list-style: none; margin: 0; padding: 0; }
+.flag-detail { display: block; color: var(--text-muted); font-size: 0.9rem; }
+.flag-actions, .row-actions, .edit-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
 .flags li { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.4rem 0; flex-wrap: wrap; }
 
 .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1rem; margin-bottom: 1rem; }

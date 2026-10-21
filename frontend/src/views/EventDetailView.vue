@@ -35,13 +35,21 @@
       <div class="title-row">
         <h2 class="page-title">{{ event.name }}</h2>
         <span class="badge" :class="event.status">{{ statusLabel(event.status) }}</span>
+        <button v-if="canEditEvent && !showEditForm" class="btn btn-grey btn-small" @click="openEditForm">Edit</button>
         <button
-          v-if="isAssignedCoordinator && !showEditForm && ['under_review', 'approved', 'planning'].includes(event.status)"
-          class="btn btn-grey btn-small" @click="openEditForm">Edit
+          v-if="isAssignedCoordinator && ['approved', 'planning', 'safety_check', 'confirmed'].includes(event.status) && !showCancelForm"
+          class="btn btn-rose btn-small" @click="openCancelForm">Cancel Event
         </button>
-        <button v-if="isAssignedCoordinator && ['approved', 'planning'].includes(event.status)"
-          class="btn btn-rose btn-small" @click="cancelEvent">Cancel Event
-        </button>
+      </div>
+      <div v-if="event.cancellation" class="notice cancelled">
+        <strong>Coordinator cancelled this event</strong>
+        <p class="decision-meta">
+          By {{ event.cancellation.coordinatorName || `Coordinator #${event.cancellation.coordinatorId}` }}
+          on {{ formatDate(event.cancellation.timestamp) }}
+        </p>
+        <p v-if="event.cancellation.reason" class="decision-reason">
+          <strong>Reason:</strong> {{ event.cancellation.reason }}
+        </p>
       </div>
       <div v-if="event.reviewDecision?.outcome" class="notice" :class="event.reviewDecision.outcome">
         <strong>
@@ -83,11 +91,11 @@
           <span>{{ event.expectedAttendance || "—" }}</span>
         </div>
         <div class="detail">
-          <span class="detail-label">Equipment required</span>
+          <span class="detail-label">Capacity needed</span>
           <span>{{ event.venueRequirements?.capacityNeeded || "—" }}</span>
         </div>
         <div class="detail">
-          <span class="detail-label">Venue Required</span>
+          <span class="detail-label">Required layout</span>
           <span>{{ event.venueRequirements?.requiredLayout || "—" }}</span>
         </div>
         <div class="detail">
@@ -102,6 +110,33 @@
         <span class="detail-label">Accessibility needs</span>
         <p>{{ event.venueRequirements?.accessibilityNeeds || "None specified" }}</p>
       </div>
+    </div>
+
+    <div v-if="(isAssignedCoordinator || isOwningOrganiser) && event.fieldEditLogs?.length" class="card history">
+      <h3 class="section-title">Edit History</h3>
+      <ul class="edit-history-list">
+        <li v-for="log in event.fieldEditLogs" :key="log.id" class="edit-history-item"
+          :class="{ rejected: log.wasRejected }">
+          <div class="edit-history-header">
+            <span class="edit-history-who">{{ log.changedByName || 'Unknown user' }}</span>
+            <span class="edit-history-when">{{ log.createdAt ? formatDate(log.createdAt) : '' }}</span>
+            <span v-if="log.wasSignificant" class="badge-pill amber">Significant</span>
+            <span v-if="log.wasRejected" class="badge-pill rose">Rejected</span>
+          </div>
+          <p v-if="log.wasRejected" class="edit-history-rejected-note">
+            {{ log.rejectionReason }} </p>
+          <ul v-else class="edit-history-fields">
+            <li v-for="field in Object.keys(log.newValues || {})" :key="field">
+              <span class="edit-history-field-name">{{ EVENT_EDIT_FIELD_LABELS[field] || field }}</span>
+              <span class="edit-history-change">
+                <span class="edit-history-old">{{ formatHistoryValue(log.oldValues?.[field]) }}</span>
+                <span class="edit-history-arrow">→</span>
+                <span class="edit-history-new">{{ formatHistoryValue(log.newValues?.[field]) }}</span>
+              </span>
+            </li>
+          </ul>
+        </li>
+      </ul>
     </div>
 
     <div>
@@ -163,7 +198,7 @@
           </p>
           <router-link v-if="isAssignedCoordinator"
             :to="{ name: 'change-request-review', query: { id: request.id } }">Open in review</router-link>
-          <p v-if="request.decidedAt" class="change-reason"><strong>Processed:</strong> {{ formatDate(request.decidedAt)
+          <p v-if="request.decidedAt" class="change-reason"><strong>Decided:</strong> {{ formatDate(request.decidedAt)
           }}</p>
           <p v-if="request.status === 're_review' && request.reReviewAt" class="change-reason">
             <strong>Sent for re-review</strong> by the assigned Coordinator on {{ formatDate(request.reReviewAt) }}.
@@ -188,6 +223,16 @@
     <!-- Coordinator Actions: Event Review and Approval + Coordinator Assignment + Event Status Management -->
     <section v-if="isAssignedCoordinator">
       <h3 class="section-title">Coordinator Actions</h3>
+
+      <div v-if="showCancelForm" class="action-block">
+        <h3 class="block-title">Cancel Event</h3>
+        <textarea v-model="cancelReason" placeholder="Reason for cancelling (required)"></textarea>
+        <p v-if="cancelError" class="field-error">{{ cancelError }}</p>
+        <div class="actions">
+          <button class="btn btn-rose" :disabled="cancelSubmitting" @click="cancelEvent">Confirm Cancellation</button>
+          <button class="btn btn-grey" :disabled="cancelSubmitting" @click="showCancelForm = false">Back</button>
+        </div>
+      </div>
 
       <div v-if="event.status === 'under_review'" class="action-block">
         <textarea v-model="comment" placeholder="Comments / reason"></textarea>
@@ -214,12 +259,11 @@
           <button class="btn btn-butter" @click="clarify">Request Clarification</button>
           <button class="btn btn-mint" @click="approve">Approve</button>
           <button class="btn btn-rose" @click="reject">Reject</button>
-          <button class="btn btn-grey" @click="reject">Reassign Coordinator</button>
         </div>
         <p v-if="actionError" class="field-error">{{ actionError }}</p>
       </div>
 
-      <div v-if="showEditForm && ['under_review', 'approved', 'planning'].includes(event.status)" class="action-block">
+      <div v-if="showEditForm && canEditEvent" class="action-block">
         <h3 class="block-title">Edit Event Information</h3>
         <div class="edit-event-form">
           <div v-for="field in EVENT_EDIT_FIELD_OPTIONS" :key="field.key" class="edit-field"
@@ -295,9 +339,6 @@
           <button class="btn btn-grey" :disabled="editSubmitting" @click="showEditForm = false">Cancel</button>
         </div>
       </div>
-
-
-
 
       <div v-if="event.status === 'confirmed'" class="action-block">
         <textarea v-model="comment" placeholder="Reason for reverting to planning"></textarea>
@@ -694,6 +735,26 @@ const EVENT_EDIT_FIELD_OPTIONS = [
 
 ];
 
+const EVENT_EDIT_FIELD_LABELS = Object.fromEntries(EVENT_EDIT_FIELD_OPTIONS.map((f) => [f.key, f.label]));
+
+function formatHistoryValue(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "None";
+    if (typeof value[0] === "object") {
+      return value.map((v) => `${v.quantity ?? ""} × ${v.type ?? v.equipmentType ?? ""}`.trim()).join(", ");
+    }
+    return value.join(", ");
+  }
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+const EDITABLE_EVENT_STATUSES = ['under_review', 'approved', 'planning', 'safety_check'];
+const canEditEvent = computed(() =>
+  isAssignedCoordinator.value && EDITABLE_EVENT_STATUSES.includes(event.value.status)
+);
+
 const editableFields = ref([]);       // coordinator's selection when requesting clarification
 
 // "under_review" -> "under review"
@@ -1026,6 +1087,7 @@ const editTouchesSignificantField = computed(() =>
 let initialEditValues = {};
 
 function openEditForm() {
+  if (!canEditEvent.value) return;
   const source = {
     name: event.value.name,
     purpose: event.value.purpose,
@@ -1182,21 +1244,6 @@ async function reject() {
   }
 }
 
-async function cancelEvent() {
-  actionError.value = "";
-  try {
-    const data = await requestActionWithConfirmation((confirmed) =>
-      eventsApi.cancelEvent(event.value.id, comment.value, confirmed)
-    );
-    if (data) {
-      comment.value = "";
-      await load();
-    }
-  } catch (e) {
-    actionError.value = e.response?.data?.error || "Could not cancel this event.";
-  }
-}
-
 async function deleteClarificationRequest(reviewId) {
   actionError.value = "";
 
@@ -1252,6 +1299,37 @@ async function resubmit() {
 async function autoAssign() {
   await eventsApi.autoAssign(event.value.id);
   await load();
+}
+
+const showCancelForm = ref(false);
+const cancelReason = ref("");
+const cancelError = ref("");
+const cancelSubmitting = ref(false);
+
+function openCancelForm() {
+  cancelReason.value = "";
+  cancelError.value = "";
+  showCancelForm.value = true;
+}
+
+async function cancelEvent() {
+  cancelError.value = "";
+  cancelSubmitting.value = true;
+  try {
+    const data = await requestActionWithConfirmation((confirmed) =>
+      eventsApi.cancelEvent(event.value.id, cancelReason.value, confirmed)
+    );
+    if (data) {
+      showCancelForm.value = false;
+      cancelReason.value = "";
+      await load();
+    }
+  } catch (e) {
+    const data = e.response?.data;
+    cancelError.value = data?.errors?.reason || data?.error || "Could not cancel this event.";
+  } finally {
+    cancelSubmitting.value = false;
+  }
 }
 
 onMounted(async () => {
@@ -1568,6 +1646,11 @@ onMounted(async () => {
 }
 
 .notice.rejected {
+  background: var(--rose-bg, #fbdcdc);
+  color: var(--rose-text, #a12b47);
+}
+
+.notice.cancelled {
   background: var(--rose-bg, #fbdcdc);
   color: var(--rose-text, #a12b47);
 }
@@ -1918,7 +2001,6 @@ textarea {
   color: var(--butter-text, #8a5a00);
 }
 
-.badge.cannot_accommodate,
 .badge.significant {
   background: var(--rose-bg, #fbdcdc);
 }
@@ -1955,5 +2037,107 @@ textarea {
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.edit-history-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.edit-history-item {
+  padding: 0.65rem 0.8rem;
+  border-radius: 10px;
+  background: var(--sky-bg, #d6ecff);
+}
+
+.edit-history-item.rejected {
+  background: var(--rose-bg, #fde2e7);
+}
+
+.edit-history-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.edit-history-who {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text, #2d2a4a);
+}
+
+.edit-history-when {
+  font-size: 0.75rem;
+  color: var(--text-muted, #6b6890);
+}
+
+.badge-pill {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+}
+
+.badge-pill.amber {
+  background: var(--butter-bg, #fef3c7);
+  color: #92631a;
+}
+
+.badge-pill.rose {
+  background: var(--rose-bg, #fde2e7);
+  color: var(--rose-text, #a12b47);
+}
+
+.edit-history-rejected-note {
+  margin: 0.3rem 0 0;
+  font-size: 0.82rem;
+  color: var(--rose-text, #a12b47);
+}
+
+.edit-history-fields {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.edit-history-fields li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+}
+
+.edit-history-field-name {
+  font-weight: 600;
+  color: var(--text, #2d2a4a);
+  min-width: 140px;
+}
+
+.edit-history-change {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text, #2d2a4a);
+}
+
+.edit-history-old {
+  color: var(--text-muted, #6b6890);
+  text-decoration: line-through;
+}
+
+.edit-history-arrow {
+  color: var(--text-muted, #6b6890);
+}
+
+.edit-history-new {
+  font-weight: 500;
 }
 </style>
