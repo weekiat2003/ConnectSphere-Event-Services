@@ -211,3 +211,162 @@ def test_event_check_organiser_denied(client, make_user, auth_header, organiser,
     make_user("org2@test.com", ["event_organiser"])
     res = check_event(client, auth_header("org2@test.com"), make_event(organiser))
     assert res.status_code == 403
+
+# ---------------------------------------------------------------------
+# ISP-60: exclude equipment committed to overlapping events
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "start,end,expected_free",
+    [
+        (datetime(2026, 12, 1, 10), datetime(2026, 12, 1, 11), 7),
+        (datetime(2026, 12, 1, 8), datetime(2026, 12, 1, 10), 7),
+        (datetime(2026, 12, 1, 11), datetime(2026, 12, 1, 14), 7),
+        (datetime(2026, 12, 1, 12), datetime(2026, 12, 1, 15), 10),
+        (datetime(2026, 12, 1, 8), datetime(2026, 12, 1, 9), 10),
+        (datetime(2026, 12, 1, 11, 59), datetime(2026, 12, 1, 15), 7),
+        (datetime(2026, 12, 1, 13), datetime(2026, 12, 1, 15), 10),
+    ],
+    ids=[
+        "contained",
+        "partial-left",
+        "partial-right",
+        "back-to-back-after",
+        "back-to-back-before",
+        "one-minute-overlap",
+        "no-overlap",
+    ],
+)
+def test_isp60_overlap_boundaries(
+    client, tech_headers, item, reserve, start, end, expected_free
+):
+    reserve(
+        item,
+        3,
+        start=datetime(2026, 12, 1, 9),
+        end=datetime(2026, 12, 1, 12),
+    )
+
+    res = get(client, tech_headers, item, q(10, start, end))
+
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["freeQuantity"] == expected_free
+    assert body["available"] is (expected_free == 10)
+
+
+def test_isp60_other_item_is_unaffected(
+    client, tech_headers, item, reserve
+):
+    reserve(item, 3)
+    microphone = EquipmentItem(name="Microphone", total_quantity=10)
+    db.session.add(microphone)
+    db.session.commit()
+
+    res = get(client, tech_headers, microphone.id, q(10))
+
+    assert res.status_code == 200
+    assert res.get_json()["freeQuantity"] == 10
+    assert res.get_json()["available"] is True
+
+
+def test_isp60_event_recheck_excludes_only_own_reservation(
+    client, tech_headers, item, reserve, organiser, make_event
+):
+    event_a = make_event(organiser)
+    event_b = make_event(organiser)
+    add_requirement(event_a, "Projector", 10)
+    add_requirement(event_b, "Projector", 10)
+
+    db.session.add(EquipmentReservation(
+        event_id=event_a,
+        equipment_item_id=item,
+        quantity=3,
+        start_datetime=START,
+        end_datetime=END,
+        status="reserved",
+    ))
+    db.session.commit()
+
+    own = check_event(client, tech_headers, event_a)
+    other = check_event(client, tech_headers, event_b)
+
+    assert own.status_code == 200
+    assert other.status_code == 200
+    assert own.get_json()["results"][0]["freeQuantity"] == 10
+    assert own.get_json()["available"] is True
+    assert other.get_json()["results"][0]["freeQuantity"] == 7
+    assert other.get_json()["available"] is False
+
+    # Another event's reservation must still count during A's recheck.
+    reserve(item, 2)
+
+    again = check_event(client, tech_headers, event_a)
+    assert again.status_code == 200
+    assert again.get_json()["results"][0]["freeQuantity"] == 8
+    assert again.get_json()["available"] is False
+
+
+def test_isp60_released_units_are_free(
+    client, tech_headers, item, reserve
+):
+    reserve(item, 3, status="released")
+
+    res = get(client, tech_headers, item, q(10))
+
+    assert res.status_code == 200
+    assert res.get_json()["freeQuantity"] == 10
+    assert res.get_json()["available"] is True
+
+
+def test_isp60_check_preserves_existing_reservation(
+    client, tech_headers, item, reserve
+):
+    reservation_id = reserve(item, 3)
+    record = db.session.get(EquipmentReservation, reservation_id)
+    before = record.to_dict()
+
+    res = get(client, tech_headers, item, q(10))
+
+    assert res.status_code == 200
+    db.session.expire_all()
+    after = db.session.get(EquipmentReservation, reservation_id)
+    assert after.to_dict() == before
+    assert EquipmentReservation.query.count() == 1
+
+RESERVE_URL = "/api/equipment/reservations"
+
+
+def reserve_payload(event_id, requirement_id, item_id, start, end):
+    return {
+        "eventId": event_id,
+        "requirementId": requirement_id,
+        "equipmentItemId": item_id,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+    }
+
+
+def test_isp60_reservation_uses_same_overlap_rule(
+    client, tech_headers, item, reserve, organiser, make_event
+):
+    reserve(item, 3, start=datetime(2026, 12, 1, 9), end=datetime(2026, 12, 1, 12))
+    event_b = make_event(organiser)
+    req_b = add_requirement(event_b, "Projector", 8)
+
+    overlap = client.post(
+        RESERVE_URL,
+        json=reserve_payload(event_b, req_b, item, START, END),
+        headers=tech_headers,
+    )
+    assert overlap.status_code == 400
+
+    back_to_back = client.post(
+        RESERVE_URL,
+        json=reserve_payload(
+            event_b, req_b, item, datetime(2026, 12, 1, 12), datetime(2026, 12, 1, 13)
+        ),
+        headers=tech_headers,
+    )
+    assert back_to_back.status_code == 201
