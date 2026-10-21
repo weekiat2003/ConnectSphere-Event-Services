@@ -51,8 +51,8 @@ def check_availability(
 
     overlapping = query.all()
     committed = sum(r.quantity for r in overlapping)
-    free = equipment_item.total_quantity - committed
-
+    free = max(0, equipment_item.total_quantity - committed)
+    
     result.update(
         available=free >= quantity_needed,
         freeQuantity=free,
