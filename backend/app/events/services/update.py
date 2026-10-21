@@ -26,7 +26,7 @@ EDITABLE_FIELDS = ORDINARY_FIELDS | SIGNIFICANT_FIELDS
 
 # US-1 AC1: Under Review, Approved, or Planning only -- not Safety Check
 # (a review may be in progress) and not Confirmed (that's the US-4 lock).
-EDITABLE_STATUSES = {"under_review", "approved", "planning"}
+EDITABLE_STATUSES = {"under_review", "approved", "planning", "safety_check"}
 
 
 class EventUpdateError(Exception):
@@ -203,8 +203,8 @@ def _validate_changes(event: Event, changes: dict) -> dict:
 
     if "equipment_requirements" in changes:
         requirements = changes["equipment_requirements"]
-        if not isinstance(requirements, list) or not requirements:
-            errors["equipment_requirements"] = "At least one equipment requirement is required"
+        if not isinstance(requirements, list):
+            errors["equipment_requirements"] = "Equipment requirements must be a list"
         else:
             for index, requirement in enumerate(requirements):
                 field = f"equipment_requirements[{index}]"

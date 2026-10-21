@@ -45,16 +45,17 @@
         </label>
 
         <label>
-          Equipment Required
+          Capacity Needed
           <input
             v-model.number="form.capacity_needed"
             type="number"
             min="1"
+            placeholder="Minimum venue capacity"
           />
         </label>
 
         <label>
-          Venue Required
+          Required Layout
           <input
             v-model="form.required_layout"
             placeholder="e.g. theatre, banquet"

@@ -295,20 +295,19 @@ class TestEventUpdateRoute:
         assert res.status_code in (400, 409)  # adjust to match your EventNotEditableStatusError handler
 
 
-#  TO DO: recheck the safety check editable thing before pushing, because right now code treats safety_check as locked, same as confirmed — and your own non-editable-status test currently asserts that (safety_check is in the parametrize list expecting EventNotEditableStatusError), which is the opposite of what the clarification says.
 
-    # def test_safety_check_status_is_editable(self, client, app, coordinator, make_event, auth_header):
-    #     """Per Clarification Session 3: coordinator can edit before the final confirmed status."""
-    #     with app.app_context():
-    #         event_id = make_event(organiser_id=1, status="safety_check", coordinator_id=coordinator)
+    def test_safety_check_status_is_editable(self, client, app, coordinator, make_event, auth_header):
+        """Per Clarification Session 3: coordinator can edit before the final confirmed status, so safety check is editable."""
+        with app.app_context():
+            event_id = make_event(organiser_id=1, status="safety_check", coordinator_id=coordinator)
 
-    #     res = client.put(
-    #         f"/api/events/{event_id}/update",
-    #         json={"fields": {"purpose": "Updated during safety check"}, "offlineReviewConfirmed": False},
-    #         headers=auth_header("coordinator@test.com"),
-    #     )
+        res = client.put(
+            f"/api/events/{event_id}/update",
+            json={"fields": {"purpose": "Updated during safety check"}, "offlineReviewConfirmed": False},
+            headers=auth_header("coordinator@test.com"),
+        )
 
-    #     assert res.status_code == 200
+        assert res.status_code == 200
 
     def test_validation_error_returns_400_with_field_errors(self, client, app, coordinator, make_event, auth_header):
         with app.app_context():
@@ -376,3 +375,5 @@ class TestEventUpdateRoute:
         assert logs is not None, "fieldEditLogs missing from GET /events/<id> — see item 4, implement the serializer first"
         assert len(logs) == 1
         assert logs[0]["wasSignificant"] is False
+
+

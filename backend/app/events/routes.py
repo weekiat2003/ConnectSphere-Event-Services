@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
@@ -206,36 +208,22 @@ def get_event(event_id):
     payload = event.to_dict()
     payload["canResubmit"] = review.can_be_resubmitted(event)
 
-    sorted_logs = sorted(
-        event.field_edit_logs,
-        key=lambda log: (
-            log.created_at is None,
-            log.created_at
-        )
-    )
+    sorted_logs = sorted(event.field_edit_logs, key=lambda log: log.created_at or datetime.min)
 
-    payload["fieldEditLogs"] = [
-        {
+    payload["fieldEditLogs"] = []
+    for log in sorted_logs:
+        changer = User.query.get(log.changed_by) if log.changed_by else None
+        payload["fieldEditLogs"].append({
             "id": log.id,
             "changedBy": log.changed_by,
-            "changedByName": (
-                User.query.get(log.changed_by).name
-                if log.changed_by and 
-            User.query.get(log.changed_by)
-                else None
-            ),
+            "changedByName": changer.name if changer else None,
             "wasSignificant": log.was_significant,
             "wasRejected": log.was_rejected,
+            "rejectionReason": log.rejection_reason,
             "oldValues": log.old_values,
             "newValues": log.new_values,
-            "createdAt": (
-                log.created_at.isoformat()
-                if log.created_at
-                else None
-            ),
-        }
-        for log in sorted_logs
-    ]
+            "createdAt": log.created_at.isoformat() if log.created_at else None,
+        })
 
     return jsonify(payload), 200
 

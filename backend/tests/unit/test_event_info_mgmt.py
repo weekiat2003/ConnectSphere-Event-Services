@@ -48,7 +48,7 @@ class TestUpdateEventFields:
             assert event.field_edit_logs[0].changed_by == coordinator
             assert event.field_edit_logs[0].created_at is not None
 
-    @pytest.mark.parametrize("status", ["under_review", "approved", "planning"])
+    @pytest.mark.parametrize("status", ["under_review", "approved", "planning", "safety_check"])
     def test_editable_statuses_allow_edits(self, app, coordinator, make_event, status):
         with app.app_context():
             from app.models.user import User
@@ -132,6 +132,37 @@ class TestUpdateEventFields:
             assert log.old_values["equipment_requirements"][0]["quantity"] == 1
             assert log.new_values["equipment_requirements"][0]["quantity"] == 2
 
+    def test_empty_equipment_requirements_clears_existing_items(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator)
+            req = EventEquipmentRequirement(event_id=event_id, equipment_type="Projector", quantity=1)
+            db.session.add(req)
+            db.session.commit()
+            req_id = req.id
+
+            update_event_fields(
+                Event.query.get(event_id), User.query.get(coordinator),
+                {"equipment_requirements": []},
+                offline_review_confirmed=True,
+            )
+
+            assert EventEquipmentRequirement.query.filter_by(event_id=event_id).count() == 0
+            assert EventEquipmentRequirement.query.get(req_id) is None
+
+    def test_non_list_equipment_requirements_rejected(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator, name="Original")
+            event = Event.query.get(event_id)
+            user = User.query.get(coordinator)
+
+            with pytest.raises(EventValidationError) as exc_info:
+                update_event_fields(event, user, {"equipment_requirements": "not-a-list"}, offline_review_confirmed=True)
+
+            assert "equipment_requirements" in exc_info.value.field_errors
+            assert Event.query.get(event_id).name == "Original"
+
     def test_equipment_requirement_flagged_on_significant_change(self, app, coordinator, make_event):
         with app.app_context():
             from app.models.user import User
@@ -188,7 +219,7 @@ class TestUpdateEventFields:
             with pytest.raises(EventLockedError):
                 update_event_fields(event, other, {"name": "Nope"})
 
-    @pytest.mark.parametrize("status", ["draft", "submitted", "safety_check", "completed", "cancelled", "rejected"])
+    @pytest.mark.parametrize("status", ["draft", "submitted", "completed", "cancelled", "rejected"])
     def test_non_editable_status_rejected(self, app, coordinator, make_event, status):
         with app.app_context():
             from app.models.user import User
@@ -228,7 +259,6 @@ class TestUpdateEventFields:
             ("required_layout", " ", "required_layout"),
             ("accessibility_needs", "", "accessibility_needs"),
             ("required_facilities", "chairs", "required_facilities"),
-            ("equipment_requirements", [], "equipment_requirements"),
             ("registration_required", "yes", "registration_required"),
             ("intended_capacity", 0, "intended_capacity"),
         ],
@@ -298,24 +328,6 @@ class TestUpdateEventFields:
             assert [r.id for r in remaining] == [keep_id]
             assert EventEquipmentRequirement.query.get(remove_id) is None
 
-    def test_removing_all_equipment_requirements_rejected(self, app, coordinator, make_event):
-        """_validate_changes requires at least one item when the key is present."""
-        with app.app_context():
-            from app.models.user import User
-            event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator)
-            req = EventEquipmentRequirement(event_id=event_id, equipment_type="Projector", quantity=1)
-            db.session.add(req)
-            db.session.commit()
-
-            with pytest.raises(EventValidationError) as exc_info:
-                update_event_fields(
-                    Event.query.get(event_id), User.query.get(coordinator),
-                    {"equipment_requirements": []},
-                    offline_review_confirmed=True,
-                )
-
-            assert "equipment_requirements" in exc_info.value.field_errors
-            assert EventEquipmentRequirement.query.get(req.id) is not None  # untouched
 
 # Atomicity of mixed ordinary + significant edits
     def test_mixed_ordinary_and_significant_edit_blocked_atomically(self, app, coordinator, make_event):
