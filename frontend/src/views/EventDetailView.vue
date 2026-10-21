@@ -617,12 +617,12 @@
           <input v-model.number="revisionForm.expected_attendance" type="number" min="1" />
         </label>
         <label class="field-row">
-          Equipment Required
+          Capacity Needed
           <p></p>
           <input v-model.number="revisionForm.capacity_needed" type="number" min="1" />
         </label>
         <label class="field-row">
-          Venue Required
+          Required Layout
           <p></p>
           <input v-model="revisionForm.required_layout" />
         </label>
@@ -713,8 +713,8 @@ const EDITABLE_FIELD_OPTIONS = [
   { key: "proposed_date", label: "Proposed date", type: "date" },
   { key: "proposed_time", label: "Proposed time", type: "time" },
   { key: "expected_attendance", label: "Expected attendance", type: "number" },
-  { key: "capacity_needed", label: "Equipment Required", type: "number" },
-  { key: "required_layout", label: "Venue Required", type: "text" },
+  { key: "capacity_needed", label: "Capacity Needed", type: "number" },
+  { key: "required_layout", label: "Required Layout", type: "text" },
   { key: "accessibility_needs", label: "Accessibility needs", type: "textarea" },
   { key: "registration_required", label: "Registration required", type: "checkbox" },
 ];
@@ -827,8 +827,8 @@ const CHANGE_FIELDS = [
   { key: "proposed_date", label: "Date", type: "date", current: (e) => e.proposedDate },
   { key: "proposed_time", label: "Time", type: "time", current: (e) => e.proposedTime },
   { key: "expected_attendance", label: "Expected attendance", type: "number", current: (e) => e.expectedAttendance },
-  { key: "capacity_needed", label: "Equipment Required", type: "number", current: (e) => e.venueRequirements?.capacityNeeded },
-  { key: "required_layout", label: "Venue Required", type: "text", current: (e) => e.venueRequirements?.requiredLayout },
+  { key: "capacity_needed", label: "Capacity Needed", type: "number", current: (e) => e.venueRequirements?.capacityNeeded },
+  { key: "required_layout", label: "Required Layout", type: "text", current: (e) => e.venueRequirements?.requiredLayout },
   { key: "accessibility_needs", label: "Accessibility needs", type: "textarea", current: (e) => e.venueRequirements?.accessibilityNeeds },
   { key: "name", label: "Event name", type: "text", current: (e) => e.name },
   { key: "description", label: "Description", type: "textarea", current: (e) => e.description },

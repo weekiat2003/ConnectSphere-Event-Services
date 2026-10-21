@@ -202,7 +202,7 @@ const FIELD_LABELS = {
   proposed_time: "Proposed Time",
   expected_attendance: "Expected Attendance",
   capacity_needed: "Capacity Needed",
-  required_layout: "Venue Required",
+  required_layout: "Required Layout",
   accessibility_needs: "Accessibility Needs",
   name: "Name",
   purpose: "Purpose",
