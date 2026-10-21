@@ -37,11 +37,11 @@
               <h4>Event Venue Requirements</h4>
               <div class="requirements-grid">
                 <div>
-                  <span class="requirement-label">Equipment Required</span>
+                  <span class="requirement-label">Capacity Needed</span>
                   <span>{{ selectedEvent.venueRequirements?.capacityNeeded ?? "Not specified" }}</span>
                 </div>
                 <div>
-                  <span class="requirement-label">Venue Required</span>
+                  <span class="requirement-label">Required Layout</span>
                   <span>{{ selectedEvent.venueRequirements?.requiredLayout || "Not specified" }}</span>
                 </div>
                 <div>
