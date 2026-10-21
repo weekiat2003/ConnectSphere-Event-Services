@@ -158,6 +158,17 @@ def check_event_availability(event_id):
 # Equipment Reservation
 # ---------------------------------------------------------------------
 
+def _parse_reservation_period(data):
+    try:
+        start = datetime.fromisoformat(data.get("start") or "")
+    except (TypeError, ValueError):
+        raise ValueError("start is required and must be an ISO datetime")
+    try:
+        end = datetime.fromisoformat(data.get("end") or "")
+    except (TypeError, ValueError):
+        raise ValueError("end is required and must be an ISO datetime")
+    return start, end
+
 @equipment_bp.post("/reservations")
 @roles_required("technical_support_staff")
 def reserve_equipment():
@@ -171,14 +182,8 @@ def reserve_equipment():
         return jsonify({"error": "Event, requirement, or equipment item not found"}), 404
 
     try:
-        result = reservation.reserve(
-            event,
-            requirement,
-            item,
-            datetime.fromisoformat(data.get("start")),
-            datetime.fromisoformat(data.get("end")),
-            user.id,
-        )
+        start, end = _parse_reservation_period(data)
+        result = reservation.reserve(event, requirement, item, start, end, user.id)
     except (ValueError, TypeError) as e:
         return jsonify({"error": str(e)}), 400
     return jsonify(result.to_dict()), 201

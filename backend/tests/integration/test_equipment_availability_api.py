@@ -352,7 +352,7 @@ def test_isp60_reservation_uses_same_overlap_rule(
     client, tech_headers, item, reserve, organiser, make_event
 ):
     reserve(item, 3, start=datetime(2026, 12, 1, 9), end=datetime(2026, 12, 1, 12))
-    event_b = make_event(organiser)
+    event_b = make_event(organiser, status="approved")
     req_b = add_requirement(event_b, "Projector", 8)
 
     overlap = client.post(

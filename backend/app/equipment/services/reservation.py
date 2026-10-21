@@ -6,6 +6,8 @@ from app.models.event import Event, EventEquipmentRequirement
 
 RESERVED = "reserved"
 RELEASED = "released"
+ACTIVE = "active"
+RESERVABLE_EVENT_STATUSES = ("approved", "planning", "safety_check", "confirmed")
 
 
 def reserve(
@@ -16,14 +18,45 @@ def reserve(
     end,
     user_id: int,
 ) -> EquipmentReservation:
-    result = check_availability(equipment_item, requirement.quantity, start, end)
+    try:
+        if end <= start:
+            raise ValueError("end must be after start")
+    except TypeError:
+        raise ValueError("start and end must both include, or both omit, a timezone")
+
+    if requirement.event_id != event.id:
+        raise ValueError("Requirement does not belong to this event")
+
+    if event.status not in RESERVABLE_EVENT_STATUSES:
+        raise ValueError(
+            f"Equipment cannot be reserved for an event with status '{event.status}'"
+        )
+
+    # Lock the item row so two reservations cannot both claim the last units.
+    item = (
+        db.session.query(EquipmentItem)
+        .filter_by(id=equipment_item.id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
+    if item.status != ACTIVE:
+        raise ValueError(f"{item.name} is not active (status: {item.status})")
+
+    already_reserved = EquipmentReservation.query.filter_by(
+        equipment_requirement_id=requirement.id, status=RESERVED
+    ).first()
+    if already_reserved:
+        raise ValueError("This requirement already has a reservation")
+
+    result = check_availability(item, requirement.quantity, start, end)
     if not result["available"]:
-        raise ValueError(f"Not enough {equipment_item.name} available for the requested period")
+        raise ValueError(f"Not enough {item.name} available for the requested period")
 
     reservation = EquipmentReservation(
         event_id=event.id,
         equipment_requirement_id=requirement.id,
-        equipment_item_id=equipment_item.id,
+        equipment_item_id=item.id,
         quantity=requirement.quantity,
         start_datetime=start,
         end_datetime=end,
