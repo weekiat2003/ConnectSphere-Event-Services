@@ -130,7 +130,13 @@ def check_event_availability(event_id):
     for req in requirements:
         item = catalogue.get_item_by_name(req.equipment_type)
         if item:
-            result = availability.check_availability(item, req.quantity, start, end)
+            result = availability.check_availability(
+                item,
+                req.quantity,
+                start,
+                end,
+                exclude_event_id=event.id,
+            )
         else:
             result = {
                 "available": False,
