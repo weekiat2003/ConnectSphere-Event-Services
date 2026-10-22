@@ -8,6 +8,7 @@ from app.models.change_request import ChangeRequest, EventChangeHistory, Arrange
 from app.models.event import Event, EventEquipmentRequirement, EventStatusHistory
 from app.models.venue import BOOKING_APPROVED, ACTIVE_BOOKING_STATUSES, Venue, VenueBooking
 from app.models.user import User
+from app.models.equipment import EquipmentReservation
 
 REVIEWABLE_STATUSES = ("pending", "re_review")
 RECONSIDERATION_REASON = "Needs reconsideration"
@@ -709,16 +710,40 @@ def _re_review_record(change_request: ChangeRequest, event: Event) -> dict | Non
     }
 
 def _replace_equipment_requirements(event: Event, items: list[dict]) -> None:
+    old_types = {
+        requirement.id: (requirement.equipment_type or "").strip().lower()
+        for requirement in event.equipment_requirements
+    }
+    reserved = [
+        (reservation, reservation.equipment_requirement_id)
+        for reservation in EquipmentReservation.query.filter_by(
+            event_id=event.id, status="reserved"
+        ).all()
+    ]
+
     event.equipment_requirements.clear()
+
+    new_by_type = {}
     for item in items:
-        event.equipment_requirements.append(
-            EventEquipmentRequirement(
-                equipment_type=str(item["type"]).strip(),
-                quantity=item["quantity"],
-                technical_notes=item.get("technicalNotes"),
-                status="requested",
-            )
+        requirement = EventEquipmentRequirement(
+            equipment_type=str(item["type"]).strip(),
+            quantity=item["quantity"],
+            technical_notes=item.get("technicalNotes"),
+            status="requested",
         )
+        event.equipment_requirements.append(requirement)
+        new_by_type.setdefault(requirement.equipment_type.lower(), requirement)
+
+    db.session.flush()  # gives the new requirements their ids
+
+    # A reservation follows the new requirement of the same equipment type;
+    # if that type was removed, its reservation is released.
+    for reservation, old_requirement_id in reserved:
+        target = new_by_type.get(old_types.get(old_requirement_id))
+        if target is not None:
+            reservation.equipment_requirement_id = target.id
+        else:
+            reservation.status = "released"
 
 
 def _apply_cleaned_change(
@@ -752,19 +777,6 @@ def _apply_cleaned_change(
 
     setattr(event, field, proposed)
 
-
-def _replace_equipment_requirements(event: Event, items: list[dict]) -> None:
-    event.equipment_requirements.clear()
-
-    for item in items:
-        event.equipment_requirements.append(
-            EventEquipmentRequirement(
-                equipment_type=str(item["type"]).strip(),
-                quantity=item["quantity"],
-                technical_notes=item.get("technicalNotes"),
-                status="requested",
-            )
-        )
 
 
 def _planned_updates(
