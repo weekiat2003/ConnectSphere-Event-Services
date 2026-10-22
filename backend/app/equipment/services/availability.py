@@ -1,5 +1,4 @@
 """Equipment Availability Checking epic."""
-
 from app.models.equipment import EquipmentItem, EquipmentReservation
 
 
@@ -13,6 +12,7 @@ def check_availability(
     start,
     end,
     exclude_event_id=None,
+    lock_reservations=False,
 ) -> dict:
     """Return availability for [start, end).
 
@@ -49,10 +49,13 @@ def check_availability(
             EquipmentReservation.event_id != exclude_event_id
         )
 
+    if lock_reservations:
+        query = query.with_for_update()
+
     overlapping = query.all()
     committed = sum(r.quantity for r in overlapping)
     free = max(0, equipment_item.total_quantity - committed)
-    
+
     result.update(
         available=free >= quantity_needed,
         freeQuantity=free,

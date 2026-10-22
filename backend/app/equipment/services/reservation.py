@@ -43,13 +43,20 @@ def reserve(
     if item.status != ACTIVE:
         raise ValueError(f"{item.name} is not active (status: {item.status})")
 
-    already_reserved = EquipmentReservation.query.filter_by(
-        equipment_requirement_id=requirement.id, status=RESERVED
-    ).first()
+    # Locking reads see the latest committed rows, not an older snapshot.
+    already_reserved = (
+        EquipmentReservation.query.filter_by(
+            equipment_requirement_id=requirement.id, status=RESERVED
+        )
+        .with_for_update()
+        .first()
+    )
     if already_reserved:
         raise ValueError("This requirement already has a reservation")
 
-    result = check_availability(item, requirement.quantity, start, end)
+    result = check_availability(
+        item, requirement.quantity, start, end, lock_reservations=True
+    )
     if not result["available"]:
         raise ValueError(f"Not enough {item.name} available for the requested period")
 
