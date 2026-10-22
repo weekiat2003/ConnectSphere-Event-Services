@@ -51,6 +51,9 @@ def change_status(event: Event, new_status: str, changed_by_id: int, reason: str
     if new_status not in allowed:
         raise InvalidTransitionError(f"Cannot transition event from '{event.status}' to '{new_status}'")
 
+    if new_status == "cancelled":
+        release_equipment_reservations(event)
+
     return _record_status_change(event, new_status, changed_by_id, reason)
 
 
@@ -154,6 +157,7 @@ def revert_to_planning(event: Event, changed_by_id: int, reason: str) -> Event:
         raise InvalidTransitionError("Only a confirmed event can be reverted to planning")
     return change_status(event, "planning", changed_by_id, reason=reason)
 
+
 class EventActionError(ValueError):
     """`errors` maps a field name ("reason" / "event") to a message."""
 
@@ -170,6 +174,17 @@ def validate_cancellation_reason(reason) -> str:
         raise EventActionError({"reason": str(problem)})
     return reason.strip()
 
+
+def release_equipment_reservations(event: Event) -> int:
+    """Releases the event's reserved equipment. Does not commit; the caller does."""
+    reservations = EquipmentReservation.query.filter_by(
+        event_id=event.id, status="reserved"
+    ).all()
+    for reservation in reservations:
+        reservation.status = "released"
+    return len(reservations)
+
+
 def _release_arrangements(event: Event, coordinator_id: int, reason: str, now):
     """Release the cancelled event's live venue bookings (pending, approved,
     held) and equipment reservations. Does not commit; the caller does."""
@@ -185,13 +200,10 @@ def _release_arrangements(event: Event, coordinator_id: int, reason: str, now):
         booking.decided_at = now
         booking.decision_reason = f"Event cancelled: {reason}"
 
-    reservations = EquipmentReservation.query.filter_by(
-        event_id=event.id, status="reserved"
-    ).all()
-    for reservation in reservations:
-        reservation.status = "released"
+    released_equipment = release_equipment_reservations(event)
 
-    return len(bookings), len(reservations)
+    return len(bookings), released_equipment
+
 
 def cancel_event(event_id: int, coordinator_id: int, reason, dry_run: bool = False) -> Event:
     """Cancel an event. A reason is required. dry_run runs every check and writes nothing."""

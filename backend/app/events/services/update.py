@@ -14,6 +14,7 @@ from datetime import date, datetime, time
 
 from app.extensions import db
 from app.common.text_validation import validate_descriptive_text
+from app.models.equipment import EquipmentReservation
 from app.models.event import Event, EventEquipmentRequirement, EventFieldEditLog
 
 ORDINARY_FIELDS = {"name", "purpose", "description", "category", "registration_required", "intended_capacity"}
@@ -242,6 +243,11 @@ def _update_equipment_requirements(event: Event, requirements: list):
 
     for item_id, item in list(existing.items()):
         if item_id not in submitted_ids:
+            # Release first: once the row is deleted the reservation's link is set to NULL
+            for reservation in EquipmentReservation.query.filter_by(
+                equipment_requirement_id=item.id, status="reserved"
+            ).all():
+                reservation.status = "released"
             event.equipment_requirements.remove(item)
             db.session.delete(item)
 
@@ -284,6 +290,8 @@ def _flag_arrangements_needs_reconsideration(event: Event):
     for requirement in event.equipment_requirements:
         requirement.needs_recheck = True
         db.session.add(requirement)
+
+
 def _log_edit(event, user, fields_changed, old_values, new_values=None,
               was_significant=False, was_rejected=False, rejection_reason=None):
     db.session.add(EventFieldEditLog(
