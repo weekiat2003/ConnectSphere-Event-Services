@@ -16,6 +16,7 @@ import CoordinatorCalendar from "../components/CoordinatorCalendar.vue";
 import VenueBookingRequestView from "../views/VenueBookingRequestView.vue";
 import VenueSearchView from "../views/VenueSearchView.vue";
 import EquipmentView from "../views/EquipmentView.vue";
+import TechnicalReviewView from "../views/TechnicalReviewView.vue";
 
 import VenueCatalogueView from "../views/VenueCatalogueView.vue";
 import VenueAvailabilityView from "../views/VenueAvailabilityView.vue";
@@ -136,7 +137,17 @@ const routes = [
       roles: ["technical_support_staff"],
     },
   },
-  
+
+  {
+    path: "/technical-review",
+    name: "technical-review",
+    component: TechnicalReviewView,
+    meta: {
+      requiresAuth: true,
+      roles: ["technical_support_staff"],
+    },
+  },
+
   {
     path: "/venues/availability",
     name: "venue-availability",
