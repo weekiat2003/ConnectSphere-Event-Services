@@ -1,24 +1,31 @@
 from datetime import datetime
 
+
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
+
 
 from app.auth.decorators import roles_required
 from app.equipment.services import availability, catalogue, preparation, reservation
 from app.models.equipment import EquipmentReservation
 from app.models.event import Event, EventEquipmentRequirement
 from app.models.user import User
+from app.equipment.services import availability, catalogue, preparation, reservation, technical_review
+
 
 equipment_bp = Blueprint("equipment", __name__)
+
 
 
 def _current_user():
     return User.query.get(int(get_jwt_identity()))
 
 
+
 # ---------------------------------------------------------------------
 # Equipment catalogue (backs Equipment Availability Checking)
 # ---------------------------------------------------------------------
+
 
 @equipment_bp.post("/items")
 @roles_required("technical_support_staff")
@@ -30,10 +37,12 @@ def create_item():
     return jsonify(item.to_dict()), 201
 
 
+
 @equipment_bp.get("/items")
 @roles_required("technical_support_staff", "event_coordinator")
 def list_items():
     return jsonify([i.to_dict() for i in catalogue.list_items()]), 200
+
 
 
 @equipment_bp.put("/items/<int:item_id>")
@@ -44,6 +53,7 @@ def update_item(item_id):
         return jsonify({"error": "Equipment item not found"}), 404
     item = catalogue.update_item(item, request.get_json() or {})
     return jsonify(item.to_dict()), 200
+
 
 
 @equipment_bp.post("/items/<int:item_id>/mark-unavailable")
@@ -62,6 +72,7 @@ def mark_item_unavailable(item_id):
     return jsonify(body), 200
 
 
+
 @equipment_bp.post("/items/<int:item_id>/mark-active")
 @roles_required("technical_support_staff")
 def mark_item_active(item_id):
@@ -70,6 +81,7 @@ def mark_item_active(item_id):
         return jsonify({"error": "Equipment item not found"}), 404
     item = catalogue.mark_active(item)
     return jsonify(item.to_dict()), 200
+
 
 
 # ---------------------------------------------------------------------
@@ -98,6 +110,7 @@ def _parse_availability_args(args):
         raise ValueError("quantity must be at least 1")
     return start, end, quantity
 
+
 @equipment_bp.get("/items/<int:item_id>/availability")
 @roles_required("technical_support_staff", "event_coordinator")
 def check_item_availability(item_id):
@@ -110,6 +123,7 @@ def check_item_availability(item_id):
         return jsonify({"error": str(e)}), 400
     return jsonify(availability.check_availability(item, quantity, start, end)), 200
 
+
 @equipment_bp.get("/events/<int:event_id>/availability")
 @roles_required("technical_support_staff", "event_coordinator")
 def check_event_availability(event_id):
@@ -120,6 +134,7 @@ def check_event_availability(event_id):
         start, end, _ = _parse_availability_args(request.args)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+
 
     requirements = (
         EventEquipmentRequirement.query.filter_by(event_id=event.id)
@@ -145,6 +160,7 @@ def check_event_availability(event_id):
             }
         results.append({"requirementId": req.id, "type": req.equipment_type, **result})
 
+
     return jsonify({
         "eventId": event.id,
         "start": start.isoformat(),
@@ -154,9 +170,11 @@ def check_event_availability(event_id):
     }), 200
 
 
+
 # ---------------------------------------------------------------------
 # Equipment Reservation
 # ---------------------------------------------------------------------
+
 
 def _parse_reservation_period(data):
     try:
@@ -169,11 +187,13 @@ def _parse_reservation_period(data):
         raise ValueError("end is required and must be an ISO datetime")
     return start, end
 
+
 @equipment_bp.post("/reservations")
 @roles_required("technical_support_staff")
 def reserve_equipment():
     user = _current_user()
     data = request.get_json() or {}
+
 
     event = Event.query.get(data.get("eventId"))
     requirement = EventEquipmentRequirement.query.get(data.get("requirementId"))
@@ -181,12 +201,14 @@ def reserve_equipment():
     if not event or not requirement or not item:
         return jsonify({"error": "Event, requirement, or equipment item not found"}), 404
 
+
     try:
         start, end = _parse_reservation_period(data)
         result = reservation.reserve(event, requirement, item, start, end, user.id)
     except (ValueError, TypeError) as e:
         return jsonify({"error": str(e)}), 400
     return jsonify(result.to_dict()), 201
+
 
 
 @equipment_bp.post("/reservations/<int:reservation_id>/release")
@@ -200,6 +222,7 @@ def release_equipment(reservation_id):
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify(result.to_dict()), 200
+
 
 
 @equipment_bp.put("/requirements/<int:requirement_id>/preparation")
@@ -217,3 +240,19 @@ def update_requirement_preparation(requirement_id):
     except preparation.EquipmentPreparationError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(result.to_dict()), 200
+
+
+
+# ---------------------------------------------------------------------
+# Technical review (Technical Support Staff view an event's requirements)
+# ---------------------------------------------------------------------
+
+
+@equipment_bp.get("/events/<int:event_id>/requirements")
+@roles_required("technical_support_staff")
+def technical_review_requirements(event_id):
+    try:
+        result = technical_review.get_event_requirements(event_id)
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify(result), 200
