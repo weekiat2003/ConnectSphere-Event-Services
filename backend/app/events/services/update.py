@@ -236,6 +236,14 @@ def _current_field_value(event: Event, field: str):
         ]
     return getattr(event, field)
 
+def _release_reservations(requirement):
+    """A removed line gives its reserved equipment back."""
+    held = EquipmentReservation.query.filter_by(
+        equipment_requirement_id=requirement.id, status="reserved"
+    ).all()
+    for booking in held:
+        booking.status = "released"
+        db.session.add(booking)
 
 def _update_equipment_requirements(event: Event, requirements: list):
     existing = {item.id: item for item in event.equipment_requirements}
@@ -243,11 +251,7 @@ def _update_equipment_requirements(event: Event, requirements: list):
 
     for item_id, item in list(existing.items()):
         if item_id not in submitted_ids:
-            # Release first: once the row is deleted the reservation's link is set to NULL
-            for reservation in EquipmentReservation.query.filter_by(
-                equipment_requirement_id=item.id, status="reserved"
-            ).all():
-                reservation.status = "released"
+            _release_reservations(item)
             event.equipment_requirements.remove(item)
             db.session.delete(item)
 
