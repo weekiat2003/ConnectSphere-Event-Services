@@ -3,9 +3,14 @@ from datetime import datetime
 
 import pytest
 
+from app.change_requests.services import (
+    apply_re_reviewed_change,
+    submit_change_request,
+    trigger_re_review,
+)
 from app.extensions import db
 from app.models.equipment import EquipmentItem, EquipmentReservation
-from app.models.event import EventEquipmentRequirement
+from app.models.event import Event, EventEquipmentRequirement
 
 START = datetime(2026, 12, 1, 10, 0)
 END = datetime(2026, 12, 1, 11, 0)
@@ -44,11 +49,14 @@ def item(app):
 
 @pytest.fixture
 def new_event(organiser, coord, make_event):
-    def _new(quantities=(), status="planning"):
+    def _new(quantities=(), status="planning", types=None):
         event_id = make_event(organiser, status=status, coordinator_id=coord)
         requirement_ids = []
-        for quantity in quantities:
-            req = EventEquipmentRequirement(event_id=event_id, equipment_type="Projector", quantity=quantity)
+        for index, quantity in enumerate(quantities):
+            equipment_type = types[index] if types else "Projector"
+            req = EventEquipmentRequirement(
+                event_id=event_id, equipment_type=equipment_type, quantity=quantity
+            )
             db.session.add(req)
             db.session.commit()
             requirement_ids.append(req.id)
@@ -219,3 +227,50 @@ def test_released_units_are_free_for_another_event(client, path, tech, item, new
     assert client.post(url, json=body, headers=tech).status_code == 400
     _release(client, path, tech, reservation)
     assert client.post(url, json=body, headers=tech).status_code == 201
+
+
+def _process_equipment_change(event_id, organiser, coord, new_requirements):
+    event = db.session.get(Event, event_id)
+    change = submit_change_request(
+        event, organiser, {"equipment_requirements": new_requirements},
+        "The client changed their equipment needs.",
+    )
+    trigger_re_review(change.id, coord)
+    apply_re_reviewed_change(change.id, coord)
+
+
+def test_processed_change_that_removes_an_equipment_type_releases_its_reservation(
+    item, new_event, organiser, coord
+):
+    event_id, (req,) = new_event([4])
+    reservation = _reserve(event_id, req, item, 4)
+    _process_equipment_change(event_id, organiser, coord, [{"type": "Microphone", "quantity": 3}])
+    assert _status(reservation) == "released"
+    assert EquipmentReservation.query.count() == 1
+
+
+def test_processed_change_keeps_the_reservation_of_a_type_that_stays(
+    item, new_event, organiser, coord
+):
+    event_id, (req,) = new_event([4])
+    reservation = _reserve(event_id, req, item, 4)
+    _process_equipment_change(event_id, organiser, coord, [{"type": "Projector", "quantity": 2}])
+    db.session.expire_all()
+    record = db.session.get(EquipmentReservation, reservation)
+    new_requirement = db.session.get(Event, event_id).equipment_requirements[0]
+    assert record.status == "reserved"
+    assert record.equipment_requirement_id == new_requirement.id
+
+
+def test_processed_change_releases_only_the_removed_types_reservation(
+    item, new_event, organiser, coord
+):
+    event_id, (req_projector, req_speaker) = new_event([3, 2], types=["Projector", "Speaker"])
+    kept = _reserve(event_id, req_projector, item, 3)
+    removed = _reserve(event_id, req_speaker, item, 2)
+    _process_equipment_change(
+        event_id, organiser, coord,
+        [{"type": "Projector", "quantity": 3, "technicalNotes": "front of room"}],
+    )
+    assert _status(kept) == "reserved"
+    assert _status(removed) == "released"
