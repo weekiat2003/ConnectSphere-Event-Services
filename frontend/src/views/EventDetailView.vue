@@ -112,6 +112,7 @@
       </div>
     </div>
 
+  <EquipmentRequirementsPanel v-if="event.equipmentRequirements?.length" :requirements="event.equipmentRequirements" />
     <div v-if="(isAssignedCoordinator || isOwningOrganiser) && event.fieldEditLogs?.length" class="card history">
       <h3 class="section-title">Edit History</h3>
       <ul class="edit-history-list">
@@ -660,6 +661,7 @@ import eventsApi from "../api/events";
 import usersApi from "../api/users";
 import { useConfirm } from "../composables/useConfirm";
 import changeRequestsApi from "../api/changeRequests";
+import EquipmentRequirementsPanel from "../components/EquipmentRequirementsPanel.vue";
 
 const route = useRoute();
 const router = useRouter();
