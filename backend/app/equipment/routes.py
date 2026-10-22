@@ -6,11 +6,10 @@ from flask_jwt_extended import get_jwt_identity
 
 
 from app.auth.decorators import roles_required
-from app.equipment.services import availability, catalogue, preparation, reservation
+from app.equipment.services import availability, catalogue, preparation, reservation, technical_review
 from app.models.equipment import EquipmentReservation
 from app.models.event import Event, EventEquipmentRequirement
 from app.models.user import User
-from app.equipment.services import availability, catalogue, preparation, reservation, technical_review
 
 
 equipment_bp = Blueprint("equipment", __name__)
