@@ -34,7 +34,7 @@
     <div class="card summary">
       <div class="title-row">
         <h2 class="page-title">{{ event.name }}</h2>
-        <span class="badge" :class="event.status">{{ statusLabel(event.status) }}</span>
+        <span class="badge" :class="event.status">{{ event.statusLabel || "Unknown status" }}</span>
         <button v-if="canEditEvent && !showEditForm" class="btn btn-grey btn-small" @click="openEditForm">Edit</button>
         <button
           v-if="isAssignedCoordinator && ['approved', 'planning', 'safety_check', 'confirmed'].includes(event.status) && !showCancelForm"
@@ -758,16 +758,6 @@ const canEditEvent = computed(() =>
 );
 
 const editableFields = ref([]);       // coordinator's selection when requesting clarification
-
-// "under_review" -> "under review"
-const statusLabel = (status) => {
-  const labels = {
-    re_review: "Under re-review",
-  };
-  return labels[status] || String(status || "")
-    .replace(/_/g, " ")
-    .replace(/^./, (c) => c.toUpperCase());
-};
 
 const isAssignedCoordinator = computed(
   () => auth.hasRole("event_coordinator") && event.value?.coordinatorId === auth.user?.id

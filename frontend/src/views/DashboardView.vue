@@ -42,7 +42,7 @@
               <tr v-for="e in events" :key="e.id">
                 <td class="name">{{ e.name || "(untitled)" }}</td>
                 <td>
-                  <span class="badge" :class="e.status">{{ statusLabel(e.status) }}</span>
+                  <span class="badge" :class="e.status">{{ e.statusLabel || "Unknown status" }}</span>                
                 </td>
                 <td class="muted">{{ e.proposedDate || "—" }} {{ e.proposedTime || "" }}</td>
                 <td>{{ venueSummary(e) }}</td>
@@ -84,9 +84,6 @@ function venueSummary(e) {
   if (!v || (!v.capacityNeeded && !v.requiredLayout)) return "—";
   return [v.capacityNeeded ? `${v.capacityNeeded} pax` : null, v.requiredLayout].filter(Boolean).join(", ");
 }
-
-// "under_review" -> "under review"
-const statusLabel = (status) => (status || "").replace(/_/g, " ");
 
 const stats = computed(() => {
   const count = (list) => events.value.filter((e) => list.includes(e.status)).length;
