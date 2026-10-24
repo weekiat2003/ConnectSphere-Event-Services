@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from app.events.services import update as update_service
+from app.models.user import User
 from app.extensions import db
 from app.models.event import Event, EventEquipmentRequirement
 from app.models.venue import Venue, VenueBooking, BOOKING_APPROVED
@@ -40,12 +42,19 @@ class TestVenuePreparationRoute:
         assert res.get_json()["setupStatus"] == "in_progress"
         assert res.get_json()["updatedAt"] is not None
 
+    # Fetch the event again to verify the updated booking is serialized.
         event_response = client.get(
             f"/api/events/{event_id_for_view}",
             headers=auth_header("coordinator@test.com"),
         )
         assert event_response.status_code == 200
-        assert event_response.get_json()["venueBookings"][0]["setupStatus"] == "in_progress"
+
+        bookings = event_response.get_json()["venueBookings"]
+        booking_data = next(
+            b for b in bookings if b["id"] == booking_id
+        )
+
+        assert booking_data["setupStatus"] == "in_progress"
 
     def test_non_managing_staff_returns_403(self, client, app, make_user, make_event, auth_header):
         with app.app_context():
@@ -54,6 +63,8 @@ class TestVenuePreparationRoute:
             event_id = make_event(organiser_id=1, status="planning")
             booking = _make_booking(event_id, owner_id)
             booking_id = booking.id
+            original_setup_status = booking.setup_status
+
         headers = auth_header("other2@test.com")
 
         res = client.put(
@@ -64,11 +75,18 @@ class TestVenuePreparationRoute:
 
         assert res.status_code == 403
 
+        # Database check to confirm the booking's preparation status did not change.
+        with app.app_context():
+            booking = db.session.get(VenueBooking, booking_id)
+            assert booking.setup_status == original_setup_status
+
     def test_non_venue_staff_role_rejected_by_decorator(self, client, app, coordinator, make_event, auth_header):
         with app.app_context():
             event_id = make_event(organiser_id=1, status="planning")
             booking = _make_booking(event_id, coordinator)
             booking_id = booking.id
+            original_setup_status = booking.setup_status
+
         headers = auth_header("coordinator@test.com")
 
         res = client.put(
@@ -78,6 +96,10 @@ class TestVenuePreparationRoute:
         )
 
         assert res.status_code == 403
+        
+        with app.app_context():
+            booking = db.session.get(VenueBooking, booking_id)
+            assert booking.setup_status == original_setup_status
 
     def test_inactive_booking_returns_400(self, client, app, make_user, make_event, auth_header):
         with app.app_context():
@@ -85,6 +107,8 @@ class TestVenuePreparationRoute:
             event_id = make_event(organiser_id=1, status="planning")
             booking = _make_booking(event_id, staff_id, status="pending")
             booking_id = booking.id
+            original_setup_status = booking.setup_status
+
         headers = auth_header("vstaff3@test.com")
 
         res = client.put(
@@ -94,6 +118,12 @@ class TestVenuePreparationRoute:
         )
 
         assert res.status_code == 400
+        
+        with app.app_context():
+            booking = db.session.get(VenueBooking, booking_id)
+            assert booking.status == "pending"
+            assert booking.setup_status == original_setup_status
+
 
     def test_nonexistent_booking_returns_404(self, client, make_user, auth_header):
         make_user("vstaff4@test.com", ["venue_staff"])
@@ -135,8 +165,16 @@ class TestEquipmentPreparationRoute:
             headers=auth_header("tss-prep@test.com"),
         )
         assert event_response.status_code == 200
-        assert event_response.get_json()["status"] == "confirmed"
-        assert event_response.get_json()["equipmentRequirements"][0]["testingStatus"] == "done"
+
+        event_data = event_response.get_json()
+        assert event_data["status"] == "confirmed"
+
+        requirements = event_data["equipmentRequirements"]
+        requirement_data = next(
+            r for r in requirements if r["id"] == requirement_id
+        )
+
+        assert requirement_data["testingStatus"] == "done"
 
     def test_non_technical_staff_cannot_update_equipment_preparation(
         self, client, app, coordinator, make_event, auth_header
@@ -144,11 +182,14 @@ class TestEquipmentPreparationRoute:
         with app.app_context():
             event_id = make_event(organiser_id=1, status="planning")
             requirement = EventEquipmentRequirement(
-                event_id=event_id, equipment_type="Projector", quantity=1
+                event_id=event_id, equipment_type="Projector", 
+                quantity=1
             )
             db.session.add(requirement)
             db.session.commit()
             requirement_id = requirement.id
+            original_testing_status = requirement.testing_status
+
 
         response = client.put(
             f"/api/equipment/requirements/{requirement_id}/preparation",
@@ -157,43 +198,13 @@ class TestEquipmentPreparationRoute:
         )
 
         assert response.status_code == 403
+        
+        with app.app_context():
+            requirement = db.session.get(
+                EventEquipmentRequirement, requirement_id
+            )
+            assert requirement.testing_status == original_testing_status
 
-def test_edit_history_visible_on_event_detail(client, app, coordinator, make_event, auth_header):
-    with app.app_context():
-        event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator)
-
-    client.put(
-        f"/api/events/{event_id}/update",
-        json={"fields": {"purpose": "Updated purpose"}, "offlineReviewConfirmed": False},
-        headers=auth_header("coordinator@test.com"),
-    )
-
-    res = client.get(f"/api/events/{event_id}", headers=auth_header("coordinator@test.com"))
-    logs = res.get_json()["fieldEditLogs"]
-    assert len(logs) == 1
-    assert logs[0]["wasSignificant"] is False
-    assert logs[0]["newValues"]["purpose"] == "Updated purpose"
-
-
-def test_organiser_cannot_call_update_route_directly(client, app, make_user, make_event, auth_header):
-    with app.app_context():
-        organiser_id = make_user("org-direct@test.com", ["event_organiser"])
-        event_id = make_event(organiser_id=organiser_id, status="planning")
-
-    res = client.put(
-        f"/api/events/{event_id}/update",
-        json={"fields": {"purpose": "Hijacked"}, "offlineReviewConfirmed": False},
-        headers=auth_header("org-direct@test.com"),
-    )
-
-    assert res.status_code == 403
-
-
-def _make_requirement(event_id, status="requested"):
-    req = EventEquipmentRequirement(event_id=event_id, equipment_type="Projector", quantity=2, status=status)
-    db.session.add(req)
-    db.session.commit()
-    return req
 
 
 class TestEventUpdateRoute:
@@ -261,6 +272,8 @@ class TestEventUpdateRoute:
         with app.app_context():
             organiser_id = make_user("org-direct@test.com", ["event_organiser"])
             event_id = make_event(organiser_id=organiser_id, status="planning")
+            original_purpose = Event.query.get(event_id).purpose
+
 
         res = client.put(
             f"/api/events/{event_id}/update",
@@ -269,6 +282,11 @@ class TestEventUpdateRoute:
         )
 
         assert res.status_code == 403
+        
+        with app.app_context():
+            event = db.session.get(Event, event_id)
+            assert event.purpose == original_purpose
+
 
     def test_confirmed_event_returns_locked_status(self, client, app, coordinator, make_event, auth_header):
         with app.app_context():
@@ -364,7 +382,7 @@ class TestEventUpdateRoute:
         with app.app_context():
             event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator)
 
-        client.put(
+        update_res=client.put(
             f"/api/events/{event_id}/update",
             json={"fields": {"purpose": "Updated purpose"}, "offlineReviewConfirmed": False},
             headers=auth_header("coordinator@test.com"),
@@ -375,5 +393,22 @@ class TestEventUpdateRoute:
         assert logs is not None, "fieldEditLogs missing from GET /events/<id> — see item 4, implement the serializer first"
         assert len(logs) == 1
         assert logs[0]["wasSignificant"] is False
+        assert logs[0]["newValues"]["purpose"] == "Updated purpose"
+        assert update_res.status_code == 200
 
+
+class TestEventFieldEditLogsVisibility:
+    def test_organiser_sees_field_edit_logs(self, client, app, organiser, coordinator, make_event, auth_header):
+        with app.app_context():
+            event_id = make_event(organiser_id=organiser, status="planning", coordinator_id=coordinator)
+            event = Event.query.get(event_id)
+            update_service.update_event_fields(event, User.query.get(coordinator), {"purpose": "Updated"})
+
+        res = client.get(f"/api/events/{event_id}", headers=auth_header("organiser@test.com"))
+
+        assert res.status_code == 200
+        logs = res.get_json()["fieldEditLogs"]
+        assert len(logs) == 1
+        assert logs[0]["newValues"]["purpose"] == "Updated"
+        assert logs[0]["changedByName"] is not None
 
