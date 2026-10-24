@@ -6,7 +6,12 @@
     <div v-else-if="!events.length" class="card empty"><p>No events to review yet.</p></div>
 
 
-    <div v-for="event in events" :key="event.id" class="card">
+    <div
+      v-for="event in events"
+      :id="`event-${event.id}`"
+      :key="event.id"
+      :class="['card', { highlight: event.id === highlightEventId }]"
+    >
       <div class="card-head">
         <router-link :to="{ name: 'event-detail', params: { id: event.id } }" class="event-name">{{ event.name }}</router-link>
         <span class="muted">{{ event.proposedDate || "—" }}</span>
@@ -43,7 +48,8 @@
 
 
 <script setup>
-import { onMounted, ref } from "vue";
+import { nextTick, onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import eventsApi from "../api/events";
 import equipmentApi from "../api/equipment";
 
@@ -104,11 +110,21 @@ async function load() {
 }
 
 
-onMounted(load);
+// Opened from an equipment notification: /technical-review?event=ID
+const highlightEventId = Number(useRoute().query.event) || null;
+
+onMounted(async () => {
+  await load();
+  if (highlightEventId) {
+    await nextTick();
+    document.getElementById(`event-${highlightEventId}`)?.scrollIntoView({ block: "start" });
+  }
+});
 </script>
 
 
 <style scoped>
+.card.highlight { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-tint); }
 .page-title { margin: 0 0 1rem; font-size: 1.5rem; font-weight: 600; color: var(--text, #2d2a4a); }
 .card { background: var(--surface, #fff); border: 1px solid var(--border, #e4defa); border-radius: 14px;
   box-shadow: 0 4px 16px rgba(109, 91, 208, 0.08); padding: 1rem; margin-bottom: 1rem; }

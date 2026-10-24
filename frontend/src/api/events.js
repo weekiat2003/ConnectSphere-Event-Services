@@ -35,8 +35,12 @@ export default {
   // Added: Previous coordinator retains read-only visibility after reassignment
   coordinatorCalendar: () => apiClient.get("/events/calendar"),
 
-  // Added: retries automatic assignment for an event submitted while no
-  // Coordinator was available. Still rule-based (get_next_coordinator
-  // decides) — this only triggers the retry, it doesn't let the caller pick.
+  // Event Coordinator Lead (Notification System, ISP-103/105).
+  // autoAssign: the Lead lets the system pick the least-busy Coordinator.
   autoAssign: (id) => apiClient.post(`/events/${id}/auto-assign`),
+  listCoordinators: () => apiClient.get("/events/coordinators"),
+  leadAssign: (id, coordinatorId, confirmed = false) =>
+    apiClient.post(`/events/${id}/assign`, { coordinatorId, confirmed }),
+  leadReassign: (id, coordinatorId, confirmed = false) =>
+    apiClient.post(`/events/${id}/lead-reassign`, { coordinatorId, confirmed }),
 };

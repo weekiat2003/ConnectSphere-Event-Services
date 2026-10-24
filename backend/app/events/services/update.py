@@ -16,6 +16,7 @@ from app.extensions import db
 from app.common.text_validation import validate_descriptive_text
 from app.models.equipment import EquipmentReservation
 from app.models.event import Event, EventEquipmentRequirement, EventFieldEditLog
+from app.notifications.services import triggers as notifications
 
 ORDINARY_FIELDS = {"name", "purpose", "description", "category", "registration_required", "intended_capacity"}
 SIGNIFICANT_FIELDS = {
@@ -97,6 +98,7 @@ def update_event_fields(event: Event, user, changes: dict, offline_review_confir
         raise EventValidationError(field_errors)
 
     old_values = {f: _json_value(_current_field_value(event, f)) for f in changes}
+    before = notifications.schedule_snapshot(event)
     for field, value in changes.items():
         if field == "equipment_requirements":
             _update_equipment_requirements(event, value)
@@ -111,6 +113,7 @@ def update_event_fields(event: Event, user, changes: dict, offline_review_confir
         {field: _json_value(value) for field, value in changes.items()},
         was_significant=bool(significant_fields),
     )
+    notifications.notify_event_details_changed(event, before)
     db.session.commit()
     return event
 

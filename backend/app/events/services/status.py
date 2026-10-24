@@ -13,6 +13,7 @@ from app.common.text_validation import validate_descriptive_text
 from app.common.time import utcnow
 from app.extensions import db
 from app.models.equipment import EquipmentReservation
+from app.notifications.services import triggers as notifications
 from app.models.event import Event, EventSafetyReview, EventStatusHistory
 from app.models.venue import (
     BOOKING_APPROVED,
@@ -46,7 +47,10 @@ class InvalidTransitionError(Exception):
     pass
 
 
-def change_status(event: Event, new_status: str, changed_by_id: int, reason: str = None) -> Event:
+def change_status(event: Event, new_status: str, changed_by_id: int, reason: str = None,
+                  notify: bool = True) -> Event:
+    """notify=False lets a caller that sends its own, more detailed notification
+    (e.g. a safety decision) skip the generic one for this transition."""
     allowed = ALLOWED_TRANSITIONS.get(event.status, set())
     if new_status not in allowed:
         raise InvalidTransitionError(f"Cannot transition event from '{event.status}' to '{new_status}'")
@@ -54,7 +58,7 @@ def change_status(event: Event, new_status: str, changed_by_id: int, reason: str
     if new_status == "cancelled":
         release_equipment_reservations(event)
 
-    return _record_status_change(event, new_status, changed_by_id, reason)
+    return _record_status_change(event, new_status, changed_by_id, reason, notify=notify)
 
 
 def confirm_after_safety_approval(event: Event, review: EventSafetyReview) -> Event:
@@ -75,7 +79,8 @@ def confirm_after_safety_approval(event: Event, review: EventSafetyReview) -> Ev
     )
 
 
-def _record_status_change(event: Event, new_status: str, changed_by_id: int, reason: str = None) -> Event:
+def _record_status_change(event: Event, new_status: str, changed_by_id: int, reason: str = None,
+                          notify: bool = True) -> Event:
     old_status = event.status
     event.status = new_status
     db.session.add(
@@ -87,6 +92,11 @@ def _record_status_change(event: Event, new_status: str, changed_by_id: int, rea
             reason=reason,
         )
     )
+    # Notification System: every recorded transition goes through here, so this
+    # one hook covers organiser, Lead, Safety Officer, Tech Support and Attendee
+    # notifications. Saved in the same commit as the status change.
+    if notify:
+        notifications.on_event_status_changed(event, old_status, new_status, changed_by_id, reason)
     db.session.commit()
     return event
 
@@ -235,5 +245,6 @@ def cancel_event(event_id: int, coordinator_id: int, reason, dry_run: bool = Fal
         changed_at=now,
     ))
     _release_arrangements(event, coordinator_id, reason, now)
+    notifications.on_event_status_changed(event, old_status, "cancelled", coordinator_id, reason)
     db.session.commit()
     return event

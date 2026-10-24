@@ -14,6 +14,7 @@ checked booking-against-booking, not event-against-event.
 from app.common.time import utcnow
 from app.extensions import db
 from app.models.event import Event
+from app.notifications.services import triggers as notifications
 from app.models.venue import (
     ACTIVE_BOOKING_STATUSES as ACTIVE_STATUSES,
     BOOKING_APPROVED as APPROVED,
@@ -66,6 +67,8 @@ def submit_booking_request(
     )
 
     db.session.add(booking)
+    db.session.flush()  # booking.id is needed for the notification's link
+    notifications.notify_venue_staff_of_booking_requests([booking])
     db.session.commit()
 
     return booking
@@ -186,6 +189,7 @@ def cancel_booking(
 
         # The booking an availability flag pointed at is gone, so close its flags.
         resolve_flags_for_booking(current.event_id, current.venue_id)
+        notifications.notify_coordinator_of_booking_update(current, "cancelled", reason)
 
         event = db.session.get(Event, current.event_id)
         if event is not None:
@@ -373,6 +377,7 @@ def approve_booking(booking: VenueBooking, decided_by: int) -> VenueBooking:
                 "This booking request has already been decided"
             )
 
+        notifications.notify_coordinator_of_booking_update(current, "approved")
         event = db.session.get(Event, current.event_id)
 
         if event is not None:
@@ -437,6 +442,7 @@ def reject_booking(
                            synchronize_session=False))
         if updated != 1:
             raise ValueError("This booking request has already been decided")
+        notifications.notify_coordinator_of_booking_update(current, "rejected", reason)
         db.session.commit()
         db.session.refresh(current)
         return current
@@ -469,11 +475,15 @@ def manage_hold(booking_id, staff_id, action, expiry=None):
             _refuse_if_venue_unavailable(venue, *compute_booking_window(current, venue))
             current.status = HELD
             current.hold_expires_at = expiry
+            notifications.notify_coordinator_of_booking_update(
+                current, "held" if action == "place" else "hold_extended"
+            )
         elif action == "release":
             if current.status != HELD or not current.hold_expires_at or current.hold_expires_at <= now:
                 raise ValueError("Only an active hold can be released")
             current.status = RELEASED
             current.hold_released_at = now
+            notifications.notify_coordinator_of_booking_update(current, "released")
         else:
             raise ValueError("Invalid hold action")
         db.session.commit()
@@ -489,5 +499,6 @@ def expire_due_holds(now=None):
     due = VenueBooking.query.filter(VenueBooking.status == HELD, VenueBooking.hold_expires_at <= now).all()
     for item in due:
         item.status = EXPIRED
+        notifications.notify_coordinator_of_booking_update(item, "expired")
     db.session.commit()
     return len(due)

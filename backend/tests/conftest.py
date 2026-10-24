@@ -35,6 +35,7 @@ def app():
         for name in (
             "event_organiser",
             "event_coordinator",
+            "event_coordinator_lead",
             "venue_staff",
             "technical_support_staff",
             "safety_officer",

@@ -47,7 +47,7 @@ class TestAC1StatusShownOverHTTP:
         assert rows[0]["statusLabel"] == "Confirmed"
 
     def test_status_reflects_real_submit_and_approve_actions(
-        self, client, auth_header, organiser, coordinator, make_event
+        self, client, auth_header, organiser, coordinator, make_event, make_user
     ):
         # Full lifecycle through the real endpoints: draft -> under_review
         # -> planning (approval now chains straight to planning, per
@@ -63,6 +63,16 @@ class TestAC1StatusShownOverHTTP:
         assert _status(client, org, event_id) == "draft"
 
         res = client.post(f"/api/events/{event_id}/submit", headers=org)
+        assert res.status_code == 200, res.get_json()
+        assert _status(client, org, event_id) == "submitted"  # Unassigned queue
+
+        # A Coordinator Lead assigns it (ISP-103), which starts the review.
+        make_user("lead@test.com", ["event_coordinator_lead"])
+        res = client.post(
+            f"/api/events/{event_id}/assign",
+            headers=auth_header("lead@test.com"),
+            json={"coordinatorId": coordinator, "confirmed": True},
+        )
         assert res.status_code == 200, res.get_json()
         assert _status(client, org, event_id) == "under_review"
         assert _status(client, coord, event_id) == "under_review"

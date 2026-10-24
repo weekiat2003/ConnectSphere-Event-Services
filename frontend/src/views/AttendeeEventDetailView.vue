@@ -46,6 +46,12 @@
         </button>
         <p v-if="!event.canRegister && !event.canJoinWaitlist" class="meta">{{ whyNot }}</p>
       </div>
+
+      <!-- ISP-108: opt in to registration open/close notifications -->
+      <label v-if="!['cancelled', 'completed'].includes(event.status)" class="follow">
+        <input type="checkbox" :checked="event.followingUpdates" :disabled="busy" @change="toggleFollow" />
+        Notify me when registration opens or closes
+      </label>
     </div>
   </section>
 </template>
@@ -102,6 +108,14 @@ async function run(action, okMessage) {
 const register = () => run(() => registrationsApi.register(event.value.id), "You are registered.");
 const joinWaitlist = () => run(() => registrationsApi.joinWaitlist(event.value.id), "You have joined the waiting list.");
 
+async function toggleFollow() {
+  const follow = !event.value.followingUpdates;
+  await run(
+    () => (follow ? registrationsApi.follow(event.value.id) : registrationsApi.unfollow(event.value.id)),
+    follow ? "We'll notify you when registration opens or closes." : "You won't get updates for this event.",
+  );
+}
+
 async function withdraw() {
   const ok = await confirm("Withdraw your registration? Your place will be given to the next person.");
   if (!ok) return;
@@ -116,6 +130,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.follow { display: flex; gap: 0.5rem; align-items: center; margin-top: 1rem; color: var(--text-muted); }
 .back { display: inline-block; margin-bottom: 1rem; color: var(--primary); }
 .page-title { margin: 0 0 0.5rem; font-size: 1.5rem; font-weight: 600; color: var(--text); }
 .card { padding: 1.25rem 1.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 4px 16px rgba(109, 91, 208, 0.08); }

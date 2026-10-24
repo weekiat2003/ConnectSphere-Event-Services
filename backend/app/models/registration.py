@@ -61,3 +61,22 @@ class EventRegistrationSetting(db.Model):
     )
     is_open = db.Column(db.Boolean, nullable=False, default=False)
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class EventUpdateSubscription(db.Model):
+    """An Attendee's opt-in ("Notify me") to updates for one event, e.g.
+    registration opening or closing (Notification System, ISP-108)."""
+
+    __tablename__ = "event_update_subscriptions"
+    __table_args__ = (
+        db.UniqueConstraint("event_id", "attendee_id", name="uq_event_update_subscription"),
+    )
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    event_id = db.Column(
+        db.BigInteger, db.ForeignKey("events.id", ondelete="CASCADE"), nullable=False
+    )
+    attendee_id = db.Column(
+        db.BigInteger, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)

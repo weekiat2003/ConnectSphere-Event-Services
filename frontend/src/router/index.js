@@ -30,6 +30,8 @@ import AttendeeEventsView from "../views/AttendeeEventsView.vue";
 import AttendeeEventDetailView from "../views/AttendeeEventDetailView.vue";
 import MyRegistrationsView from "../views/MyRegistrationsView.vue";
 import RegistrationManageView from "../views/RegistrationManageView.vue";
+import NotificationsView from "../views/NotificationsView.vue";
+import AssignmentQueueView from "../views/AssignmentQueueView.vue";
 
 const routes = [
   {
@@ -223,7 +225,19 @@ const routes = [
     component: RegistrationManageView, 
     meta: { 
       requiresAuth: true, 
-      roles: ["event_organiser", "event_coordinator"] } 
+      roles: ["event_organiser", "event_coordinator"] }
+  },
+  // Notification System (ISP-103): Event Coordinator Leads assign requests.
+  { path: "/assignments",
+    name: "assignments",
+    component: AssignmentQueueView,
+    meta: { requiresAuth: true, roles: ["event_coordinator_lead"] },
+  },
+  // Notification System: every role has an inbox, so no roles restriction.
+  { path: "/notifications",
+    name: "notifications",
+    component: NotificationsView,
+    meta: { requiresAuth: true },
   },
 ];
 
@@ -248,6 +262,11 @@ router.beforeEach((to) => {
     !auth.hasRole("event_coordinator")
   ) {
     return { name: "venue-booking-approval" };
+  }
+
+  // A Lead with no other role has nothing on the Dashboard; start them in the queue.
+  if (to.name === "dashboard" && auth.roles.length === 1 && auth.hasRole("event_coordinator_lead")) {
+    return { name: "assignments" };
   }
 
   if (to.meta.roles && !to.meta.roles.some((role) => auth.hasRole(role))) {

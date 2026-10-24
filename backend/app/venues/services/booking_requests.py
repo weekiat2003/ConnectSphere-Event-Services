@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from app.common.time import utcnow
 from app.extensions import db
 from app.models.event import Event
+from app.notifications.services import triggers as notifications
 from app.models.venue import BOOKING_APPROVED, Venue, VenueBooking
 from app.venues.services.availability import compute_booking_window, pad_window
 from app.venues.services.booking import PENDING
@@ -207,5 +208,7 @@ def submit_booking_requests(event: Event, venue_requests: list, user_id: int, to
     ]
 
     db.session.add_all(bookings)
+    db.session.flush()  # booking ids are needed for the notification links
+    notifications.notify_venue_staff_of_booking_requests(bookings)
     db.session.commit()
     return bookings

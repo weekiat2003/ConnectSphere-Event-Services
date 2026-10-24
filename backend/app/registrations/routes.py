@@ -62,6 +62,21 @@ def join_waitlist(event_id):
     return jsonify(body), 201
 
 
+@registrations_bp.post("/events/<int:event_id>/follow")
+@roles_required("attendee")
+@_handle
+def follow_event(event_id):
+    """Opt in to updates for this event (ISP-108)."""
+    return jsonify(service.set_following(event_id, _user_id(), True)), 200
+
+
+@registrations_bp.delete("/events/<int:event_id>/follow")
+@roles_required("attendee")
+@_handle
+def unfollow_event(event_id):
+    return jsonify(service.set_following(event_id, _user_id(), False)), 200
+
+
 @registrations_bp.get("/mine")
 @roles_required("attendee")
 @_handle
