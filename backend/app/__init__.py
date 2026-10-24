@@ -24,7 +24,7 @@ def create_app(config_name="development"):
 )
 
     # Import models so Flask-Migrate can detect them
-    from app.models import user, event, venue, equipment, change_request, registration # noqa: F401
+    from app.models import user, event, venue, equipment, change_request, registration, notification # noqa: F401
 
     from app.auth.routes import auth_bp
     from app.equipment.routes import equipment_bp
@@ -32,6 +32,7 @@ def create_app(config_name="development"):
     from app.venues.routes import venues_bp
     from app.change_requests.routes import change_requests_bp
     from app.registrations.routes import registrations_bp
+    from app.notifications.routes import notifications_bp
 
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
@@ -40,6 +41,7 @@ def create_app(config_name="development"):
     app.register_blueprint(venues_bp, url_prefix="/api/venues")
     app.register_blueprint(change_requests_bp, url_prefix="/api/change-requests")
     app.register_blueprint(registrations_bp, url_prefix="/api/registrations")
+    app.register_blueprint(notifications_bp, url_prefix="/api/notifications")
 
     from app.common.errors import register_error_handlers
     register_error_handlers(app)

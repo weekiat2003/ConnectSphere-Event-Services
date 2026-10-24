@@ -14,9 +14,9 @@ from app.common.time import utcnow
 from app.common.text_validation import validate_descriptive_text
 
 from app.extensions import db
-from app.events.services.assignment import assign_coordinator
 from app.events.services.status import InvalidTransitionError, change_status
 from app.models.event import Event, EventClarificationResponse, EventReview
+from app.notifications.services import triggers as notifications
 
 from app.events.services.validators import validate_for_submission
 from sqlalchemy.exc import IntegrityError
@@ -41,22 +41,12 @@ def submit_event(event: Event, organiser_id: int) -> Event:
         raise ValueError("Cannot submit: " + "; ".join(errors))
 
     event.submitted_at = utcnow()
+    # Notification System (ISP-103): submissions are no longer auto-assigned.
+    # The request waits in the Unassigned queue as "submitted"; the status
+    # hook notifies the organiser and every Event Coordinator Lead, and a Lead
+    # assigns it (assignment.lead_assign), which moves it to "under_review".
     change_status(event, "submitted", changed_by_id=organiser_id)
-
-    # Coordinator Assignment epic: exactly one Coordinator auto-assigned here,
-    # in the same action that moves the event into review (shared contract 3.4).
-    #
-    # If no active Coordinator is available right now, that is a valid,
-    # non-error outcome rather than a failed submission: the request has
-    # already been recorded as "submitted" above, so we leave it there,
-    # unassigned. It becomes visible to Coordinators as an unassigned event
-    # (see assignment.list_unassigned_events / the Planning view) and can be
-    # picked up automatically later via assignment.try_assign_and_advance,
-    # without ever exposing a manual self-assign step.
-    try:
-        assign_coordinator(event)
-    except ValueError:
-        return event
+    return event
 
     change_status(event, "under_review", changed_by_id=event.coordinator_id)
     return event
@@ -90,6 +80,7 @@ def request_clarification(event: Event, coordinator_id: int, comments: str, edit
     # any number of requests can be open at once, each answered independently
     event.clarification_flag = True
     event.clarification_comments = comments
+    notifications.notify_organiser_of_clarification(event, comments, editable_fields)
     db.session.commit()
     return event
 

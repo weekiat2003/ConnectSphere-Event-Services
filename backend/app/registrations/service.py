@@ -20,8 +20,10 @@ from app.models.registration import (
     REG_WAITLISTED,
     REG_WITHDRAWN,
     EventRegistrationSetting,
+    EventUpdateSubscription,
     Registration,
 )
+from app.notifications.services import triggers as notifications
 from app.models.venue import BOOKING_APPROVED, Venue, VenueBooking
 
 STATUS_CONFIRMED = "confirmed"
@@ -151,6 +153,12 @@ def rebalance(event):
     )
     for registration in waiting:
         registration.status = REG_REGISTERED
+        # ISP-108: only the promoted Attendee(s) hear about it — no one else
+        # on the waiting list is notified at this point.
+        notifications.notify_attendee_status_change(
+            event, registration.attendee_id, REG_WAITLISTED, REG_REGISTERED,
+            note="A place became available and it is now yours.",
+        )
     db.session.flush()
     return waiting
 
@@ -194,6 +202,7 @@ def event_summary(event, attendee_id=None):
         "isFull": remaining == 0,
         "canRegister": open_now and not mine and remaining != 0,
         "canJoinWaitlist": open_now and not mine and remaining == 0,
+        "followingUpdates": bool(attendee_id) and _is_following(event.id, attendee_id),
         "myRegistration": (
             {"id": mine.id, "status": mine.status, "queuePosition": queue_position(mine)}
             if mine
@@ -304,8 +313,13 @@ def withdraw(registration_id, attendee_id):
             code="event_started",
         )
 
+    old_status = registration.status
     registration.status = REG_WITHDRAWN
     db.session.flush()
+    notifications.notify_attendee_status_change(event, attendee_id, old_status, REG_WITHDRAWN)
+    if old_status == REG_WAITLISTED:
+        # Everyone behind a departing waiting-list entry moves up one place.
+        notifications.notify_waitlist_positions_moved(event, registration.id)
     promoted = rebalance(event)
     db.session.commit()
     return registration, promoted
@@ -391,6 +405,7 @@ def _set_open(event_id, organiser_id, want_open):
     setting.is_open = want_open
     if want_open:
         rebalance(event)
+    notifications.notify_followers_of_registration_status(event, want_open)
     db.session.commit()
     return event
 
@@ -481,3 +496,25 @@ def list_attendees(event_id, user_id, page=1, page_size=50):
         "total": total,
         "pages": max(1, -(-total // page_size)),
     }
+
+
+# ------------------------------------------- attendee: "Notify me" (ISP-108)
+def _is_following(event_id, attendee_id):
+    return EventUpdateSubscription.query.filter_by(
+        event_id=event_id, attendee_id=attendee_id
+    ).first() is not None
+
+
+def set_following(event_id, attendee_id, follow):
+    """Opt in to (or out of) updates such as registration opening or closing.
+    Idempotent: following twice or unfollowing when not following is fine."""
+    event = _public_event(event_id)
+    existing = EventUpdateSubscription.query.filter_by(
+        event_id=event.id, attendee_id=attendee_id
+    ).first()
+    if follow and existing is None:
+        db.session.add(EventUpdateSubscription(event_id=event.id, attendee_id=attendee_id))
+    elif not follow and existing is not None:
+        db.session.delete(existing)
+    db.session.commit()
+    return event_summary(event, attendee_id)

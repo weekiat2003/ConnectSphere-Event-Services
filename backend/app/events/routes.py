@@ -39,7 +39,9 @@ def _require_confirmation(event, data, action_label):
         409,
     )
 
-INTERNAL_ROLES = ("event_coordinator", "venue_staff", "technical_support_staff", "safety_officer")
+INTERNAL_ROLES = (
+    "event_coordinator", "event_coordinator_lead", "venue_staff", "technical_support_staff", "safety_officer",
+)
 
 
 
@@ -522,10 +524,11 @@ def review_outcome(event_id):
 # ---------------------------------------------------------------------
 
 @events_bp.get("/unassigned")
-@roles_required("event_coordinator")
+@roles_required("event_coordinator", "event_coordinator_lead")
 def unassigned_events():
-    """Coordinators view events with no assigned Coordinator, for planning
-    visibility only — there is no self-assign step (Q&A #6/#13/#22)."""
+    """The Unassigned queue. Leads assign from it (POST /<id>/assign);
+    Coordinators see it read-only, for planning visibility — there is still
+    no self-assign step (Q&A #6/#13/#22)."""
     events = assignment.list_unassigned_events()
     return jsonify([e.to_dict() for e in events]), 200
 
@@ -541,12 +544,10 @@ def coordinator_calendar_route():
 
 
 @events_bp.post("/<int:event_id>/auto-assign")
-@roles_required("event_coordinator")
+@roles_required("event_coordinator_lead")
 def auto_assign_event(event_id):
-    """Lets any Coordinator trigger a retry of automatic assignment for an
-    event that was submitted while no Coordinator was available (still
-    rule-based via get_next_coordinator — not a manual pick or self-assign;
-    see assignment.try_assign_and_advance)."""
+    """A Lead asks the system to pick the least-busy Coordinator for an
+    Unassigned request (the old automatic rule, now Lead-triggered)."""
     event = Event.query.get(event_id)
     if not event:
         return jsonify({"error": "Event not found"}), 404
@@ -555,6 +556,62 @@ def auto_assign_event(event_id):
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify(event.to_dict()), 200
+
+
+# ---------------------------------------------------------------------
+# Event Coordinator Lead (Notification System, ISP-103 / ISP-105)
+# ---------------------------------------------------------------------
+
+@events_bp.get("/coordinators")
+@roles_required("event_coordinator_lead")
+def list_coordinators():
+    """Active Coordinators with workload, least busy (suggested) first."""
+    return jsonify(assignment.coordinators_with_workload()), 200
+
+
+def _lead_action(event_id, action, confirm_message):
+    event = Event.query.get(event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+    data = request.get_json() or {}
+    coordinator = User.query.get(data.get("coordinatorId")) if data.get("coordinatorId") else None
+    try:
+        action(event, coordinator, dry_run=True)  # refuse before asking to confirm
+        if data.get("confirmed") is not True:
+            return jsonify({
+                "requiresConfirmation": True,
+                "message": confirm_message(event, coordinator),
+            }), 409
+        event = action(event, coordinator)
+    except assignment.AlreadyAssignedError as e:
+        return jsonify({"error": str(e), "assignedTo": e.coordinator_name}), 409
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(event.to_dict()), 200
+
+
+@events_bp.post("/<int:event_id>/assign")
+@roles_required("event_coordinator_lead")
+def lead_assign_event(event_id):
+    """Body: {coordinatorId, confirmed}. 409 + requiresConfirmation until confirmed;
+    409 + assignedTo if another Lead assigned it first."""
+    return _lead_action(
+        event_id, assignment.lead_assign,
+        lambda e, c: f'Assign request #{e.id} "{e.name}" to {c.name}? They will be notified.',
+    )
+
+
+@events_bp.post("/<int:event_id>/lead-reassign")
+@roles_required("event_coordinator_lead")
+def lead_reassign_event(event_id):
+    """Body: {coordinatorId, confirmed}. Both Coordinators are notified."""
+    return _lead_action(
+        event_id, assignment.lead_reassign,
+        lambda e, c: (
+            f'Reassign request #{e.id} "{e.name}" from {e.coordinator.name if e.coordinator else "its Coordinator"} '
+            f"to {c.name}? Both will be notified."
+        ),
+    )
 
 
 @events_bp.post("/<int:event_id>/reassign")

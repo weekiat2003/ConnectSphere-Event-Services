@@ -7,6 +7,7 @@ from app.extensions import db
 from app.models.event import Event, EventSafetyAssessment, EventSafetyReview
 from app.models.user import User
 from app.models.venue import BOOKING_APPROVED
+from app.notifications.services import triggers as notifications
 
 SAFETY_DECISIONS = {"approved", "rejected", "changes_requested"}
 
@@ -273,7 +274,10 @@ def review_safety_check(
     else:
         reason = f"Safety check {decision.replace('_', ' ')}"
         reason = f"{reason}: {comments}"
-        change_status(event, "planning", changed_by_id=safety_officer.id, reason=reason)
+        # The organiser gets the detailed decision (reason + affected
+        # arrangements) instead of the generic "returned to planning" notice.
+        notifications.notify_organiser_of_safety_decision(event, review)
+        change_status(event, "planning", changed_by_id=safety_officer.id, reason=reason, notify=False)
     return event
 
 
