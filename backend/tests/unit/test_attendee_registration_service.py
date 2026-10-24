@@ -68,7 +68,7 @@ class TestAttendeeViewsEvent:
     PUBLIC_KEYS = {
         "id", "name", "description", "date", "time", "venues", "status", "statusLabel",
         "registrationOpen", "capacity", "placesRemaining", "isFull", "canRegister",
-        "canJoinWaitlist", "myRegistration",
+        "canJoinWaitlist", "myRegistration", "followingUpdates",
     }
 
     def test_only_public_details_are_shown(self, app, people):

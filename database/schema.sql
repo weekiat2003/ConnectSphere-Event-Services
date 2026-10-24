@@ -484,22 +484,8 @@ CREATE TABLE arrangement_flags (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------------------------------------------------------------
--- Notification System
+-- Notification System: see the block at the end of this file.
 -- ---------------------------------------------------------------------
-
-CREATE TABLE notifications (
-    id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id         BIGINT UNSIGNED NOT NULL,
-    event_id        BIGINT UNSIGNED NULL,
-    type            VARCHAR(100) NOT NULL,           -- e.g. 'coordinator_assigned', 'booking_approved'
-    message         VARCHAR(500) NOT NULL,
-    is_read         TINYINT(1) NOT NULL DEFAULT 0,
-    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_notif_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    CONSTRAINT fk_notif_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE SET NULL,
-    INDEX idx_notif_user_read (user_id, is_read),
-    INDEX idx_notif_event (event_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------------------------------------------------------------
 -- Auditability (NFR f) — generic log for important actions across epics
@@ -595,3 +581,50 @@ CREATE TABLE event_registration_settings (
     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_regset_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------
+-- Notification System (ISP-102, 103, 104, 105, 106, 108, 130)
+-- Safe on a fresh load, and also the upgrade for an existing database:
+-- run just this block. It replaces the old, never-used `notifications`
+-- table (user_id/message columns) that earlier versions of this file created.
+-- ---------------------------------------------------------------------
+
+DROP TABLE IF EXISTS notifications;
+
+-- One row per recipient, so each user has their own read/unread state.
+-- type values are listed in backend/app/models/notification.py.
+CREATE TABLE notifications (
+    id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    recipient_id  BIGINT UNSIGNED NOT NULL,
+    type          VARCHAR(50)  NOT NULL,
+    title         VARCHAR(255) NOT NULL,
+    message       TEXT         NOT NULL,
+    event_id      BIGINT UNSIGNED NULL,
+    link          VARCHAR(255) NULL,
+    data          JSON         NULL,      -- structured details for the UI
+    is_read       TINYINT(1)   NOT NULL DEFAULT 0,
+    read_at       DATETIME     NULL,
+    cleared_at    DATETIME     NULL,      -- no longer needs action (e.g. another Lead assigned it)
+    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_notif_recipient FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_notif_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+    INDEX idx_notif_recipient_read (recipient_id, is_read),
+    INDEX idx_notif_type_event (type, event_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ISP-108: an Attendee's "Notify me" opt-in for one event.
+CREATE TABLE IF NOT EXISTS event_update_subscriptions (
+    id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    event_id     BIGINT UNSIGNED NOT NULL,
+    attendee_id  BIGINT UNSIGNED NOT NULL,
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_event_update_subscription UNIQUE (event_id, attendee_id),
+    CONSTRAINT fk_eus_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+    CONSTRAINT fk_eus_attendee FOREIGN KEY (attendee_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ISP-103: Event Coordinator Leads assign every submitted request.
+INSERT IGNORE INTO roles (name) VALUES ('event_coordinator_lead');
+
+ALTER TABLE event_coordinator_history
+    MODIFY assignment_type ENUM('auto','reassignment','lead') NOT NULL DEFAULT 'auto';

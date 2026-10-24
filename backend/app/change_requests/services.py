@@ -9,6 +9,7 @@ from app.models.event import Event, EventEquipmentRequirement, EventStatusHistor
 from app.models.venue import BOOKING_APPROVED, ACTIVE_BOOKING_STATUSES, Venue, VenueBooking
 from app.models.user import User
 from app.models.equipment import EquipmentReservation
+from app.notifications.services import triggers as notifications
 
 REVIEWABLE_STATUSES = ("pending", "re_review")
 RECONSIDERATION_REASON = "Needs reconsideration"
@@ -470,6 +471,7 @@ def process_routine_change(request_id: int, coordinator_id: int, dry_run: bool =
     if dry_run:
         return change_request
 
+    before = notifications.schedule_snapshot(event)
     for field, proposed in cleaned.items():
         current = _current_value(event, field)  # the live value being replaced
         if _same(field, current, proposed):
@@ -489,6 +491,8 @@ def process_routine_change(request_id: int, coordinator_id: int, dry_run: bool =
     change_request.status = "processed"
     change_request.coordinator_id = coordinator_id
     change_request.decided_at = utcnow()
+    notifications.notify_organiser_of_change_request(event, change_request, "processed")
+    notifications.notify_event_details_changed(event, before)
     db.session.commit()
     return change_request
 
@@ -516,6 +520,8 @@ def reject_change_request(
     change_request.coordinator_id = coordinator_id
     change_request.decision_reason = reason.strip()
     change_request.decided_at = utcnow()
+    event = db.session.get(Event, change_request.event_id)
+    notifications.notify_organiser_of_change_request(event, change_request, "rejected")
     db.session.commit()
     return change_request
 
@@ -643,6 +649,7 @@ def trigger_re_review(
 
     _create_reconsideration_flags(change_request, event)
 
+    notifications.notify_organiser_of_change_request(event, change_request, "re_review")
     if event.status == "confirmed":
         old_status = event.status
         event.status = "planning"
@@ -819,6 +826,7 @@ def apply_re_reviewed_change(
     if dry_run:
         return change_request
 
+    before = notifications.schedule_snapshot(event)
     for field, current, proposed in planned:
         db.session.add(
             EventChangeHistory(
@@ -857,5 +865,7 @@ def apply_re_reviewed_change(
     change_request.coordinator_id = coordinator_id
     change_request.decided_at = now
 
+    notifications.notify_organiser_of_change_request(event, change_request, "applied")
+    notifications.notify_event_details_changed(event, before)
     db.session.commit()
     return change_request

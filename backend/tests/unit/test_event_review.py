@@ -17,7 +17,12 @@ from app.events.services.review import (
     get_prior_rejection_decisions,
 )
 from app.events.services.status import change_status
-from app.events.services.assignment import assign_coordinator, reassign_coordinator
+from app.events.services.assignment import (
+    assign_coordinator,
+    get_next_coordinator,
+    lead_assign,
+    reassign_coordinator,
+)
 from app.extensions import db
 from app.common.text_validation import validate_descriptive_text
 
@@ -121,13 +126,20 @@ def _persist_rejected_event(coordinator_id, reason="Insufficient lead time.", **
     return event
 
 
+def _resubmit_and_assign(original, data=None):
+    """Resubmissions now wait in the Unassigned queue until a Coordinator Lead
+    assigns them (Notification System, ISP-103); do that here."""
+    resubmission = resubmit_rejected_event(original, original.organiser_id, data or {})
+    return lead_assign(resubmission, get_next_coordinator())
+
+
 def _build_three_generation_chain(coordinator_id):
     """first (rejected) -> second (clarification, then rejected) -> third (under review)"""
     first = _persist_rejected_event(coordinator_id, reason="First rejection reason.")
-    second = resubmit_rejected_event(first, first.organiser_id, {})
+    second = _resubmit_and_assign(first)
     request_clarification(second, second.coordinator_id, "Please clarify the catering plan.")
     reject_event(second, second.coordinator_id, "Second rejection reason.")
-    third = resubmit_rejected_event(second, second.organiser_id, {})
+    third = _resubmit_and_assign(second)
     return first, second, third
 
 def test_request_clarification(app, event, coordinator):
@@ -846,13 +858,13 @@ def test_each_generation_in_a_resubmission_chain_gets_exactly_one_resubmission(a
         first = _persist_rejected_event(coordinator_a_id, reason="First rejection reason.")
         assert can_be_resubmitted(first) is True
 
-        second = resubmit_rejected_event(first, first.organiser_id, {})
+        second = _resubmit_and_assign(first)
         reject_event(second, second.coordinator_id, "Second rejection reason.")
         # the rejected resubmission is a new rejected request with its own single resubmission
         assert can_be_resubmitted(second) is True
         assert can_be_resubmitted(first) is False
 
-        third = resubmit_rejected_event(second, second.organiser_id, {})
+        third = _resubmit_and_assign(second)
         assert can_be_resubmitted(second) is False
         assert can_be_resubmitted(first) is False
         assert third.resubmitted_from_event_id == second.id
@@ -867,8 +879,13 @@ def test_resubmission_creates_a_new_linked_event_under_review(app, two_real_coor
 
         assert new_event.id != original.id
         assert new_event.resubmitted_from_event_id == original.id
-        assert new_event.status == "under_review"
+        # Waits in the Unassigned queue until a Coordinator Lead assigns it.
+        assert new_event.status == "submitted"
         assert new_event.submitted_at is not None
+        assert new_event.coordinator_id is None
+
+        lead_assign(new_event, get_next_coordinator())
+        assert new_event.status == "under_review"
         assert new_event.coordinator_id in (coordinator_a_id, coordinator_b_id)
 
         # the original stays as the permanent rejected record
@@ -934,7 +951,7 @@ def test_each_resubmission_shows_its_own_latest_decision(app, two_real_coordinat
     with app.app_context():
         coordinator_a_id, _ = two_real_coordinators
         first = _persist_rejected_event(coordinator_a_id, reason="First rejection reason.")
-        second = resubmit_rejected_event(first, first.organiser_id, {})
+        second = _resubmit_and_assign(first)
         reject_event(second, second.coordinator_id, "Still missing the catering plan.")
 
         assert second.status == "rejected"

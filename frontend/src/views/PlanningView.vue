@@ -2,8 +2,8 @@
   <div class="planning-view">
     <h2>Planning View</h2>
     <p class="hint">
-      All events, for planning visibility. Assignment is automatic —
-      there's no claim or self-assign action here.
+      All events, for planning visibility. Event Coordinator Leads assign
+      Unassigned requests — there's no claim or self-assign action here.
     </p>
 
     <div class="controls">
