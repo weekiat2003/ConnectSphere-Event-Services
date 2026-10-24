@@ -36,12 +36,14 @@ def test_create_draft_saves_core_details(app, organiser):
         assert event.status == "draft"
 
 
-def test_full_submission_assigns_coordinator_and_updates_status(app, organiser, coordinator):
+def test_full_submission_enters_unassigned_queue(app, organiser, coordinator):
+    """Submissions wait as 'submitted' (Unassigned) until a Coordinator Lead
+    assigns them (Notification System, ISP-103)."""
     with app.app_context():
         event = drafts.create_draft(organiser, dict(VALID_PAYLOAD))
         event = review.submit_event(event, organiser)
-        assert event.status == "under_review"
-        assert event.coordinator_id == coordinator
+        assert event.status == "submitted"
+        assert event.coordinator_id is None
         assert event.submitted_at is not None
 
 
@@ -204,7 +206,7 @@ def test_submission_succeeds_without_category(app, organiser, coordinator):
         payload.pop("category", None)
         event = drafts.create_draft(organiser, payload)
         event = review.submit_event(event, organiser)
-        assert event.status == "under_review"
+        assert event.status == "submitted"
 
 
 def test_submission_succeeds_with_empty_equipment_list(app, organiser, coordinator):
@@ -213,7 +215,7 @@ def test_submission_succeeds_with_empty_equipment_list(app, organiser, coordinat
         payload["equipment_requirements"] = []
         event = drafts.create_draft(organiser, payload)
         event = review.submit_event(event, organiser)
-        assert event.status == "under_review"
+        assert event.status == "submitted"
         assert event.equipment_requirements == []
 
 
@@ -245,7 +247,7 @@ def test_draft_completed_incrementally_then_submitted(app, organiser, coordinato
         })
 
         event = review.submit_event(event, organiser)
-        assert event.status == "under_review"
+        assert event.status == "submitted"
 
 
 def test_cannot_submit_already_submitted_event(app, organiser, coordinator):
