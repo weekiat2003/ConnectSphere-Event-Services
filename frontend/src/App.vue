@@ -5,6 +5,7 @@
         <router-link to="/">Dashboard</router-link>
         <router-link v-if="auth.hasRole('event_organiser')" to="/events/new">New Request</router-link>
         <router-link v-if="auth.hasRole('event_organiser')" to="/drafts">My Drafts</router-link>
+        <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/assignments">Assignment Queue</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/review">Review Queue</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/change-requests">Change Requests</router-link>
         <router-link v-if="auth.hasRole('safety_officer')" to="/safety-reviews">Safety Reviews</router-link>
@@ -21,6 +22,7 @@
         <router-link v-if="auth.hasRole('attendee')" to="/my-registrations">My Registrations</router-link>
         <router-link v-if="auth.hasRole('event_organiser') || auth.hasRole('event_coordinator')" to="/registrations/manage">Registrations</router-link>
         <span class="spacer" />
+        <NotificationBell />
         <span class="user-name">{{ auth.user?.name }}</span>
         <button class="logout" @click="handleLogout">Logout</button>
       </div>
@@ -37,6 +39,7 @@
 import { useRouter } from "vue-router";
 import { useAuthStore } from "./stores/auth";
 import ConfirmDialog from './components/ConfirmDialog.vue';
+import NotificationBell from './components/NotificationBell.vue';
 
 const auth = useAuthStore();
 const router = useRouter();
