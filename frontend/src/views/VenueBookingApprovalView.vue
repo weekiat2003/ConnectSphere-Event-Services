@@ -54,8 +54,9 @@
       <div class="grid" aria-live="polite">
         <article
           v-for="booking in displayedBookings"
+          :id="`booking-${booking.id}`"
           :key="booking.id"
-          class="card booking"
+          :class="['card', 'booking', { highlight: booking.id === highlightBookingId }]"
         >
           <header>
             <h3>
@@ -314,7 +315,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import venuesApi from "../api/venues";
 import apiClient from "../api/client";
 
@@ -633,10 +635,24 @@ async function confirmRejection() {
   }
 }
 
-onMounted(loadPendingBookings);
+// Opened from a "New venue booking request" notification: /venues/approval?booking=ID
+const highlightBookingId = Number(useRoute().query.booking) || null;
+
+onMounted(async () => {
+  await loadPendingBookings();
+  if (highlightBookingId) {
+    await nextTick();
+    document.getElementById(`booking-${highlightBookingId}`)?.scrollIntoView({ block: "center" });
+  }
+});
 </script>
 
 <style scoped>
+.card.booking.highlight {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-tint);
+}
+
 .hold-info { color: #7b5c13; font-weight: 600; margin: .75rem 0; }
 
 .booking-tabs { display: flex; gap: .5rem; margin-bottom: 1.25rem; border-bottom: 1px solid var(--border, #e4defa); }

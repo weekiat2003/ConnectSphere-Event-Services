@@ -209,17 +209,19 @@
       </ul>
     </div>
 
-    <!-- Coordinator Assignment: visible to any Coordinator when the event has
-         no assigned Coordinator yet. Still fully rule-based — the caller
-         doesn't pick who it goes to, they just trigger the automatic retry
-         (see try_assign_and_advance). Not gated by isAssignedCoordinator
-         since, by definition, nobody is assigned yet. -->
-    <section v-if="auth.hasRole('event_coordinator') && !event.coordinatorId && event.status === 'submitted'">
+    <!-- Coordinator Assignment (Notification System, ISP-103): every submitted
+         request waits Unassigned until an Event Coordinator Lead assigns it. -->
+    <section v-if="!event.coordinatorId && event.status === 'submitted' && (auth.hasRole('event_coordinator') || auth.hasRole('event_coordinator_lead'))">
       <div class="action-block">
-        <p>No Coordinator was available when this was submitted.</p>
-        <button @click="autoAssign">Assign a Coordinator now</button>
+        <p>This request is waiting for an Event Coordinator Lead to assign it.</p>
+        <router-link v-if="auth.hasRole('event_coordinator_lead')" :to="{ name: 'assignments', query: { event: event.id } }">
+          Assign it from the Assignment Queue
+        </router-link>
       </div>
     </section>
+    <p v-else-if="auth.hasRole('event_coordinator_lead') && event.coordinatorName" class="assigned-note">
+      Assigned to {{ event.coordinatorName }}
+    </p>
 
     <!-- Coordinator Actions: Event Review and Approval + Coordinator Assignment + Event Status Management -->
     <section v-if="isAssignedCoordinator">
@@ -1298,11 +1300,6 @@ async function resubmit() {
   }
 }
 
-async function autoAssign() {
-  await eventsApi.autoAssign(event.value.id);
-  await load();
-}
-
 const showCancelForm = ref(false);
 const cancelReason = ref("");
 const cancelError = ref("");
@@ -1815,6 +1812,11 @@ onMounted(async () => {
 }
 
 /* Action blocks */
+.assigned-note {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
 .action-block {
   display: flex;
   flex-direction: column;

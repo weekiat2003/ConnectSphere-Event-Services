@@ -8,6 +8,9 @@ export default {
   joinWaitlist: (id) => apiClient.post(`/registrations/events/${id}/waitlist`),
   withdraw: (registrationId) => apiClient.post(`/registrations/${registrationId}/withdraw`),
   mine: () => apiClient.get("/registrations/mine"),
+  // "Notify me" opt-in for registration open/close updates (ISP-108)
+  follow: (id) => apiClient.post(`/registrations/events/${id}/follow`),
+  unfollow: (id) => apiClient.delete(`/registrations/events/${id}/follow`),
 
   // Organisers and coordinators
   managedEvents: () => apiClient.get("/registrations/manage/events"),
