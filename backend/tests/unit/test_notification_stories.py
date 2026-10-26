@@ -11,7 +11,6 @@ from app.common.time import utcnow
 from app.events.services import assignment, review, safety, status
 from app.events.services import update as update_service
 from app.extensions import db
-from app.models.event import Event, EventEquipmentRequirement
 from app.models.notification import (
     TYPE_COORDINATOR_ASSIGNMENT,
     TYPE_NEW_EQUIPMENT_REQUEST,
@@ -25,6 +24,7 @@ from app.models.notification import (
 )
 from app.models.user import User
 from app.models.venue import Venue, VenueBooking
+from app.models.event import Event, EventEquipmentRequirement, EventSafetyReview
 from app.registrations import service as registrations
 from app.venues.services import booking as booking_service
 from app.venues.services.booking_requests import submit_booking_requests
@@ -116,10 +116,21 @@ class TestISP102Organiser:
             affected_arrangements=["venue"],
         )
         assert event.status == "planning"
+        
         status.change_status(event, "safety_check", coordinator)
         safety.review_safety_check(event, officer, "approved", assessed_factors=list(safety.SAFETY_FACTOR_ORDER))
 
+        # Approval alone no longer confirms the event — the assigned Coordinator
+        # must explicitly confirm it (Clarification Session 3).
+        latest_review = (
+            EventSafetyReview.query.filter_by(event_id=event.id)
+            .order_by(EventSafetyReview.id.desc())
+            .first()
+        )
+        status.confirm_after_safety_approval(event, latest_review, coordinator)
+
         assert kinds(organiser) == ["safety_check", "safety_changes_requested", "safety_check", "confirmed"]
+        
         decision = [n for n in inbox(organiser) if n.data.get("kind") == "safety_changes_requested"][0]
         assert "The fire exit is blocked by staging." in decision.message
         assert decision.data["affectedArrangements"] == ["venue"]

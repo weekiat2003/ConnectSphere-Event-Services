@@ -425,7 +425,7 @@ class TestAC4RemainsUsableWithManyRequests:
 # =====================================================================
 
 class TestStory3SafetyReviewOverHTTP:
-    def test_safety_review_api_confirms_only_after_safety_officer_approval(
+    def test_safety_review_api_leaves_event_pending_coordinator_confirmation(
         self, client, auth_header, organiser, make_user, make_event
     ):
         # AC3: a Safety Officer hitting the real endpoint with "approved"
@@ -446,7 +446,7 @@ class TestStory3SafetyReviewOverHTTP:
         )
 
         assert response.status_code == 200
-        assert response.get_json()["status"] == "confirmed"
+        assert response.get_json()["status"] == "safety_check"  # still pending Coordinator confirmation
 
     def test_coordinator_cannot_bypass_safety_review_with_generic_status_endpoint(
         self, client, auth_header, organiser, coordinator, make_event

@@ -25,7 +25,7 @@ def test_approval_records_officer_time_and_complete_assessment(
         )
 
         review = EventSafetyReview.query.filter_by(event_id=event_id).one()
-        assert event.status == "confirmed"
+        assert event.status == "safety_check"  # still pending Coordinator confirmation
         assert review.decision == "approved"
         assert review.assessed_factors == sorted(safety.SAFETY_FACTORS)
         assert review.safety_officer.name == "Safety Officer"
