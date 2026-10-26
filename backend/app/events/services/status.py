@@ -60,23 +60,15 @@ def change_status(event: Event, new_status: str, changed_by_id: int, reason: str
 
     return _record_status_change(event, new_status, changed_by_id, reason, notify=notify)
 
-
-def confirm_after_safety_approval(event: Event, review: EventSafetyReview) -> Event:
+# Coordinator confirms an event after a safety officer has approved it.
+def confirm_after_safety_approval(event: Event, review: EventSafetyReview, changed_by_id: int) -> Event:
     if event.status != "safety_check":
-        raise InvalidTransitionError("Only an event awaiting a safety check can be confirmed")
-    if (
-        review.event_id != event.id
-        or review.decision != "approved"
-        or not review.safety_officer.has_role("safety_officer")
-    ):
-        raise InvalidTransitionError("A Safety Officer approval is required before confirmation")
-
-    return _record_status_change(
-        event,
-        "confirmed",
-        review.safety_officer.id,
-        reason="Safety check approved",
-    )
+        raise InvalidTransitionError("Only an event awaiting safety check can be confirmed")
+    if review.decision != "approved":
+        raise InvalidTransitionError("Safety check must be approved before the event can be confirmed")
+    if not review.safety_officer.has_role("safety_officer"):
+        raise InvalidTransitionError("Safety review must be performed by a Safety Officer")
+    return _record_status_change(event, "confirmed", changed_by_id, reason="Confirmed by Coordinator after safety approval")
 
 
 def _record_status_change(event: Event, new_status: str, changed_by_id: int, reason: str = None,

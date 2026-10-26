@@ -8,7 +8,7 @@ from app.events.services import assignment, drafts, review, safety
 from app.events.services import status as status_service
 from app.events.services import update as update_service
 
-from app.models.event import Event
+from app.models.event import Event, EventSafetyReview
 from app.models.user import User
 
 
@@ -490,6 +490,34 @@ def resubmit_event_route(event_id):
     except (ValueError, PermissionError) as e:
         return jsonify({"error": str(e)}), 400
     return jsonify(new_event.to_dict()), 201
+
+# Coordinator-only confirm endpoint, after safety officer approval (Clarification Session 3: "The co-ordinator need to mark the event as confirmed once he sees all approvals are done").
+@events_bp.post("/<int:event_id>/confirm")
+@roles_required("event_coordinator")
+def confirm_event_route(event_id):
+    """The assigned Coordinator's explicit confirmation after seeing the
+    Safety Officer's approval (Clarification Session 3)."""
+    user = _current_user()
+    event = Event.query.get(event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+    if event.coordinator_id != user.id:
+        return jsonify({"error": "Only the assigned Coordinator can confirm this event"}), 403
+
+    from app.models.event import EventSafetyReview
+    latest_review = (
+        EventSafetyReview.query.filter_by(event_id=event.id)
+        .order_by(EventSafetyReview.id.desc())
+        .first()
+    )
+    if latest_review is None or latest_review.decision != "approved":
+        return jsonify({"error": "This event does not have an approved safety review to confirm"}), 400
+
+    try:
+        event = status_service.confirm_after_safety_approval(event, latest_review, user.id)
+    except status_service.InvalidTransitionError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(event.to_dict()), 200
 
 
 @events_bp.get("/<int:event_id>/outcome")
