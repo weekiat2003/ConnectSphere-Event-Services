@@ -283,7 +283,8 @@ def review_safety_check(
     if decision != "approved":
         reason = f"Safety check {decision.replace('_', ' ')}"
         reason = f"{reason}: {comments}"
-        change_status(event, "planning", changed_by_id=safety_officer.id, reason=reason)
+        change_status(event, "planning", changed_by_id=safety_officer.id, reason=reason, notify=False)
+        notifications.notify_organiser_of_safety_decision(event, review)
     # On approval, the event stays in "safety_check" — the assigned Coordinator must explicitly mark it Confirmed (Clarification Session 3: "The co-ordinator need to mark the event as confirmed once he sees all approvals are done").
     # Add an explicit commit at the end of review_safety_check, so both approved and non-approved branches persist consistently instead of relying on change_status to do it only for one of them:
     db.session.commit()
