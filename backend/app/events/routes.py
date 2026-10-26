@@ -504,7 +504,6 @@ def confirm_event_route(event_id):
     if event.coordinator_id != user.id:
         return jsonify({"error": "Only the assigned Coordinator can confirm this event"}), 403
 
-    from app.models.event import EventSafetyReview
     latest_review = (
         EventSafetyReview.query.filter_by(event_id=event.id)
         .order_by(EventSafetyReview.id.desc())

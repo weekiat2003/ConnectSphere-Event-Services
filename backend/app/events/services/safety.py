@@ -1,7 +1,6 @@
 """Operational safety check: the Safety Officer's review list, the facts they
 assess, their per-factor assessment, and their final decision."""
 from app.common.text_validation import validate_descriptive_text
-from app.events.services import status as status_service
 from app.events.services.status import change_status
 from app.extensions import db
 from app.models.event import Event, EventSafetyAssessment, EventSafetyReview

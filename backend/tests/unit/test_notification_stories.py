@@ -11,7 +11,6 @@ from app.common.time import utcnow
 from app.events.services import assignment, review, safety, status
 from app.events.services import update as update_service
 from app.extensions import db
-from app.models.event import Event, EventEquipmentRequirement
 from app.models.notification import (
     TYPE_COORDINATOR_ASSIGNMENT,
     TYPE_NEW_EQUIPMENT_REQUEST,
