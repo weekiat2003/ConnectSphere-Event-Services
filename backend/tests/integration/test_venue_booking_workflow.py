@@ -5,7 +5,6 @@ from app.common.time import utcnow
 from app.extensions import db
 from app.models.notification import TYPE_NEW_VENUE_BOOKING_REQUEST
 from app.models.venue import Venue, VenueBooking
-from app.venues.services.booking import expire_due_holds
 
 
 def test_multi_venue_submission_routes_requests_and_notifications(
