@@ -44,4 +44,6 @@ export default {
     apiClient.post(`/events/${id}/assign`, { coordinatorId, confirmed }),
   leadReassign: (id, coordinatorId, confirmed = false) =>
     apiClient.post(`/events/${id}/lead-reassign`, { coordinatorId, confirmed }),
+  supervision: () => apiClient.get("/events/supervision"),
+  assignmentHistory: (id) => apiClient.get(`/events/${id}/assignment-history`),
 };

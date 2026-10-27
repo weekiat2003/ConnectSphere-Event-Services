@@ -322,6 +322,20 @@ def notify_coordinator_assignment(event, coordinator, previous_coordinator_id: i
             event_id=event.id, link=_event_link(event),
             data={**data, "kind": "removed", "newCoordinatorName": coordinator.name},
         ))
+    # The organiser learns who is now handling their request.
+    if previous_coordinator_id and previous_coordinator_id != coordinator.id:
+        created += _organiser(
+            event, "coordinator_reassigned", "New Coordinator for your request",
+            f'"{_name(event)}" has been reassigned. {coordinator.name} is now your Event Coordinator.',
+            {"coordinatorName": coordinator.name,
+             "previousCoordinatorName": _user_name(previous_coordinator_id)},
+        )
+    else:
+        created += _organiser(
+            event, "coordinator_assigned", "Coordinator assigned",
+            f'{coordinator.name} has been assigned as the Event Coordinator for "{_name(event)}".',
+            {"coordinatorName": coordinator.name},
+        )
     # Other Leads' "awaiting assignment" notices no longer need action (ISP-103 AC5).
     clear_notifications(TYPE_NEW_EVENT_SUBMISSION, event.id,
                         {"assignedTo": coordinator.name, "assignedToId": coordinator.id})
@@ -350,7 +364,8 @@ def notify_coordinator_of_booking_update(booking, change: str, reason: str = Non
     )
     if reason:
         message += f" Reason: {_sentence(reason)}"
-    recipients = [booking.requested_by, event.coordinator_id if event else None]
+    current = event.coordinator_id if event else None
+    recipients = [current] if current else [booking.requested_by]
     return notify_users(recipients, TYPE_VENUE_BOOKING_UPDATE, BOOKING_UPDATE_TITLES[change], message,
                         event_id=booking.event_id, link=_event_link(event) if event else None,
                         data={"bookingId": booking.id, "change": change, "venueName": venue_name})
