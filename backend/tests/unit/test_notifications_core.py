@@ -6,6 +6,7 @@ import pytest
 
 from app.extensions import db
 from app.models.notification import TYPE_ORGANISER_UPDATE, Notification
+from app.models.user import User
 from app.notifications.services import core
 
 
@@ -66,3 +67,11 @@ def test_inbox_routes(client, app, organiser, coordinator, auth_header):
 
 def test_inbox_requires_login(client):
     assert client.get("/api/notifications").status_code == 401
+
+def test_notify_role_skips_inactive_users(app, make_user):
+    active = make_user("v1@test.com", ["venue_staff"])
+    inactive = make_user("v2@test.com", ["venue_staff"])
+    db.session.get(User, inactive).is_active = False
+    db.session.commit()
+    created = core.notify_role("venue_staff", TYPE_ORGANISER_UPDATE, "T", "M")
+    assert [n.recipient_id for n in created] == [active]

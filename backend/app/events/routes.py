@@ -8,7 +8,7 @@ from app.events.services import assignment, drafts, review, safety
 from app.events.services import status as status_service
 from app.events.services import update as update_service
 
-from app.models.event import Event, EventSafetyReview
+from app.models.event import Event
 from app.models.user import User
 
 
@@ -504,12 +504,8 @@ def confirm_event_route(event_id):
     if event.coordinator_id != user.id:
         return jsonify({"error": "Only the assigned Coordinator can confirm this event"}), 403
 
-    latest_review = (
-        EventSafetyReview.query.filter_by(event_id=event.id)
-        .order_by(EventSafetyReview.id.desc())
-        .first()
-    )
-    if latest_review is None or latest_review.decision != "approved":
+    latest_review = status_service.approved_safety_review_for_current_check(event)
+    if latest_review is None:
         return jsonify({"error": "This event does not have an approved safety review to confirm"}), 400
 
     try:

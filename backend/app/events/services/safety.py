@@ -7,6 +7,7 @@ from app.models.event import Event, EventSafetyAssessment, EventSafetyReview
 from app.models.user import User
 from app.models.venue import BOOKING_APPROVED
 from app.notifications.services import triggers as notifications
+from app.events.services import status as status_service
 
 SAFETY_DECISIONS = {"approved", "rejected", "changes_requested"}
 
@@ -131,7 +132,7 @@ def build_safety_review(event: Event) -> dict:
         ],
         "venues": venues,
         "factors": [{"key": key, "label": label} for key, label in SAFETY_FACTOR_DEFINITIONS],
-        "canAssess": event.status == "safety_check",
+        "canAssess": event.status == "safety_check" and status_service.approved_safety_review_for_current_check(event) is None,
         "assessment": event.safety_assessment.to_dict() if event.safety_assessment else None,
         "safetyReviews": [review.to_dict() for review in event.safety_reviews],
     }
@@ -216,16 +217,11 @@ def review_safety_check(
     if event.status != "safety_check":
         raise SafetyReviewConflictError("Only events awaiting a safety check can be reviewed")
     # A decision already made (approved) and not yet acted on by the Coordinator blocks a second review until the event leaves safety_check (confirmed, or reverted to planning).
-    latest_review = (
-        EventSafetyReview.query.filter_by(event_id=event.id)
-        .order_by(EventSafetyReview.id.desc())
-        .first()
-    )
-        
-    if latest_review is not None and latest_review.decision == "approved":
+    if status_service.approved_safety_review_for_current_check(event) is not None:
         raise SafetyReviewConflictError(
             "This event already has an approved safety review awaiting Coordinator confirmation"
         )
+
     if decision not in SAFETY_DECISIONS:
         raise ValueError("Decision must be approved, rejected, or changes_requested")
     if comments is not None and not isinstance(comments, str):
