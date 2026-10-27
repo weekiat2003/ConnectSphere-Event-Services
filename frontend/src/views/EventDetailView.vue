@@ -301,7 +301,7 @@
           <p v-if="editErrors.required_facilities" class="field-error">{{ editErrors.required_facilities }}</p>
         </div>
 
-                <div class="edit-field edit-field-wide">
+        <div class="edit-field edit-field-wide">
           <label>Equipment requirements</label>
           <p class="eq-help">Choose equipment from the catalogue, set how many are needed, and add any technical notes.</p>
 
@@ -311,12 +311,12 @@
 
           <div v-for="(item, index) in editForm.equipment_requirements" :key="item.id ?? `new-${index}`" class="eq-block">
             <div class="eq-row">
-              <select v-if="equipmentCatalogue.length" v-model="item.type" aria-label="Equipment">
+              <select v-if="equipmentOptions.length" v-model="item.type" aria-label="Equipment">
                 <option value="" disabled>Choose equipment</option>
-                <option v-if="item.type && !equipmentCatalogue.some((e) => e.name === item.type)" :value="item.type">
+                <option v-if="item.type && !equipmentOptions.some((e) => e.name === item.type)" :value="item.type">
                   {{ item.type }} (not in catalogue)
                 </option>
-                <option v-for="entry in equipmentCatalogue" :key="entry.id" :value="entry.name">
+                <option v-for="entry in equipmentOptions" :key="entry.id" :value="entry.name">
                   {{ entry.name }}
                 </option>
               </select>
@@ -681,7 +681,9 @@ import eventsApi from "../api/events";
 import usersApi from "../api/users";
 import { useConfirm } from "../composables/useConfirm";
 import changeRequestsApi from "../api/changeRequests";
+import equipmentApi from "../api/equipment";
 import EquipmentRequirementsPanel from "../components/EquipmentRequirementsPanel.vue";
+
 
 const route = useRoute();
 const router = useRouter();
@@ -880,6 +882,18 @@ async function ensureCatalogue() {
     equipmentCatalogue.value = data.equipment || [];
   } catch (e) {
     console.error("Could not load the catalogue", e.response?.status, e.response?.data || e);
+  }
+}
+
+const equipmentOptions = ref([]);
+
+async function loadEquipmentOptions() {
+  if (equipmentOptions.value.length) return;
+  try {
+    const { data } = await equipmentApi.listItems();
+    equipmentOptions.value = data.filter((i) => i.status === "active");
+  } catch (e) {
+    console.error("Could not load equipment options", e.response?.status, e.response?.data || e);
   }
 }
 
@@ -1100,6 +1114,7 @@ let initialEditValues = {};
 
 function openEditForm() {
   ensureCatalogue();
+  loadEquipmentOptions();
   if (!canEditEvent.value) return;
   const source = {
     name: event.value.name,
