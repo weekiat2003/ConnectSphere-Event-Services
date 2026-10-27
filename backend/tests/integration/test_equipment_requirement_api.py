@@ -31,7 +31,7 @@ def test_ac1_assigned_coordinator_saves_a_line_and_it_appears(
     res = put_lines(client, headers, event_id, [{"type": "Projector", "quantity": 2}])
     assert res.status_code == 200, res.get_json()
     lines = saved_lines(event_id)
-    assert [(l.equipment_type, l.quantity, l.status) for l in lines] == [("Projector", 2, "requested")]
+    assert [(item.equipment_type, item.quantity, item.status) for item in lines] == [("Projector", 2, "requested")]
     shown = client.get(f"/api/events/{event_id}", headers=headers).get_json()
     assert "Projector" in json.dumps(shown) and "requested" in json.dumps(shown)
 
