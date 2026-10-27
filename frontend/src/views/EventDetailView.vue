@@ -382,53 +382,13 @@
     <section v-if="auth.hasRole('safety_officer') && event.status === 'safety_check'">
       <h3 class="section-title">Operational Safety Check</h3>
       <div class="action-block">
-        <fieldset class="safety-checklist">
-          <legend>
-            Factors assessed
-            <span class="checklist-count">({{ assessedSafetyFactors.length }} of {{ safetyFactors.length }})</span>
-          </legend>
-          <label v-for="factor in safetyFactors" :key="factor.key">
-            <input v-model="assessedSafetyFactors" type="checkbox" :value="factor.key"
-              @change="onAssessedChange(factor.key)">
-            {{ factor.label }}
-          </label>
-        </fieldset>
-        <fieldset class="safety-checklist">
-          <legend>Factors of concern</legend>
-          <label v-for="factor in safetyFactors" :key="factor.key">
-            <input v-model="concernSafetyFactors" type="checkbox" :value="factor.key"
-              @change="onConcernChange(factor.key)">
-            {{ factor.label }}
-          </label>
-        </fieldset>
-        <fieldset class="safety-checklist">
-          <legend>Affected arrangements</legend>
-          <label>
-            <input v-model="affectedSafetyArrangements" type="checkbox" value="venue">
-            Venue
-          </label>
-          <label>
-            <input v-model="affectedSafetyArrangements" type="checkbox" value="equipment">
-            Equipment
-          </label>
-        </fieldset>
-        <textarea v-model="safetyReason" placeholder="Reason (required for rejection or change requests)"></textarea>
-        <ul v-if="safetyErrors.length" class="field-error safety-errors">
-          <li v-for="message in safetyErrors" :key="message">{{ message }}</li>
-        </ul>
-        <p v-if="approveBlockedReason" class="notice-inline">{{ approveBlockedReason }}</p>
+        <p class="notice-inline">
+          This event is awaiting your safety check. Assess each factor and record your decision on the review page.
+        </p>
         <div class="actions">
-          <button class="btn btn-mint" :disabled="!!approveBlockedReason || safetySubmitting"
-            @click="submitSafetyDecision('approved')">
-            Approve safety
-          </button>
-          <button class="btn btn-rose" :disabled="safetySubmitting" @click="submitSafetyDecision('rejected')">
-            Reject arrangement
-          </button>
-          <button class="btn btn-butter" :disabled="safetySubmitting"
-            @click="submitSafetyDecision('changes_requested')">
-            Request changes
-          </button>
+          <router-link class="btn btn-primary" :to="`/safety-reviews/${event.id}`">
+            Open safety review
+          </router-link>
         </div>
       </div>
     </section>

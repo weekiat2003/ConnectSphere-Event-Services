@@ -418,12 +418,12 @@ def notify_safety_officers_of_safety_check(event) -> list:
     """One per active Safety Officer (notify_users de-duplicates, so a user with
     several roles still gets exactly one). Re-entry after rework is flagged."""
     recheck = (
-        EventSafetyReview.query
-        .filter(EventSafetyReview.event_id == event.id,
-                EventSafetyReview.decision.in_(("rejected", "changes_requested")))
+        db.session.query(EventSafetyReview.id)
+        .filter(EventSafetyReview.event_id == event.id)
         .first()
         is not None
     )
+
     venues = ", ".join(_booked_venues(event)) or "no venue recorded"
     attendance = event.expected_attendance if event.expected_attendance is not None else "not given"
     title = "Safety re-check required" if recheck else "Safety check required"
@@ -431,7 +431,7 @@ def notify_safety_officers_of_safety_check(event) -> list:
         f'"{_name(event)}" — {_event_when(event)}, {venues}. Expected attendance: {attendance}.'
     )
     if recheck:
-        message = "Re-check after rework. " + message
+        message = "Re-check required. " + message
     return notify_role(
         "safety_officer", TYPE_SAFETY_CHECK, title, message,
         event_id=event.id, link=f"/safety-reviews/{event.id}",

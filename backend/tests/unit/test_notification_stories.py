@@ -23,7 +23,7 @@ from app.models.notification import (
     Notification,
 )
 from app.models.user import User
-from app.models.venue import Venue, VenueBooking
+from app.models.venue import Venue, VenueBooking, BOOKING_APPROVED
 from app.models.event import Event, EventEquipmentRequirement, EventSafetyReview
 from app.registrations import service as registrations
 from app.venues.services import booking as booking_service
@@ -76,7 +76,19 @@ def submitted_and_assigned(organiser, coordinator):
     event = review.submit_event(new_event(organiser), organiser)
     return assignment.lead_assign(event, db.session.get(User, coordinator))
 
-
+# helper function to create an event that is ready for safety check
+def ready_event(organiser_id, coordinator_id, venue_manager_id, venue_name="Grand Hall", **fields):
+    """Planning event with an approved venue booking, so it may enter the safety check."""
+    event = new_event(organiser_id, "planning", coordinator_id, **fields)
+    venue = Venue(name=venue_name, capacity=300, created_by=venue_manager_id)
+    db.session.add(venue)
+    db.session.flush()
+    start = utcnow() + timedelta(days=10)
+    db.session.add(VenueBooking(
+        event_id=event.id, venue_id=venue.id, requested_by=coordinator_id,
+        status=BOOKING_APPROVED, start_datetime=start, end_datetime=start + timedelta(hours=3)))
+    db.session.commit()
+    return event
 # ===========================================================================
 # ISP-102 — Organiser
 # ===========================================================================
@@ -107,7 +119,7 @@ class TestISP102Organiser:
         assert n.data["editableFields"] == ["expected_attendance"]
 
     def test_ac4_and_ac5_safety_stage_and_decisions(self, app, organiser, coordinator, staff):
-        event = new_event(organiser, "planning", coordinator)
+        event = ready_event(organiser, coordinator, staff["venue1"])
         status.change_status(event, "safety_check", coordinator)
         officer = db.session.get(User, staff["safety1"])
         safety.review_safety_check(
@@ -606,8 +618,46 @@ class TestISP108Attendees:
 # ISP-130 — Safety Officer
 # ===========================================================================
 class TestISP130SafetyOfficer:
+        # ---- AC1
+    def test_ac1_only_safety_officers_are_notified(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        for user_id in (organiser, coordinator, staff["tech"], staff["lead1"],
+                        staff["venue1"], staff["coord_b"]):
+            assert inbox(user_id, TYPE_SAFETY_CHECK) == []
+
+    def test_ac1_inactive_officer_is_not_notified(self, app, organiser, coordinator, staff):
+        db.session.get(User, staff["safety1"]).is_active = False
+        db.session.commit()
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        assert inbox(staff["safety1"], TYPE_SAFETY_CHECK) == []
+        assert len(inbox(staff["safety2"], TYPE_SAFETY_CHECK)) == 1
+
+    def test_ac1_real_trigger_notifies_when_arrangements_complete(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.try_advance_to_safety_check(event, coordinator)
+        assert event.status == "safety_check"
+        for officer in ("safety1", "safety2"):
+            assert len(inbox(staff[officer], TYPE_SAFETY_CHECK)) == 1
+
+    def test_ac1_expired_or_released_hold_does_not_block(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        venue = Venue(name="Annex", capacity=100, created_by=staff["venue1"])
+        db.session.add(venue)
+        db.session.flush()
+        for state in ("expired", "released"):
+            db.session.add(VenueBooking(event_id=event.id, venue_id=venue.id, requested_by=coordinator,
+                                        status=state, start_datetime=utcnow() + timedelta(days=10),
+                                        end_datetime=utcnow() + timedelta(days=10, hours=3)))
+        db.session.commit()
+        status.try_advance_to_safety_check(event, coordinator)
+        assert event.status == "safety_check"
+        assert len(inbox(staff["safety1"], TYPE_SAFETY_CHECK)) == 1
+
+
     def test_ac1_ac2_ac4_every_officer_once_with_details(self, app, organiser, coordinator, staff):
-        event = new_event(organiser, "planning", coordinator)
+        event = ready_event(organiser, coordinator, staff["venue1"])
         status.change_status(event, "safety_check", coordinator)
 
         for officer in ("safety1", "safety2"):
@@ -617,8 +667,20 @@ class TestISP130SafetyOfficer:
                 assert text in n.message
             assert n.link == f"/safety-reviews/{event.id}"
 
+ # ---- AC2
+    def test_ac2_message_has_venue_date_time_and_attendance(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        [n] = inbox(staff["safety1"], TYPE_SAFETY_CHECK)
+        for text in ("Gala Night", "Grand Hall", FUTURE.strftime("%b %Y"), "19:00", "Expected attendance: 120"):
+            assert text in n.message
+        assert n.link == f"/safety-reviews/{event.id}"
+
+
+
     def test_ac3_unread_until_opened_then_still_viewable(self, app, client, auth_header, organiser, coordinator, staff):
-        status.change_status(new_event(organiser, "planning", coordinator), "safety_check", coordinator)
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
         headers = auth_header("safety1@test.com")
         [n] = client.get("/api/notifications", headers=headers).get_json()
         assert n["isRead"] is False and n["createdAt"]
@@ -627,8 +689,75 @@ class TestISP130SafetyOfficer:
         assert client.get("/api/notifications/unread-count", headers=headers).get_json()["count"] == 0
         assert len(client.get("/api/notifications", headers=headers).get_json()) == 1
 
+  # ---- AC3
+    def test_ac3_notification_remains_after_the_officer_decides(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        safety.review_safety_check(event, db.session.get(User, staff["safety1"]), "approved",
+                                   assessed_factors=list(safety.SAFETY_FACTOR_ORDER))
+        assert len(inbox(staff["safety1"], TYPE_SAFETY_CHECK)) == 1
+
+
+     # ---- AC4
+    def test_ac4_officer_who_is_also_the_coordinator_gets_one(self, app, organiser, staff):
+        event = ready_event(organiser, staff["safety2"], staff["venue1"])
+        status.change_status(event, "safety_check", staff["safety2"])
+        assert len(inbox(staff["safety2"], TYPE_SAFETY_CHECK)) == 1
+
+    def test_ac4_repeated_advance_does_not_notify_twice(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.try_advance_to_safety_check(event, coordinator)
+        status.try_advance_to_safety_check(event, coordinator)
+        assert len(inbox(staff["safety1"], TYPE_SAFETY_CHECK)) == 1
+
+
+    # ---- AC5
+    def test_ac5_changes_requested_also_triggers_recheck(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        safety.review_safety_check(
+            event, db.session.get(User, staff["safety1"]), "changes_requested",
+            comments="The exit is blocked by staging.", assessed_factors=["emergency_access"],
+            concern_factors=["emergency_access"], affected_arrangements=["venue"])
+        status.change_status(event, "safety_check", coordinator)
+        assert [n.data["recheck"] for n in inbox(staff["safety1"], TYPE_SAFETY_CHECK)] == [False, True]
+
+    def _approve_and_confirm(self, event, staff, coordinator):
+        safety.review_safety_check(event, db.session.get(User, staff["safety1"]), "approved",
+                                   assessed_factors=list(safety.SAFETY_FACTOR_ORDER))
+        status.confirm_after_safety_approval(
+            event, status.approved_safety_review_for_current_check(event), coordinator)
+        assert event.status == "confirmed"
+
+    def test_ac5_reentry_after_confirmed_event_changes_is_a_recheck(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        self._approve_and_confirm(event, staff, coordinator)
+        status.revert_to_planning(event, coordinator, "Attendance increased")
+        status.try_advance_to_safety_check(event, coordinator)
+        notices = inbox(staff["safety1"], TYPE_SAFETY_CHECK)
+        assert [n.data["recheck"] for n in notices] == [False, True]
+        assert notices[1].title == "Safety re-check required"
+
+    def test_ac5_officer_can_decide_the_recheck_and_stale_approval_cannot_confirm(
+        self, app, client, auth_header, organiser, coordinator, staff
+    ):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        self._approve_and_confirm(event, staff, coordinator)
+        status.revert_to_planning(event, coordinator, "Attendance increased")
+        status.try_advance_to_safety_check(event, coordinator)
+
+        res = client.post(f"/api/events/{event.id}/confirm", headers=auth_header("coordinator@test.com"))
+        assert res.status_code == 400 and event.status == "safety_check"
+
+        safety.review_safety_check(event, db.session.get(User, staff["safety1"]), "approved",
+                                   assessed_factors=list(safety.SAFETY_FACTOR_ORDER))  # must not raise
+        assert status.approved_safety_review_for_current_check(event) is not None
+
+
     def test_ac5_re_entry_after_rework_is_a_recheck(self, app, organiser, coordinator, staff):
-        event = new_event(organiser, "planning", coordinator)
+        event = ready_event(organiser, coordinator, staff["venue1"])
         status.change_status(event, "safety_check", coordinator)
         safety.review_safety_check(
             event, db.session.get(User, staff["safety1"]), "rejected",
@@ -640,6 +769,43 @@ class TestISP130SafetyOfficer:
         notices = inbox(staff["safety1"], TYPE_SAFETY_CHECK)
         assert [n.data["recheck"] for n in notices] == [False, True]
         assert notices[1].title == "Safety re-check required"
+
+
+# ---- AC6
+    def test_ac6_direct_entry_blocked_while_booking_pending(self, app, organiser, coordinator, staff):
+        event = new_event(organiser, "planning", coordinator)
+        venue = Venue(name="Hall", capacity=300, created_by=staff["venue1"])
+        db.session.add(venue)
+        db.session.flush()
+        db.session.add(VenueBooking(event_id=event.id, venue_id=venue.id, requested_by=coordinator,
+                                    status="pending", start_datetime=utcnow() + timedelta(days=10),
+                                    end_datetime=utcnow() + timedelta(days=10, hours=3)))
+        db.session.commit()
+        with pytest.raises(status.InvalidTransitionError):
+            status.change_status(event, "safety_check", coordinator)
+        assert event.status == "planning"
+        assert Notification.query.filter_by(type=TYPE_SAFETY_CHECK).count() == 0
+
+    def test_ac6_status_endpoint_cannot_bypass_the_guard(self, app, client, auth_header, organiser, coordinator, staff):
+        event = new_event(organiser, "planning", coordinator)  # no approved venue yet
+        res = client.post(f"/api/events/{event.id}/status", headers=auth_header("coordinator@test.com"),
+                          json={"status": "safety_check"})
+        assert res.status_code == 400
+        assert Notification.query.filter_by(type=TYPE_SAFETY_CHECK).count() == 0
+
+    def test_ac6_unreserved_equipment_blocks_notification(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        event.equipment_requirements.append(EventEquipmentRequirement(equipment_type="Projector", quantity=2))
+        db.session.commit()
+        status.try_advance_to_safety_check(event, coordinator)
+        assert event.status == "planning"
+        assert Notification.query.filter_by(type=TYPE_SAFETY_CHECK).count() == 0
+
+    def test_ac6_no_notification_in_earlier_stages(self, app, organiser, coordinator, staff):
+        event = submitted_and_assigned(organiser, coordinator)
+        review.approve_event(event, coordinator)  # submitted -> under_review -> approved -> planning
+        assert Notification.query.filter_by(type=TYPE_SAFETY_CHECK).count() == 0
+
 
     def test_ac6_no_notification_while_arrangements_are_pending(self, app, organiser, coordinator, staff):
         event = new_event(organiser, "planning", coordinator)
