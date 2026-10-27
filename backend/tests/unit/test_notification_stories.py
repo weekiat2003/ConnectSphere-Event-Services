@@ -27,7 +27,7 @@ from app.models.venue import Venue, VenueBooking
 from app.models.event import Event, EventEquipmentRequirement, EventSafetyReview
 from app.registrations import service as registrations
 from app.venues.services import booking as booking_service
-from app.venues.services.booking_requests import submit_booking_requests
+from app.venues.services.booking_requests import (BookingRequestError,submit_booking_requests,)
 
 FUTURE = date.today() + timedelta(days=60)
 
@@ -260,34 +260,232 @@ class TestISP105Coordinator:
         assert n.title == "Venue booking rejected" and "Closed for maintenance" in n.message
 
 
+
 # ===========================================================================
 # ISP-104 — Venue Staff
 # ===========================================================================
 class TestISP104VenueStaff:
+
     def _submit(self, organiser, coordinator, created_by):
         event = new_event(organiser, "planning", coordinator)
-        venue = Venue(name="Riverside Room", capacity=200, created_by=created_by)
+        venue = Venue(
+            name="Riverside Room",
+            capacity=200,
+            created_by=created_by,
+        )
         db.session.add(venue)
         db.session.commit()
+
         [booking] = submit_booking_requests(
-            event, [{"venue_id": venue.id, "date": FUTURE, "start_time": time(9), "end_time": time(12)}],
+            event,
+            [{
+                "venue_id": venue.id,
+                "date": FUTURE,
+                "start_time": time(9),
+                "end_time": time(12),
+            }],
             coordinator,
         )
         return booking
 
-    def test_only_the_venue_manager_is_notified_with_details_and_link(self, app, organiser, coordinator, staff):
-        booking = self._submit(organiser, coordinator, staff["venue1"])
-        [n] = inbox(staff["venue1"], TYPE_NEW_VENUE_BOOKING_REQUEST)
+    # -----------------------------------------------------------------------
+    # AC1: Successful submission generates a notification.
+    # AC2: Notification includes venue name, event name, and booking date.
+    # AC3: Only the Venue Staff managing the venue receives it.
+    # AC4: Notification contains the corresponding booking's link.
+    # -----------------------------------------------------------------------
+    def test_only_the_venue_manager_is_notified_with_details_and_link(
+        self, app, organiser, coordinator, staff
+    ):
+        booking = self._submit(
+            organiser, coordinator, staff["venue1"]
+        )
+
+        [n] = inbox(
+            staff["venue1"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        )
+
         assert n.data["venueName"] == "Riverside Room"
         assert n.data["eventName"] == "Gala Night"
         assert FUTURE.strftime("%b %Y") in n.data["bookingDate"]
         assert n.link == f"/venues/approval?booking={booking.id}"
-        assert inbox(staff["venue2"]) == []
 
-    def test_unmanaged_venue_falls_back_to_all_venue_staff(self, app, organiser, coordinator, staff):
-        self._submit(organiser, coordinator, None)
-        assert len(inbox(staff["venue1"], TYPE_NEW_VENUE_BOOKING_REQUEST)) == 1
-        assert len(inbox(staff["venue2"], TYPE_NEW_VENUE_BOOKING_REQUEST)) == 1
+        # AC3: Unrelated Venue Staff must not receive the notification.
+        assert inbox(
+            staff["venue2"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        ) == []
+
+    # -----------------------------------------------------------------------
+    # AC2: Notification details are available through the inbox API.
+    # AC3: Other Venue Staff cannot see another manager's notification.
+    # AC4: Notification provides the correct booking deep link.
+    #
+    # Note: Actual frontend clicking/navigation requires a browser test.
+    # -----------------------------------------------------------------------
+    def test_venue_staff_inbox_contains_booking_details_and_deep_link(
+        self, app, client, auth_header, organiser, coordinator, staff
+    ):
+        booking = self._submit(
+            organiser, coordinator, staff["venue1"]
+        )
+
+        response = client.get(
+            "/api/notifications",
+            headers=auth_header("venue1@test.com"),
+        )
+
+        assert response.status_code == 200
+
+        matches = [
+            n for n in response.get_json()
+            if n["type"] == TYPE_NEW_VENUE_BOOKING_REQUEST
+        ]
+
+        assert len(matches) == 1
+
+        notification = matches[0]
+
+        assert notification["data"]["venueName"] == "Riverside Room"
+        assert notification["data"]["eventName"] == "Gala Night"
+        assert FUTURE.strftime("%b %Y") in notification["data"]["bookingDate"]
+        assert notification["link"] == (
+            f"/venues/approval?booking={booking.id}"
+        )
+
+        # AC3: Venue Staff 2 must not see Venue Staff 1's notification.
+        other = client.get(
+            "/api/notifications",
+            headers=auth_header("venue2@test.com"),
+        )
+
+        assert other.status_code == 200
+        assert not any(
+            n["type"] == TYPE_NEW_VENUE_BOOKING_REQUEST
+            for n in other.get_json()
+        )
+
+    # -----------------------------------------------------------------------
+    # AC5: Failed or incomplete booking submission must not generate
+    #      any Venue Staff notification.
+    # -----------------------------------------------------------------------
+    def test_failed_booking_submission_creates_no_venue_staff_notification(
+        self, app, organiser, coordinator, staff
+    ):
+        event = new_event(
+            organiser, "planning", coordinator
+        )
+
+        # Invalid venue ID should cause submission to fail.
+        with pytest.raises(BookingRequestError):
+            submit_booking_requests(
+                event,
+                [{
+                    "venue_id": -999999,
+                    "date": FUTURE,
+                    "start_time": time(9),
+                    "end_time": time(12),
+                }],
+                coordinator,
+            )
+
+        db.session.rollback()
+
+        # AC5: Neither Venue Staff member should be notified.
+        assert inbox(
+            staff["venue1"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        ) == []
+
+        assert inbox(
+            staff["venue2"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        ) == []
+
+    # -----------------------------------------------------------------------
+    # AC1: Multi-venue submission generates notifications.
+    # AC3: Each Venue Staff receives notifications only for venues managed.
+    # AC6: Different venue managers each receive the correct notification,
+    #      with no duplicates for the same booking.
+    # -----------------------------------------------------------------------
+    def test_multiple_venues_notify_respective_managers_without_duplicates(
+        self, app, organiser, coordinator, staff
+    ):
+        event = new_event(
+            organiser, "planning", coordinator
+        )
+
+        venue1 = Venue(
+            name="Riverside Room",
+            capacity=200,
+            created_by=staff["venue1"],
+        )
+
+        venue2 = Venue(
+            name="Grand Hall",
+            capacity=300,
+            created_by=staff["venue2"],
+        )
+
+        db.session.add_all([venue1, venue2])
+        db.session.commit()
+
+        bookings = submit_booking_requests(
+            event,
+            [
+                {
+                    "venue_id": venue1.id,
+                    "date": FUTURE,
+                    "start_time": time(9),
+                    "end_time": time(12),
+                },
+                {
+                    "venue_id": venue2.id,
+                    "date": FUTURE,
+                    "start_time": time(14),
+                    "end_time": time(17),
+                },
+            ],
+            coordinator,
+        )
+
+        assert len(bookings) == 2
+
+        notices1 = inbox(
+            staff["venue1"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        )
+
+        notices2 = inbox(
+            staff["venue2"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        )
+
+        # AC6: Each staff member receives exactly one notification.
+        assert len(notices1) == 1
+        assert len(notices2) == 1
+
+        # AC3: Notifications belong to the correct venue manager.
+        assert notices1[0].data["venueName"] == "Riverside Room"
+        assert notices2[0].data["venueName"] == "Grand Hall"
+
+        assert notices1[0].data["eventName"] == event.name
+        assert notices2[0].data["eventName"] == event.name
+
+        # AC6: Each notification points to a different booking.
+        expected_links = {
+            f"/venues/approval?booking={booking.id}"
+            for booking in bookings
+        }
+
+        assert {
+            notices1[0].link,
+            notices2[0].link,
+        } == expected_links
+
+        assert notices1[0].link != notices2[0].link
+
 
 
 # ===========================================================================

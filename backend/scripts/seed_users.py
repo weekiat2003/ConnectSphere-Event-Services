@@ -34,6 +34,7 @@ TEST_USERS = [
     {"name": "Priya Coordinator", "email": "coordinator2@example.com", "roles": ["event_coordinator"]},
     {"name": "Lee Coordinator Lead", "email": "lead@example.com", "roles": ["event_coordinator_lead"]},
     {"name": "Vince Venue", "email": "venue@example.com", "roles": ["venue_staff"]},
+    {"name": "Vanessa Venue", "email": "venue2@example.com", "roles": ["venue_staff"]},
     {"name": "Tara TechSupport", "email": "techsupport@example.com", "roles": ["technical_support_staff"]},
     {"name": "Sam Safety Officer", "email": "safety@example.com", "roles": ["safety_officer"]},
     {"name": "Alex Attendee", "email": "attendee@example.com", "roles": ["attendee"]},
@@ -416,16 +417,25 @@ with app.app_context():
     # -----------------------------------------------------------------
     # Assign seeded venues to Venue Staff
     # -----------------------------------------------------------------
-    venue_staff = User.query.filter_by(
-        email="venue@example.com"
-    ).first()
+    VENUE_OWNERS = {
+        "Main Auditorium": "venue@example.com",
+        "Seminar Room A": "venue2@example.com",
+        "Banquet Hall": "venue@example.com",
+        "Collaborative Workshop Studio": "venue2@example.com",
+        "Executive Boardroom": "venue@example.com",
+        "Community Events Hall": "venue2@example.com",
+        "Innovation Lab": "venue2@example.com",
+        "Outdoor Amphitheatre": "venue@example.com",
+    }
 
-    if venue_staff:
-        for venue in Venue.query.all():
-            if venue.created_by is None:
-                venue.created_by = venue_staff.id
+    for venue_name, staff_email in VENUE_OWNERS.items():
+        venue = Venue.query.filter_by(name=venue_name).first()
+        staff_member = User.query.filter_by(email=staff_email).first()
 
-        db.session.commit()
+        if venue and staff_member:
+            venue.created_by = staff_member.id
+
+    db.session.commit()
 
     # -----------------------------------------------------------------
     # Events
