@@ -8,7 +8,7 @@ from app.events.services import assignment, drafts, review, safety
 from app.events.services import status as status_service
 from app.events.services import update as update_service
 
-from app.models.event import Event, EventSafetyReview
+from app.models.event import Event
 from app.models.user import User
 
 
