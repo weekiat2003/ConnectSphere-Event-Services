@@ -32,6 +32,7 @@ import MyRegistrationsView from "../views/MyRegistrationsView.vue";
 import RegistrationManageView from "../views/RegistrationManageView.vue";
 import NotificationsView from "../views/NotificationsView.vue";
 import AssignmentQueueView from "../views/AssignmentQueueView.vue";
+import SupervisionView from "../views/SupervisionView.vue";
 
 const routes = [
   {
@@ -227,11 +228,17 @@ const routes = [
       requiresAuth: true, 
       roles: ["event_organiser", "event_coordinator"] }
   },
-  // Notification System (ISP-103): Event Coordinator Leads assign requests.
+  // Event Coordinator Lead: only Leads may see the queue or assign requests.
+  // Anyone else is told access is denied (not silently redirected).
   { path: "/assignments",
     name: "assignments",
     component: AssignmentQueueView,
-    meta: { requiresAuth: true, roles: ["event_coordinator_lead"] },
+    meta: { requiresAuth: true, roles: ["event_coordinator_lead"], showAccessDenied: true },
+  },
+  { path: "/supervision",
+    name: "supervision",
+    component: SupervisionView,
+    meta: { requiresAuth: true, roles: ["event_coordinator_lead"], showAccessDenied: true },
   },
   // Notification System: every role has an inbox, so no roles restriction.
   { path: "/notifications",

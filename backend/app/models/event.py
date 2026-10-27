@@ -320,7 +320,27 @@ class EventCoordinatorHistory(db.Model):
     coordinator_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
     assigned_at = db.Column(db.DateTime, default=utcnow)
     unassigned_at = db.Column(db.DateTime)
-    assignment_type = db.Column(db.String(20), default="auto")  # auto | reassignment
+    assignment_type = db.Column(db.String(20), default="auto")  # auto | reassignment | lead
+    # Who made the assignment (the Lead); NULL for automatic / legacy rows.
+    assigned_by = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=True)
+
+    coordinator = db.relationship("User", foreign_keys=[coordinator_id])
+    assigner = db.relationship("User", foreign_keys=[assigned_by])
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "eventId": self.event_id,
+            "coordinatorId": self.coordinator_id,
+            "coordinatorName": self.coordinator.name if self.coordinator else None,
+            "assignedAt": self.assigned_at.isoformat() if self.assigned_at else None,
+            "unassignedAt": self.unassigned_at.isoformat() if self.unassigned_at else None,
+            "assignmentType": self.assignment_type,
+            "assignedById": self.assigned_by,
+            "assignedByName": self.assigner.name if self.assigner else None,
+            "isCurrent": self.unassigned_at is None,
+        }
+
 class EventFieldEditLog(db.Model):
     """Audit trail for ISP-118 US-1 edits and US-4 lock-rejection attempts."""
     __tablename__ = "event_field_edit_logs"
