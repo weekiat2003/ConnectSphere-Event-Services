@@ -51,7 +51,7 @@ def get_next_coordinator():
 
 
 def assign_coordinator(event: Event, coordinator: User = None, assignment_type: str = "auto",
-                       previous_coordinator_id: int = None) -> Event:
+                       previous_coordinator_id: int = None, assigned_by_id: int = None) -> Event:
     coordinator = coordinator or get_next_coordinator()
     if coordinator is None:
         raise ValueError("No active Event Coordinator is available for assignment")
@@ -62,16 +62,17 @@ def assign_coordinator(event: Event, coordinator: User = None, assignment_type: 
             event_id=event.id,
             coordinator_id=coordinator.id,
             assignment_type=assignment_type,
+            assigned_by=assigned_by_id,
         )
     )
     # Notification System (ISP-105, ISP-103 AC5): tell the new Coordinator,
-    # tell the previous one it was removed, and clear the Leads' queue notices.
+    # the previous one (if any) and the organiser, and clear the Leads' queue notices.
     notifications.notify_coordinator_assignment(event, coordinator, previous_coordinator_id)
     db.session.commit()
     return event
 
 
-def reassign_coordinator(event: Event, new_coordinator: User) -> Event:
+def reassign_coordinator(event: Event, new_coordinator: User, assigned_by_id: int = None) -> Event:
     """Reassignment is agreed offline between coordinators; this records the
     handover once that agreement has been made (per Q&A #6/#13/#22)."""
     previous_coordinator_id = event.coordinator_id
@@ -85,7 +86,7 @@ def reassign_coordinator(event: Event, new_coordinator: User) -> Event:
 
     return assign_coordinator(
         event, coordinator=new_coordinator, assignment_type="reassignment",
-        previous_coordinator_id=previous_coordinator_id,
+        previous_coordinator_id=previous_coordinator_id, assigned_by_id=assigned_by_id,
     )
 
 
@@ -106,7 +107,7 @@ def _require_active_coordinator(coordinator: User):
         raise ValueError("coordinatorId must reference an active Event Coordinator")
 
 
-def lead_assign(event: Event, coordinator: User, dry_run: bool = False) -> Event:
+def lead_assign(event: Event, coordinator: User, dry_run: bool = False, assigned_by_id: int = None) -> Event:
     """A Lead assigns an Unassigned request: it moves to under_review
     ("Assigned"), leaves the queue, the Coordinator is notified, and every
     Lead's queue notification for it is cleared. dry_run checks only."""
@@ -119,13 +120,15 @@ def lead_assign(event: Event, coordinator: User, dry_run: bool = False) -> Event
     if dry_run:
         return locked
 
-    assign_coordinator(locked, coordinator=coordinator, assignment_type="lead")
-    change_status(locked, "under_review", changed_by_id=coordinator.id,
+    assign_coordinator(locked, coordinator=coordinator, assignment_type="lead",
+                       assigned_by_id=assigned_by_id)
+    change_status(locked, "under_review", changed_by_id=assigned_by_id or coordinator.id,
                   reason=f"Assigned to {coordinator.name} by a Coordinator Lead")
     return locked
 
 
-def lead_reassign(event: Event, new_coordinator: User, dry_run: bool = False) -> Event:
+def lead_reassign(event: Event, new_coordinator: User, dry_run: bool = False,
+                  assigned_by_id: int = None) -> Event:
     """A Lead moves an assigned, still-open request to another Coordinator."""
     if event.coordinator_id is None:
         raise ValueError("This request is not assigned yet; assign it instead")
@@ -136,7 +139,7 @@ def lead_reassign(event: Event, new_coordinator: User, dry_run: bool = False) ->
         raise ValueError("This request is already assigned to that Coordinator")
     if dry_run:
         return event
-    return reassign_coordinator(event, new_coordinator)
+    return reassign_coordinator(event, new_coordinator, assigned_by_id=assigned_by_id)
 
 
 def coordinators_with_workload() -> list[dict]:
@@ -151,6 +154,50 @@ def coordinators_with_workload() -> list[dict]:
     )
     rows = [{"id": c.id, "name": c.name, "openRequests": counts.get(c.id, 0)} for c in coordinators]
     return sorted(rows, key=lambda r: (r["openRequests"], r["id"]))
+
+
+# Statuses in which an assigned event still needs its Coordinator's attention.
+ACTIVE_ASSIGNED_STATUSES = OPEN_STATUSES + ("safety_check", "confirmed")
+
+
+def supervision_overview() -> list[dict]:
+    """Lead supervision view: every active Coordinator with the active events
+    currently assigned to them (soonest first). Coordinators with nothing
+    assigned are still listed, so the Lead can see who has capacity."""
+    coordinators = _active_coordinators()
+    events = (
+        Event.query.filter(
+            Event.coordinator_id.in_([c.id for c in coordinators] or [-1]),
+            Event.status.in_(ACTIVE_ASSIGNED_STATUSES),
+        )
+        .order_by(Event.proposed_date.asc(), Event.id.asc())
+        .all()
+    )
+    by_coordinator = {c.id: [] for c in coordinators}
+    for e in events:
+        by_coordinator[e.coordinator_id].append({
+            "id": e.id,
+            "name": e.name,
+            "organiserName": e.organiser.name if e.organiser else None,
+            "proposedDate": e.proposed_date.isoformat() if e.proposed_date else None,
+            "proposedTime": e.proposed_time.strftime("%H:%M") if e.proposed_time else None,
+            "expectedAttendance": e.expected_attendance,
+            "status": e.status,
+            "statusLabel": e.status_label,
+        })
+    rows = [
+        {"id": c.id, "name": c.name, "email": c.email,
+         "activeEventCount": len(by_coordinator[c.id]), "events": by_coordinator[c.id]}
+        for c in coordinators
+    ]
+    return sorted(rows, key=lambda r: (r["name"].lower(), r["id"]))
+
+
+def assignment_history(event: Event) -> list[dict]:
+    """Every (re)assignment of this event, oldest first. Never deleted, so a
+    reassignment keeps the earlier entries (closed with unassignedAt)."""
+    entries = sorted(event.coordinator_history, key=lambda h: (h.assigned_at, h.id))
+    return [h.to_dict() for h in entries]
 
 
 def has_coordinator_history(event: Event, user_id: int) -> bool:

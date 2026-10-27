@@ -322,6 +322,20 @@ def notify_coordinator_assignment(event, coordinator, previous_coordinator_id: i
             event_id=event.id, link=_event_link(event),
             data={**data, "kind": "removed", "newCoordinatorName": coordinator.name},
         ))
+    # The organiser learns who is now handling their request.
+    if previous_coordinator_id and previous_coordinator_id != coordinator.id:
+        created += _organiser(
+            event, "coordinator_reassigned", "New Coordinator for your request",
+            f'"{_name(event)}" has been reassigned. {coordinator.name} is now your Event Coordinator.',
+            {"coordinatorName": coordinator.name,
+             "previousCoordinatorName": _user_name(previous_coordinator_id)},
+        )
+    else:
+        created += _organiser(
+            event, "coordinator_assigned", "Coordinator assigned",
+            f'{coordinator.name} has been assigned as the Event Coordinator for "{_name(event)}".',
+            {"coordinatorName": coordinator.name},
+        )
     # Other Leads' "awaiting assignment" notices no longer need action (ISP-103 AC5).
     clear_notifications(TYPE_NEW_EVENT_SUBMISSION, event.id,
                         {"assignedTo": coordinator.name, "assignedToId": coordinator.id})
@@ -350,7 +364,8 @@ def notify_coordinator_of_booking_update(booking, change: str, reason: str = Non
     )
     if reason:
         message += f" Reason: {_sentence(reason)}"
-    recipients = [booking.requested_by, event.coordinator_id if event else None]
+    current = event.coordinator_id if event else None
+    recipients = [current] if current else [booking.requested_by]
     return notify_users(recipients, TYPE_VENUE_BOOKING_UPDATE, BOOKING_UPDATE_TITLES[change], message,
                         event_id=booking.event_id, link=_event_link(event) if event else None,
                         data={"bookingId": booking.id, "change": change, "venueName": venue_name})
@@ -372,7 +387,7 @@ def notify_venue_staff_of_booking_requests(bookings) -> list:
         venue = db.session.get(Venue, booking.venue_id)
         event = booking.event or db.session.get(Event, booking.event_id)
         manager_id = venue.created_by if venue else None
-        recipients = [manager_id] if manager_id in venue_staff_ids else []
+        recipients = [manager_id] if manager_id in venue_staff_ids else sorted(venue_staff_ids)
         venue_name = venue.name if venue else f"Venue #{booking.venue_id}"
         booking_date = (
             booking.start_datetime.strftime("%d %b %Y, %H:%M").lstrip("0")
@@ -418,12 +433,12 @@ def notify_safety_officers_of_safety_check(event) -> list:
     """One per active Safety Officer (notify_users de-duplicates, so a user with
     several roles still gets exactly one). Re-entry after rework is flagged."""
     recheck = (
-        db.session.query(EventSafetyReview.id)
-        .filter(EventSafetyReview.event_id == event.id)
+        EventSafetyReview.query
+        .filter(EventSafetyReview.event_id == event.id,
+                EventSafetyReview.decision.in_(("rejected", "changes_requested")))
         .first()
         is not None
     )
-
     venues = ", ".join(_booked_venues(event)) or "no venue recorded"
     attendance = event.expected_attendance if event.expected_attendance is not None else "not given"
     title = "Safety re-check required" if recheck else "Safety check required"
@@ -431,7 +446,7 @@ def notify_safety_officers_of_safety_check(event) -> list:
         f'"{_name(event)}" — {_event_when(event)}, {venues}. Expected attendance: {attendance}.'
     )
     if recheck:
-        message = "Re-check required. " + message
+        message = "Re-check after rework. " + message
     return notify_role(
         "safety_officer", TYPE_SAFETY_CHECK, title, message,
         event_id=event.id, link=f"/safety-reviews/{event.id}",

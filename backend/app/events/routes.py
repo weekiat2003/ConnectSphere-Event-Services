@@ -8,7 +8,7 @@ from app.events.services import assignment, drafts, review, safety
 from app.events.services import status as status_service
 from app.events.services import update as update_service
 
-from app.models.event import Event
+from app.models.event import Event, EventSafetyReview
 from app.models.user import User
 
 
@@ -504,8 +504,12 @@ def confirm_event_route(event_id):
     if event.coordinator_id != user.id:
         return jsonify({"error": "Only the assigned Coordinator can confirm this event"}), 403
 
-    latest_review = status_service.approved_safety_review_for_current_check(event)
-    if latest_review is None:
+    latest_review = (
+        EventSafetyReview.query.filter_by(event_id=event.id)
+        .order_by(EventSafetyReview.id.desc())
+        .first()
+    )
+    if latest_review is None or latest_review.decision != "approved":
         return jsonify({"error": "This event does not have an approved safety review to confirm"}), 400
 
     try:
@@ -547,11 +551,11 @@ def review_outcome(event_id):
 # ---------------------------------------------------------------------
 
 @events_bp.get("/unassigned")
-@roles_required("event_coordinator", "event_coordinator_lead")
+@roles_required("event_coordinator_lead")
 def unassigned_events():
-    """The Unassigned queue. Leads assign from it (POST /<id>/assign);
-    Coordinators see it read-only, for planning visibility — there is still
-    no self-assign step (Q&A #6/#13/#22)."""
+    """The Unassigned queue — Event Coordinator Lead only (anyone else gets
+    403). Leads assign from it (POST /<id>/assign). Coordinators still see
+    unassigned requests read-only in the Planning view (GET /events)."""
     events = assignment.list_unassigned_events()
     return jsonify([e.to_dict() for e in events]), 200
 
@@ -592,7 +596,26 @@ def list_coordinators():
     return jsonify(assignment.coordinators_with_workload()), 200
 
 
+@events_bp.get("/supervision")
+@roles_required("event_coordinator_lead")
+def supervision():
+    """Lead supervision view: each active Coordinator with their assigned
+    active events."""
+    return jsonify(assignment.supervision_overview()), 200
+
+
+@events_bp.get("/<int:event_id>/assignment-history")
+@roles_required("event_coordinator_lead")
+def event_assignment_history(event_id):
+    """Who this request was assigned to, by whom and when (oldest first)."""
+    event = Event.query.get(event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+    return jsonify(assignment.assignment_history(event)), 200
+
+
 def _lead_action(event_id, action, confirm_message):
+    lead = _current_user()
     event = Event.query.get(event_id)
     if not event:
         return jsonify({"error": "Event not found"}), 404
@@ -605,7 +628,7 @@ def _lead_action(event_id, action, confirm_message):
                 "requiresConfirmation": True,
                 "message": confirm_message(event, coordinator),
             }), 409
-        event = action(event, coordinator)
+        event = action(event, coordinator, assigned_by_id=lead.id)
     except assignment.AlreadyAssignedError as e:
         return jsonify({"error": str(e), "assignedTo": e.coordinator_name}), 409
     except ValueError as e:
@@ -656,7 +679,7 @@ def reassign_event(event_id):
     if not new_coordinator or not new_coordinator.has_role("event_coordinator"):
         return jsonify({"error": "newCoordinatorId must reference an active Event Coordinator"}), 400
 
-    event = assignment.reassign_coordinator(event, new_coordinator)
+    event = assignment.reassign_coordinator(event, new_coordinator, assigned_by_id=user.id)
     return jsonify(event.to_dict()), 200
 
 
