@@ -372,7 +372,7 @@ def notify_venue_staff_of_booking_requests(bookings) -> list:
         venue = db.session.get(Venue, booking.venue_id)
         event = booking.event or db.session.get(Event, booking.event_id)
         manager_id = venue.created_by if venue else None
-        recipients = [manager_id] if manager_id in venue_staff_ids else sorted(venue_staff_ids)
+        recipients = [manager_id] if manager_id in venue_staff_ids else []
         venue_name = venue.name if venue else f"Venue #{booking.venue_id}"
         booking_date = (
             booking.start_datetime.strftime("%d %b %Y, %H:%M").lstrip("0")
