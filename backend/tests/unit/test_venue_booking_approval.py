@@ -194,7 +194,7 @@ def test_approve_ac1_approve_pending_and_update_calendar(client, approve_context
     # AC3: Calendar includes correct event and original datetimes, including overnight.
 
 
-def test_approve_ac3_calendar_displays_overnight_booking(client, approve_context):
+def test_approve_ac2_calendar_displays_overnight_booking(client, approve_context):
     start = at(30, 22)
     end = start + timedelta(hours=4)  # next day, 02:00
     booking_id = add_approval_booking(approve_context, start=start, end=end)
@@ -207,10 +207,10 @@ def test_approve_ac3_calendar_displays_overnight_booking(client, approve_context
     assert item['startDatetime'] == start.isoformat()
     assert item['endDatetime'] == end.isoformat()
     assert end.date() > start.date()
-    # AC4: An approved booking overlapping the requested window blocks approval.
+    # AC2: An approved booking overlapping the requested window blocks approval.
 
 
-def test_approve_ac4_overlapping_approved_booking_is_identified(client, approve_context):
+def test_approve_ac3_overlapping_approved_booking_is_identified(client, approve_context):
     existing_id = add_approval_booking(approve_context, start=at(30, 10), end=at(30, 12), status='approved', event=approve_context.other_event)
     candidate_id = add_approval_booking(approve_context, start=at(30, 11), end=at(30, 13))
     response = approve_request(client, approve_context, candidate_id)
@@ -219,16 +219,16 @@ def test_approve_ac4_overlapping_approved_booking_is_identified(client, approve_
     assert 'conflict' in response.get_json()['error'].lower()
     db.session.expire_all()
     assert db.session.get(VenueBooking, candidate_id).status == 'pending'
-    # AC4: Adjacent bookings are allowed when there is no setup/turnaround padding.
+    # AC3: Adjacent bookings are allowed when there is no setup/turnaround padding.
 
 
-def test_approve_ac4_back_to_back_bookings_do_not_overlap(client, approve_context):
+def test_approve_ac3_back_to_back_bookings_do_not_overlap(client, approve_context):
     add_approval_booking(approve_context, start=at(30, 10), end=at(30, 12), status='approved', event=approve_context.other_event)
     candidate_id = add_approval_booking(approve_context, start=at(30, 12), end=at(30, 14))
     response = approve_request(client, approve_context, candidate_id)
     assert response.status_code == 200
     assert response.get_json()['status'] == 'approved'
-    # AC5: A second approval after another decision cannot overwrite it.
+    # AC3: A second approval after another decision cannot overwrite it.
 
 
 @pytest.mark.parametrize('decided_status', ['approved', 'rejected'])
@@ -362,7 +362,7 @@ def test_reject_ac4_not_shown_in_confirmed_calendar(client, approve_context):
 
 @pytest.mark.parametrize('field', ['reason', 'alternativeSuggestion'])
 
-def test_reject_ac5_more_than_500_characters_blocked(client, approve_context, field):
+def test_reject_ac3_more_than_500_characters_blocked(client, approve_context, field):
     booking_id = add_approval_booking(approve_context)
     response = reject_request(client, approve_context, booking_id, {field: 'x' * 501})
     assert response.status_code == 400
@@ -373,7 +373,7 @@ def test_reject_ac5_more_than_500_characters_blocked(client, approve_context, fi
 
 @pytest.mark.parametrize('field', ['reason', 'alternativeSuggestion'])
 
-def test_reject_ac5_exactly_500_characters_accepted(client, approve_context, field):
+def test_reject_ac3_exactly_500_characters_accepted(client, approve_context, field):
     booking_id = add_approval_booking(approve_context)
     response = reject_request(client, approve_context, booking_id, {field: 'x' * 500})
     assert response.status_code == 200
@@ -770,3 +770,44 @@ def test_hold_reject_duplicate_place_action(client, context):
     assert hold_request(client, context, booking_id).status_code == 200
     response = hold_request(client, context, booking_id)
     assert response.status_code in (400, 409)
+
+def test_hold_other_staff_cannot_extend_hold(client, approve_context):
+    booking_id = add_approval_booking(approve_context)
+
+    # Venue owner places a hold.
+    response = hold_request(
+        client, approve_context, booking_id
+    )
+    assert response.status_code == 200
+
+    # Another Venue Staff member tries to extend it.
+    response = hold_request(
+        client,
+        approve_context,
+        booking_id,
+        action="extend",
+        headers=approve_context.other_staff_headers,
+    )
+
+    assert response.status_code == 403
+
+
+def test_hold_other_staff_cannot_release_hold(client, approve_context):
+    booking_id = add_approval_booking(approve_context)
+
+    # Venue owner places a hold.
+    response = hold_request(
+        client, approve_context, booking_id
+    )
+    assert response.status_code == 200
+
+    # Another Venue Staff member tries to release it.
+    response = hold_request(
+        client,
+        approve_context,
+        booking_id,
+        action="release",
+        headers=approve_context.other_staff_headers,
+    )
+
+    assert response.status_code == 403

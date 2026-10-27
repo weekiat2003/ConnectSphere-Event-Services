@@ -209,6 +209,64 @@ def test_ac1_request_with_several_venues_creates_a_linked_pending_booking_per_ve
         ]
     )
 
+def test_ac1_multiple_venues_are_routed_to_their_respective_staff(
+    client, ctx, make_user, make_venue, auth_header
+):
+    # Create another Venue Staff member and their venue.
+    other_staff_id = make_user(
+        "other-venue-staff@test.com",
+        ["venue_staff"],
+    )
+
+    other_venue_id = make_venue(
+        "Other Staff Hall",
+        other_staff_id,
+    )
+
+    # Submit one request containing venues managed by different staff.
+    res = submit(
+        client,
+        ctx,
+        [
+            entry(ctx.hall_a),
+            entry(other_venue_id),
+        ],
+    )
+
+    assert res.status_code == 201, res.get_json()
+
+    bookings = {
+        booking["venueId"]: booking["id"]
+        for booking in res.get_json()
+    }
+
+    assert len(bookings) == 2
+
+    # Original Venue Staff should see only Hall A.
+    staff_a_response = client.get(
+        f"{BASE}/bookings/pending",
+        headers=ctx.staff,
+    )
+
+    assert staff_a_response.status_code == 200
+
+    assert {
+        booking["id"]
+        for booking in staff_a_response.get_json()
+    } == {bookings[ctx.hall_a]}
+
+    # Second Venue Staff should see only their own venue.
+    staff_b_response = client.get(
+        f"{BASE}/bookings/pending",
+        headers=auth_header("other-venue-staff@test.com"),
+    )
+
+    assert staff_b_response.status_code == 200
+
+    assert {
+        booking["id"]
+        for booking in staff_b_response.get_json()
+    } == {bookings[other_venue_id]}
 
 # --------------------------------------------------------------------------
 # AC2:
@@ -395,7 +453,7 @@ def test_ac4_end_time_on_the_next_day_is_accepted_with_the_correct_end(
         "approved",
     ],
 )
-def test_ac6_venue_with_an_active_booking_is_blocked_and_named(
+def test_ac5_venue_with_an_active_booking_is_blocked_and_named(
     client,
     ctx,
     existing_status,
@@ -438,7 +496,7 @@ def test_ac6_venue_with_an_active_booking_is_blocked_and_named(
         "withdrawn",
     ],
 )
-def test_ac6_venue_can_be_included_again_after_reject_or_withdraw(
+def test_ac5_venue_can_be_included_again_after_reject_or_withdraw(
     client,
     ctx,
     old_status,
