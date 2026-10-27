@@ -11,7 +11,6 @@ from app.common.time import utcnow
 from app.events.services import assignment, review, safety, status
 from app.events.services import update as update_service
 from app.extensions import db
-from app.models.event import Event, EventEquipmentRequirement
 from app.models.notification import (
     TYPE_COORDINATOR_ASSIGNMENT,
     TYPE_NEW_EQUIPMENT_REQUEST,
@@ -24,10 +23,11 @@ from app.models.notification import (
     Notification,
 )
 from app.models.user import User
-from app.models.venue import Venue, VenueBooking
+from app.models.venue import Venue, VenueBooking, BOOKING_APPROVED
+from app.models.event import Event, EventEquipmentRequirement, EventSafetyReview
 from app.registrations import service as registrations
 from app.venues.services import booking as booking_service
-from app.venues.services.booking_requests import submit_booking_requests
+from app.venues.services.booking_requests import (BookingRequestError,submit_booking_requests,)
 
 FUTURE = date.today() + timedelta(days=60)
 
@@ -76,7 +76,19 @@ def submitted_and_assigned(organiser, coordinator):
     event = review.submit_event(new_event(organiser), organiser)
     return assignment.lead_assign(event, db.session.get(User, coordinator))
 
-
+# helper function to create an event that is ready for safety check
+def ready_event(organiser_id, coordinator_id, venue_manager_id, venue_name="Grand Hall", **fields):
+    """Planning event with an approved venue booking, so it may enter the safety check."""
+    event = new_event(organiser_id, "planning", coordinator_id, **fields)
+    venue = Venue(name=venue_name, capacity=300, created_by=venue_manager_id)
+    db.session.add(venue)
+    db.session.flush()
+    start = utcnow() + timedelta(days=10)
+    db.session.add(VenueBooking(
+        event_id=event.id, venue_id=venue.id, requested_by=coordinator_id,
+        status=BOOKING_APPROVED, start_datetime=start, end_datetime=start + timedelta(hours=3)))
+    db.session.commit()
+    return event
 # ===========================================================================
 # ISP-102 — Organiser
 # ===========================================================================
@@ -107,7 +119,7 @@ class TestISP102Organiser:
         assert n.data["editableFields"] == ["expected_attendance"]
 
     def test_ac4_and_ac5_safety_stage_and_decisions(self, app, organiser, coordinator, staff):
-        event = new_event(organiser, "planning", coordinator)
+        event = ready_event(organiser, coordinator, staff["venue1"])
         status.change_status(event, "safety_check", coordinator)
         officer = db.session.get(User, staff["safety1"])
         safety.review_safety_check(
@@ -116,10 +128,21 @@ class TestISP102Organiser:
             affected_arrangements=["venue"],
         )
         assert event.status == "planning"
+        
         status.change_status(event, "safety_check", coordinator)
         safety.review_safety_check(event, officer, "approved", assessed_factors=list(safety.SAFETY_FACTOR_ORDER))
 
+        # Approval alone no longer confirms the event — the assigned Coordinator
+        # must explicitly confirm it (Clarification Session 3).
+        latest_review = (
+            EventSafetyReview.query.filter_by(event_id=event.id)
+            .order_by(EventSafetyReview.id.desc())
+            .first()
+        )
+        status.confirm_after_safety_approval(event, latest_review, coordinator)
+
         assert kinds(organiser) == ["safety_check", "safety_changes_requested", "safety_check", "confirmed"]
+        
         decision = [n for n in inbox(organiser) if n.data.get("kind") == "safety_changes_requested"][0]
         assert "The fire exit is blocked by staging." in decision.message
         assert decision.data["affectedArrangements"] == ["venue"]
@@ -249,34 +272,232 @@ class TestISP105Coordinator:
         assert n.title == "Venue booking rejected" and "Closed for maintenance" in n.message
 
 
+
 # ===========================================================================
 # ISP-104 — Venue Staff
 # ===========================================================================
 class TestISP104VenueStaff:
+
     def _submit(self, organiser, coordinator, created_by):
         event = new_event(organiser, "planning", coordinator)
-        venue = Venue(name="Riverside Room", capacity=200, created_by=created_by)
+        venue = Venue(
+            name="Riverside Room",
+            capacity=200,
+            created_by=created_by,
+        )
         db.session.add(venue)
         db.session.commit()
+
         [booking] = submit_booking_requests(
-            event, [{"venue_id": venue.id, "date": FUTURE, "start_time": time(9), "end_time": time(12)}],
+            event,
+            [{
+                "venue_id": venue.id,
+                "date": FUTURE,
+                "start_time": time(9),
+                "end_time": time(12),
+            }],
             coordinator,
         )
         return booking
 
-    def test_only_the_venue_manager_is_notified_with_details_and_link(self, app, organiser, coordinator, staff):
-        booking = self._submit(organiser, coordinator, staff["venue1"])
-        [n] = inbox(staff["venue1"], TYPE_NEW_VENUE_BOOKING_REQUEST)
+    # -----------------------------------------------------------------------
+    # AC1: Successful submission generates a notification.
+    # AC2: Notification includes venue name, event name, and booking date.
+    # AC3: Only the Venue Staff managing the venue receives it.
+    # AC4: Notification contains the corresponding booking's link.
+    # -----------------------------------------------------------------------
+    def test_only_the_venue_manager_is_notified_with_details_and_link(
+        self, app, organiser, coordinator, staff
+    ):
+        booking = self._submit(
+            organiser, coordinator, staff["venue1"]
+        )
+
+        [n] = inbox(
+            staff["venue1"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        )
+
         assert n.data["venueName"] == "Riverside Room"
         assert n.data["eventName"] == "Gala Night"
         assert FUTURE.strftime("%b %Y") in n.data["bookingDate"]
         assert n.link == f"/venues/approval?booking={booking.id}"
-        assert inbox(staff["venue2"]) == []
 
-    def test_unmanaged_venue_falls_back_to_all_venue_staff(self, app, organiser, coordinator, staff):
-        self._submit(organiser, coordinator, None)
-        assert len(inbox(staff["venue1"], TYPE_NEW_VENUE_BOOKING_REQUEST)) == 1
-        assert len(inbox(staff["venue2"], TYPE_NEW_VENUE_BOOKING_REQUEST)) == 1
+        # AC3: Unrelated Venue Staff must not receive the notification.
+        assert inbox(
+            staff["venue2"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        ) == []
+
+    # -----------------------------------------------------------------------
+    # AC2: Notification details are available through the inbox API.
+    # AC3: Other Venue Staff cannot see another manager's notification.
+    # AC4: Notification provides the correct booking deep link.
+    #
+    # Note: Actual frontend clicking/navigation requires a browser test.
+    # -----------------------------------------------------------------------
+    def test_venue_staff_inbox_contains_booking_details_and_deep_link(
+        self, app, client, auth_header, organiser, coordinator, staff
+    ):
+        booking = self._submit(
+            organiser, coordinator, staff["venue1"]
+        )
+
+        response = client.get(
+            "/api/notifications",
+            headers=auth_header("venue1@test.com"),
+        )
+
+        assert response.status_code == 200
+
+        matches = [
+            n for n in response.get_json()
+            if n["type"] == TYPE_NEW_VENUE_BOOKING_REQUEST
+        ]
+
+        assert len(matches) == 1
+
+        notification = matches[0]
+
+        assert notification["data"]["venueName"] == "Riverside Room"
+        assert notification["data"]["eventName"] == "Gala Night"
+        assert FUTURE.strftime("%b %Y") in notification["data"]["bookingDate"]
+        assert notification["link"] == (
+            f"/venues/approval?booking={booking.id}"
+        )
+
+        # AC3: Venue Staff 2 must not see Venue Staff 1's notification.
+        other = client.get(
+            "/api/notifications",
+            headers=auth_header("venue2@test.com"),
+        )
+
+        assert other.status_code == 200
+        assert not any(
+            n["type"] == TYPE_NEW_VENUE_BOOKING_REQUEST
+            for n in other.get_json()
+        )
+
+    # -----------------------------------------------------------------------
+    # AC5: Failed or incomplete booking submission must not generate
+    #      any Venue Staff notification.
+    # -----------------------------------------------------------------------
+    def test_failed_booking_submission_creates_no_venue_staff_notification(
+        self, app, organiser, coordinator, staff
+    ):
+        event = new_event(
+            organiser, "planning", coordinator
+        )
+
+        # Invalid venue ID should cause submission to fail.
+        with pytest.raises(BookingRequestError):
+            submit_booking_requests(
+                event,
+                [{
+                    "venue_id": -999999,
+                    "date": FUTURE,
+                    "start_time": time(9),
+                    "end_time": time(12),
+                }],
+                coordinator,
+            )
+
+        db.session.rollback()
+
+        # AC5: Neither Venue Staff member should be notified.
+        assert inbox(
+            staff["venue1"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        ) == []
+
+        assert inbox(
+            staff["venue2"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        ) == []
+
+    # -----------------------------------------------------------------------
+    # AC1: Multi-venue submission generates notifications.
+    # AC3: Each Venue Staff receives notifications only for venues managed.
+    # AC6: Different venue managers each receive the correct notification,
+    #      with no duplicates for the same booking.
+    # -----------------------------------------------------------------------
+    def test_multiple_venues_notify_respective_managers_without_duplicates(
+        self, app, organiser, coordinator, staff
+    ):
+        event = new_event(
+            organiser, "planning", coordinator
+        )
+
+        venue1 = Venue(
+            name="Riverside Room",
+            capacity=200,
+            created_by=staff["venue1"],
+        )
+
+        venue2 = Venue(
+            name="Grand Hall",
+            capacity=300,
+            created_by=staff["venue2"],
+        )
+
+        db.session.add_all([venue1, venue2])
+        db.session.commit()
+
+        bookings = submit_booking_requests(
+            event,
+            [
+                {
+                    "venue_id": venue1.id,
+                    "date": FUTURE,
+                    "start_time": time(9),
+                    "end_time": time(12),
+                },
+                {
+                    "venue_id": venue2.id,
+                    "date": FUTURE,
+                    "start_time": time(14),
+                    "end_time": time(17),
+                },
+            ],
+            coordinator,
+        )
+
+        assert len(bookings) == 2
+
+        notices1 = inbox(
+            staff["venue1"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        )
+
+        notices2 = inbox(
+            staff["venue2"],
+            TYPE_NEW_VENUE_BOOKING_REQUEST,
+        )
+
+        # AC6: Each staff member receives exactly one notification.
+        assert len(notices1) == 1
+        assert len(notices2) == 1
+
+        # AC3: Notifications belong to the correct venue manager.
+        assert notices1[0].data["venueName"] == "Riverside Room"
+        assert notices2[0].data["venueName"] == "Grand Hall"
+
+        assert notices1[0].data["eventName"] == event.name
+        assert notices2[0].data["eventName"] == event.name
+
+        # AC6: Each notification points to a different booking.
+        expected_links = {
+            f"/venues/approval?booking={booking.id}"
+            for booking in bookings
+        }
+
+        assert {
+            notices1[0].link,
+            notices2[0].link,
+        } == expected_links
+
+        assert notices1[0].link != notices2[0].link
+
 
 
 # ===========================================================================
@@ -397,8 +618,46 @@ class TestISP108Attendees:
 # ISP-130 — Safety Officer
 # ===========================================================================
 class TestISP130SafetyOfficer:
+        # ---- AC1
+    def test_ac1_only_safety_officers_are_notified(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        for user_id in (organiser, coordinator, staff["tech"], staff["lead1"],
+                        staff["venue1"], staff["coord_b"]):
+            assert inbox(user_id, TYPE_SAFETY_CHECK) == []
+
+    def test_ac1_inactive_officer_is_not_notified(self, app, organiser, coordinator, staff):
+        db.session.get(User, staff["safety1"]).is_active = False
+        db.session.commit()
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        assert inbox(staff["safety1"], TYPE_SAFETY_CHECK) == []
+        assert len(inbox(staff["safety2"], TYPE_SAFETY_CHECK)) == 1
+
+    def test_ac1_real_trigger_notifies_when_arrangements_complete(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.try_advance_to_safety_check(event, coordinator)
+        assert event.status == "safety_check"
+        for officer in ("safety1", "safety2"):
+            assert len(inbox(staff[officer], TYPE_SAFETY_CHECK)) == 1
+
+    def test_ac1_expired_or_released_hold_does_not_block(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        venue = Venue(name="Annex", capacity=100, created_by=staff["venue1"])
+        db.session.add(venue)
+        db.session.flush()
+        for state in ("expired", "released"):
+            db.session.add(VenueBooking(event_id=event.id, venue_id=venue.id, requested_by=coordinator,
+                                        status=state, start_datetime=utcnow() + timedelta(days=10),
+                                        end_datetime=utcnow() + timedelta(days=10, hours=3)))
+        db.session.commit()
+        status.try_advance_to_safety_check(event, coordinator)
+        assert event.status == "safety_check"
+        assert len(inbox(staff["safety1"], TYPE_SAFETY_CHECK)) == 1
+
+
     def test_ac1_ac2_ac4_every_officer_once_with_details(self, app, organiser, coordinator, staff):
-        event = new_event(organiser, "planning", coordinator)
+        event = ready_event(organiser, coordinator, staff["venue1"])
         status.change_status(event, "safety_check", coordinator)
 
         for officer in ("safety1", "safety2"):
@@ -408,8 +667,20 @@ class TestISP130SafetyOfficer:
                 assert text in n.message
             assert n.link == f"/safety-reviews/{event.id}"
 
+ # ---- AC2
+    def test_ac2_message_has_venue_date_time_and_attendance(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        [n] = inbox(staff["safety1"], TYPE_SAFETY_CHECK)
+        for text in ("Gala Night", "Grand Hall", FUTURE.strftime("%b %Y"), "19:00", "Expected attendance: 120"):
+            assert text in n.message
+        assert n.link == f"/safety-reviews/{event.id}"
+
+
+
     def test_ac3_unread_until_opened_then_still_viewable(self, app, client, auth_header, organiser, coordinator, staff):
-        status.change_status(new_event(organiser, "planning", coordinator), "safety_check", coordinator)
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
         headers = auth_header("safety1@test.com")
         [n] = client.get("/api/notifications", headers=headers).get_json()
         assert n["isRead"] is False and n["createdAt"]
@@ -418,8 +689,75 @@ class TestISP130SafetyOfficer:
         assert client.get("/api/notifications/unread-count", headers=headers).get_json()["count"] == 0
         assert len(client.get("/api/notifications", headers=headers).get_json()) == 1
 
+  # ---- AC3
+    def test_ac3_notification_remains_after_the_officer_decides(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        safety.review_safety_check(event, db.session.get(User, staff["safety1"]), "approved",
+                                   assessed_factors=list(safety.SAFETY_FACTOR_ORDER))
+        assert len(inbox(staff["safety1"], TYPE_SAFETY_CHECK)) == 1
+
+
+     # ---- AC4
+    def test_ac4_officer_who_is_also_the_coordinator_gets_one(self, app, organiser, staff):
+        event = ready_event(organiser, staff["safety2"], staff["venue1"])
+        status.change_status(event, "safety_check", staff["safety2"])
+        assert len(inbox(staff["safety2"], TYPE_SAFETY_CHECK)) == 1
+
+    def test_ac4_repeated_advance_does_not_notify_twice(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.try_advance_to_safety_check(event, coordinator)
+        status.try_advance_to_safety_check(event, coordinator)
+        assert len(inbox(staff["safety1"], TYPE_SAFETY_CHECK)) == 1
+
+
+    # ---- AC5
+    def test_ac5_changes_requested_also_triggers_recheck(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        safety.review_safety_check(
+            event, db.session.get(User, staff["safety1"]), "changes_requested",
+            comments="The exit is blocked by staging.", assessed_factors=["emergency_access"],
+            concern_factors=["emergency_access"], affected_arrangements=["venue"])
+        status.change_status(event, "safety_check", coordinator)
+        assert [n.data["recheck"] for n in inbox(staff["safety1"], TYPE_SAFETY_CHECK)] == [False, True]
+
+    def _approve_and_confirm(self, event, staff, coordinator):
+        safety.review_safety_check(event, db.session.get(User, staff["safety1"]), "approved",
+                                   assessed_factors=list(safety.SAFETY_FACTOR_ORDER))
+        status.confirm_after_safety_approval(
+            event, status.approved_safety_review_for_current_check(event), coordinator)
+        assert event.status == "confirmed"
+
+    def test_ac5_reentry_after_confirmed_event_changes_is_a_recheck(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        self._approve_and_confirm(event, staff, coordinator)
+        status.revert_to_planning(event, coordinator, "Attendance increased")
+        status.try_advance_to_safety_check(event, coordinator)
+        notices = inbox(staff["safety1"], TYPE_SAFETY_CHECK)
+        assert [n.data["recheck"] for n in notices] == [False, True]
+        assert notices[1].title == "Safety re-check required"
+
+    def test_ac5_officer_can_decide_the_recheck_and_stale_approval_cannot_confirm(
+        self, app, client, auth_header, organiser, coordinator, staff
+    ):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        self._approve_and_confirm(event, staff, coordinator)
+        status.revert_to_planning(event, coordinator, "Attendance increased")
+        status.try_advance_to_safety_check(event, coordinator)
+
+        res = client.post(f"/api/events/{event.id}/confirm", headers=auth_header("coordinator@test.com"))
+        assert res.status_code == 400 and event.status == "safety_check"
+
+        safety.review_safety_check(event, db.session.get(User, staff["safety1"]), "approved",
+                                   assessed_factors=list(safety.SAFETY_FACTOR_ORDER))  # must not raise
+        assert status.approved_safety_review_for_current_check(event) is not None
+
+
     def test_ac5_re_entry_after_rework_is_a_recheck(self, app, organiser, coordinator, staff):
-        event = new_event(organiser, "planning", coordinator)
+        event = ready_event(organiser, coordinator, staff["venue1"])
         status.change_status(event, "safety_check", coordinator)
         safety.review_safety_check(
             event, db.session.get(User, staff["safety1"]), "rejected",
@@ -431,6 +769,43 @@ class TestISP130SafetyOfficer:
         notices = inbox(staff["safety1"], TYPE_SAFETY_CHECK)
         assert [n.data["recheck"] for n in notices] == [False, True]
         assert notices[1].title == "Safety re-check required"
+
+
+# ---- AC6
+    def test_ac6_direct_entry_blocked_while_booking_pending(self, app, organiser, coordinator, staff):
+        event = new_event(organiser, "planning", coordinator)
+        venue = Venue(name="Hall", capacity=300, created_by=staff["venue1"])
+        db.session.add(venue)
+        db.session.flush()
+        db.session.add(VenueBooking(event_id=event.id, venue_id=venue.id, requested_by=coordinator,
+                                    status="pending", start_datetime=utcnow() + timedelta(days=10),
+                                    end_datetime=utcnow() + timedelta(days=10, hours=3)))
+        db.session.commit()
+        with pytest.raises(status.InvalidTransitionError):
+            status.change_status(event, "safety_check", coordinator)
+        assert event.status == "planning"
+        assert Notification.query.filter_by(type=TYPE_SAFETY_CHECK).count() == 0
+
+    def test_ac6_status_endpoint_cannot_bypass_the_guard(self, app, client, auth_header, organiser, coordinator, staff):
+        event = new_event(organiser, "planning", coordinator)  # no approved venue yet
+        res = client.post(f"/api/events/{event.id}/status", headers=auth_header("coordinator@test.com"),
+                          json={"status": "safety_check"})
+        assert res.status_code == 400
+        assert Notification.query.filter_by(type=TYPE_SAFETY_CHECK).count() == 0
+
+    def test_ac6_unreserved_equipment_blocks_notification(self, app, organiser, coordinator, staff):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        event.equipment_requirements.append(EventEquipmentRequirement(equipment_type="Projector", quantity=2))
+        db.session.commit()
+        status.try_advance_to_safety_check(event, coordinator)
+        assert event.status == "planning"
+        assert Notification.query.filter_by(type=TYPE_SAFETY_CHECK).count() == 0
+
+    def test_ac6_no_notification_in_earlier_stages(self, app, organiser, coordinator, staff):
+        event = submitted_and_assigned(organiser, coordinator)
+        review.approve_event(event, coordinator)  # submitted -> under_review -> approved -> planning
+        assert Notification.query.filter_by(type=TYPE_SAFETY_CHECK).count() == 0
+
 
     def test_ac6_no_notification_while_arrangements_are_pending(self, app, organiser, coordinator, staff):
         event = new_event(organiser, "planning", coordinator)

@@ -35,9 +35,18 @@ connectsphere/
    mysql -u connectsphere_user -p connectsphere < database/schema.sql
    ```
 
-   This creates all tables and seeds the six fixed roles (`event_organiser`,
-   `event_coordinator`, `venue_staff`, `technical_support_staff`,
-   `safety_officer`, `attendee`).
+   This creates all tables and seeds the seven fixed roles (`event_organiser`,
+   `event_coordinator`, `event_coordinator_lead`, `venue_staff`,
+   `technical_support_staff`, `safety_officer`, `attendee`).
+
+   **Existing database?** If your `event_coordinator_history` table predates
+   the Event Coordinator Lead feature, add the new column:
+
+   ```sql
+   ALTER TABLE event_coordinator_history
+       ADD COLUMN assigned_by BIGINT UNSIGNED NULL AFTER assignment_type,
+       ADD CONSTRAINT fk_ech_assigned_by FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL;
+   ```
 
 ## 2. Backend setup (Flask API)
 
@@ -61,7 +70,7 @@ python scripts/seed_users.py
 ```
 
 This creates one user per role (`organiser@example.com`,
-`coordinator1@example.com`, `coordinator2@example.com`, `venue@example.com`,
+`coordinator1@example.com`, `coordinator2@example.com`, `lead@example.com`, `venue@example.com`,
 `techsupport@example.com`, `safety@example.com`, `attendee@example.com`), all
 with the password
 `Password123!`.

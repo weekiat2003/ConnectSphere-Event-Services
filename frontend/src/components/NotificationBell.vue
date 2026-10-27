@@ -35,8 +35,13 @@ async function refresh() {
 onMounted(() => {
   refresh();
   timer = setInterval(refresh, POLL_MS);
+  window.addEventListener("notifications-changed", refresh);
+
 });
-onUnmounted(() => clearInterval(timer));
+onUnmounted(() => {
+  clearInterval(timer);
+  window.removeEventListener("notifications-changed", refresh);
+});
 watch(() => route.fullPath, refresh);
 
 defineExpose({ refresh });

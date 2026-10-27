@@ -307,7 +307,7 @@ def test_last_equipment_reservation_moves_event_to_safety_check(
         assert event.status == "safety_check"
 
 
-def test_only_safety_officer_approval_confirms_event(app, organiser, make_user, make_event):
+def test_safety_officer_approval_leaves_event_awaiting_coordinator_confirmation(app, organiser, make_user, make_event):
     # AC3: a Safety Officer's "approved" decision is the only way to
     # reach "confirmed".
     with app.app_context():
@@ -324,7 +324,7 @@ def test_only_safety_officer_approval_confirms_event(app, organiser, make_user, 
             assessed_factors=sorted(safety.SAFETY_FACTORS),
         )
 
-        assert event.status == "confirmed"
+        assert event.status == "safety_check"
         review_record = EventSafetyReview.query.filter_by(event_id=event_id).one()
         assert review_record.decision == "approved"
         assert review_record.safety_officer_id == officer_id
@@ -527,25 +527,74 @@ def test_releasing_equipment_reservation_reverts_confirmed_event_to_planning(
         assert event.status == "planning"
 
 
-def test_safety_approval_records_officer_in_status_history(app, organiser, make_user, make_event):
-    # AC3 regression: the status-history row for safety_check -> confirmed
-    # must record the deciding Safety Officer, not NULL.
+def test_coordinator_confirm_moves_approved_event_to_confirmed(app, organiser, make_user, make_event):
     with app.app_context():
-        officer_id = make_user("audit-safety@test.com", ["safety_officer"])
+        officer_id = make_user("confirm-flow-officer@test.com", ["safety_officer"])
+        coordinator_id = make_user("confirm-flow-coordinator@test.com", ["event_coordinator"])
         officer = db.session.get(User, officer_id)
         event_id = make_event(organiser, status="safety_check")
         event = db.session.get(Event, event_id)
+        event.coordinator_id = coordinator_id
+        db.session.commit()
 
         safety.review_safety_check(
             event, officer, "approved", "Checked",
             assessed_factors=sorted(safety.SAFETY_FACTORS),
         )
+        review = (
+            EventSafetyReview.query.filter_by(event_id=event_id)
+            .order_by(EventSafetyReview.id.desc())
+            .first()
+        )
 
-        confirm_entry = EventStatusHistory.query.filter_by(
-            event_id=event_id, new_status="confirmed"
-        ).one()
-        assert confirm_entry.changed_by == officer_id
+        event = status_service.confirm_after_safety_approval(event, review, coordinator_id)
 
+        assert event.status == "confirmed"
+        latest_history = (
+            EventStatusHistory.query
+            .filter_by(event_id=event_id, new_status="confirmed")
+            .order_by(EventStatusHistory.id.desc())
+            .first()
+        )
+        assert latest_history is not None
+        assert latest_history.changed_by == coordinator_id
+
+
+def test_confirm_after_safety_approval_rejects_when_not_in_safety_check(app, organiser, make_user, make_event):
+    with app.app_context():
+        coordinator_id = make_user("not-safety-check-coordinator@test.com", ["event_coordinator"])
+        officer_id = make_user("not-safety-check-officer@test.com", ["safety_officer"])
+        officer = db.session.get(User, officer_id)
+
+        # Case 1: event already confirmed — confirming twice must fail.
+        confirmed_event_id = make_event(organiser, status="safety_check")
+        confirmed_event = db.session.get(Event, confirmed_event_id)
+        confirmed_event.coordinator_id = coordinator_id
+        db.session.commit()
+        safety.review_safety_check(
+            confirmed_event, officer, "approved", "Checked",
+            assessed_factors=sorted(safety.SAFETY_FACTORS),
+        )
+        review = (
+            EventSafetyReview.query.filter_by(event_id=confirmed_event_id)
+            .order_by(EventSafetyReview.id.desc())
+            .first()
+        )
+
+        confirmed_event = status_service.confirm_after_safety_approval(confirmed_event, review, coordinator_id)
+        assert confirmed_event.status == "confirmed"
+
+        with pytest.raises(status_service.InvalidTransitionError):
+            status_service.confirm_after_safety_approval(confirmed_event, review, coordinator_id)
+
+        # Case 2: event still in planning — never reached an approved safety review.
+        planning_event_id = make_event(organiser, status="planning")
+        planning_event = db.session.get(Event, planning_event_id)
+        planning_event.coordinator_id = coordinator_id
+        db.session.commit()
+
+        with pytest.raises(status_service.InvalidTransitionError):
+            status_service.confirm_after_safety_approval(planning_event, review, coordinator_id)
 
 # =====================================================================
 # Story 4: Retain rejected and cancelled requests with final status visible

@@ -1,13 +1,13 @@
 """Operational safety check: the Safety Officer's review list, the facts they
 assess, their per-factor assessment, and their final decision."""
 from app.common.text_validation import validate_descriptive_text
-from app.events.services import status as status_service
 from app.events.services.status import change_status
 from app.extensions import db
 from app.models.event import Event, EventSafetyAssessment, EventSafetyReview
 from app.models.user import User
 from app.models.venue import BOOKING_APPROVED
 from app.notifications.services import triggers as notifications
+from app.events.services import status as status_service
 
 SAFETY_DECISIONS = {"approved", "rejected", "changes_requested"}
 
@@ -132,7 +132,7 @@ def build_safety_review(event: Event) -> dict:
         ],
         "venues": venues,
         "factors": [{"key": key, "label": label} for key, label in SAFETY_FACTOR_DEFINITIONS],
-        "canAssess": event.status == "safety_check",
+        "canAssess": event.status == "safety_check" and status_service.approved_safety_review_for_current_check(event) is None,
         "assessment": event.safety_assessment.to_dict() if event.safety_assessment else None,
         "safetyReviews": [review.to_dict() for review in event.safety_reviews],
     }
@@ -216,6 +216,12 @@ def review_safety_check(
         raise PermissionError("Only a Safety Officer can review event safety")
     if event.status != "safety_check":
         raise SafetyReviewConflictError("Only events awaiting a safety check can be reviewed")
+    # A decision already made (approved) and not yet acted on by the Coordinator blocks a second review until the event leaves safety_check (confirmed, or reverted to planning).
+    if status_service.approved_safety_review_for_current_check(event) is not None:
+        raise SafetyReviewConflictError(
+            "This event already has an approved safety review awaiting Coordinator confirmation"
+        )
+
     if decision not in SAFETY_DECISIONS:
         raise ValueError("Decision must be approved, rejected, or changes_requested")
     if comments is not None and not isinstance(comments, str):
@@ -269,15 +275,15 @@ def review_safety_check(
     # The decision now holds the assessment; the next safety check starts fresh.
     if event.safety_assessment is not None:
         db.session.delete(event.safety_assessment)
-    if decision == "approved":
-        status_service.confirm_after_safety_approval(event, review)
-    else:
+    if decision != "approved":
         reason = f"Safety check {decision.replace('_', ' ')}"
         reason = f"{reason}: {comments}"
-        # The organiser gets the detailed decision (reason + affected
-        # arrangements) instead of the generic "returned to planning" notice.
-        notifications.notify_organiser_of_safety_decision(event, review)
         change_status(event, "planning", changed_by_id=safety_officer.id, reason=reason, notify=False)
+        notifications.notify_organiser_of_safety_decision(event, review)
+    # On approval, the event stays in "safety_check" — the assigned Coordinator must explicitly mark it Confirmed (Clarification Session 3: "The co-ordinator need to mark the event as confirmed once he sees all approvals are done").
+    # Add an explicit commit at the end of review_safety_check, so both approved and non-approved branches persist consistently instead of relying on change_status to do it only for one of them:
+    db.session.commit()
+
     return event
 
 

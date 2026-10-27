@@ -264,7 +264,7 @@ def test_approval_with_factor_assessments_requires_every_factor(
             safety.review_safety_check(event, officer, "approved", factor_assessments=factors)
 
         safety.review_safety_check(event, officer, "approved", factor_assessments=_all_satisfactory())
-        assert event.status == "confirmed"
+        assert event.status == "safety_check"  # still pending Coordinator confirmation
 
 
 # AC4 -----------------------------------------------------------------

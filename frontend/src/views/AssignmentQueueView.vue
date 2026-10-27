@@ -3,8 +3,8 @@
     <h2 class="page-title">Assignment Queue</h2>
     <p class="hint">
       Every submitted request waits here until you assign it to a Coordinator. The least busy
-      Coordinator is suggested first. The assigned Coordinator is notified, and the other Leads'
-      notifications for the request are cleared.
+      Coordinator is suggested first. The Coordinator (and on reassignment, the previous one) and
+      the organiser are notified, and the other Leads' notifications for the request are cleared.
     </p>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -26,6 +26,7 @@
             <dt>Requester</dt><dd>{{ e.organiserName || "—" }}</dd>
             <dt>Event type</dt><dd>{{ e.category || "Not specified" }}</dd>
             <dt>Event date</dt><dd>{{ formatEventDate(e.proposedDate, e.proposedTime) }}</dd>
+            <dt>Attendance</dt><dd>{{ e.expectedAttendance ?? "Not specified" }}</dd>
             <dt>Submitted</dt><dd>{{ formatTimestamp(e.submittedAt) }}</dd>
           </dl>
         </div>
@@ -47,17 +48,18 @@
     <div v-if="!loading && !assigned.length" class="card empty">No assigned requests in progress.</div>
     <table v-else-if="assigned.length">
       <thead>
-        <tr><th>Request</th><th>Status</th><th>Assigned to</th><th>Reassign to</th></tr>
+        <tr><th>Request</th><th>Status</th><th>Assigned to</th><th>Reassign to</th><th>History</th></tr>
       </thead>
       <tbody>
-        <tr v-for="e in assigned" :key="e.id">
+        <template v-for="e in assigned" :key="e.id">
+        <tr>
           <td><router-link :to="`/events/${e.id}`">#{{ e.id }} {{ e.name }}</router-link></td>
           <td>{{ e.statusLabel }}</td>
           <td>{{ e.coordinatorName }}</td>
           <td>
             <div class="reassign">
               <select v-model.number="reassignChoice[e.id]" :aria-label="`Reassign request ${e.id}`">
-                <option :value="undefined" disabled>Select</option>
+                <option :value="undefined">Select</option>
                 <option v-for="c in coordinators.filter((c) => c.id !== e.coordinatorId)" :key="c.id" :value="c.id">
                   {{ c.name }} — {{ c.openRequests }} open
                 </option>
@@ -67,7 +69,26 @@
               </button>
             </div>
           </td>
+          <td>
+            <button class="btn" :aria-expanded="!!history[e.id]" @click="toggleHistory(e)">
+              {{ history[e.id] ? "Hide" : "Show" }}
+            </button>
+          </td>
         </tr>
+        <tr v-if="history[e.id]" class="history-row">
+          <td colspan="5">
+            <ol class="history">
+              <li v-for="h in history[e.id]" :key="h.id">
+                <strong>{{ h.coordinatorName }}</strong>
+                — {{ h.assignmentType === "reassignment" ? "reassigned" : "assigned" }}
+                {{ formatTimestamp(h.assignedAt) }}<span v-if="h.assignedByName"> by {{ h.assignedByName }}</span>
+                <span v-if="h.unassignedAt" class="muted"> (until {{ formatTimestamp(h.unassignedAt) }})</span>
+                <span v-else class="current"> (current)</span>
+              </li>
+            </ol>
+          </td>
+        </tr>
+        </template>
       </tbody>
     </table>
   </div>
@@ -90,6 +111,7 @@ const assigned = ref([]);
 const coordinators = ref([]);
 const choice = reactive({});
 const reassignChoice = reactive({});
+const history = reactive({});
 const loading = ref(true);
 const busyId = ref(null);
 const error = ref("");
@@ -140,7 +162,21 @@ async function confirmAndRun(call, event, coordinatorId, doneMessage) {
       : body.error || "That didn't work. Please try again.";
   } finally {
     busyId.value = null;
+    if (history[event.id]) delete history[event.id];
+    delete reassignChoice[event.id];
     await load();
+  }
+}
+
+async function toggleHistory(event) {
+  if (history[event.id]) {
+    delete history[event.id];
+    return;
+  }
+  try {
+    history[event.id] = (await eventsApi.assignmentHistory(event.id)).data;
+  } catch (e) {
+    error.value = e.response?.data?.error || "Could not load the assignment history.";
   }
 }
 
@@ -279,6 +315,20 @@ select {
 }
 
 .notice {
+  color: var(--mint-text);
+}
+
+.history {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.9rem;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.current {
   color: var(--mint-text);
 }
 </style>
