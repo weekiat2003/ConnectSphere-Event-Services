@@ -301,23 +301,41 @@
           <p v-if="editErrors.required_facilities" class="field-error">{{ editErrors.required_facilities }}</p>
         </div>
 
-        <div class="edit-field edit-field-wide">
+                <div class="edit-field edit-field-wide">
           <label>Equipment requirements</label>
-          <div v-for="(item, index) in editForm.equipment_requirements" :key="item.id ?? `new-${index}`"
-            class="equipment-row">
-            <input type="text" v-model="item.type" placeholder="Equipment type" />
-            <input type="number" min="1" v-model.number="item.quantity" placeholder="Qty" />
-            <input type="text" v-model="item.technicalNotes" placeholder="Technical notes (optional)" />
-            <button type="button" class="btn btn-grey btn-small"
-              @click="editForm.equipment_requirements.splice(index, 1)">Remove</button>
+          <p class="eq-help">Choose equipment from the catalogue, set how many are needed, and add any technical notes.</p>
+
+          <div v-if="editForm.equipment_requirements.length" class="eq-row eq-head" aria-hidden="true">
+            <span>Equipment</span><span>Qty</span><span>Technical notes</span><span></span>
+          </div>
+
+          <div v-for="(item, index) in editForm.equipment_requirements" :key="item.id ?? `new-${index}`" class="eq-block">
+            <div class="eq-row">
+              <select v-if="equipmentCatalogue.length" v-model="item.type" aria-label="Equipment">
+                <option value="" disabled>Choose equipment</option>
+                <option v-if="item.type && !equipmentCatalogue.some((e) => e.name === item.type)" :value="item.type">
+                  {{ item.type }} (not in catalogue)
+                </option>
+                <option v-for="entry in equipmentCatalogue" :key="entry.id" :value="entry.name">
+                  {{ entry.name }}
+                </option>
+              </select>
+              <input v-else type="text" v-model="item.type" placeholder="Equipment type" aria-label="Equipment" />
+              <input type="number" min="1" v-model.number="item.quantity" aria-label="Quantity" />
+              <input type="text" v-model="item.technicalNotes" placeholder="e.g. ceiling-mounted, 5 m cable" aria-label="Technical notes" />
+              <button type="button" class="btn btn-grey btn-small"
+                @click="editForm.equipment_requirements.splice(index, 1)">Remove</button>
+            </div>
             <p v-if="editErrors[`equipment_requirements[${index}].type`]" class="field-error">{{
               editErrors[`equipment_requirements[${index}].type`] }}</p>
             <p v-if="editErrors[`equipment_requirements[${index}].quantity`]" class="field-error">{{
               editErrors[`equipment_requirements[${index}].quantity`] }}</p>
           </div>
+
           <button type="button" class="btn btn-grey btn-small"
-            @click="editForm.equipment_requirements.push({ id: null, type: '', quantity: 1, technicalNotes: '' })">+ Add
-            equipment requirement</button>
+            @click="editForm.equipment_requirements.push({ id: null, type: '', quantity: 1, technicalNotes: '' })">
+            + Add equipment
+          </button>
           <p v-if="editErrors.equipment_requirements" class="field-error">{{ editErrors.equipment_requirements }}</p>
         </div>
 
@@ -1081,6 +1099,7 @@ const editTouchesSignificantField = computed(() =>
 let initialEditValues = {};
 
 function openEditForm() {
+  ensureCatalogue();
   if (!canEditEvent.value) return;
   const source = {
     name: event.value.name,
@@ -1486,6 +1505,14 @@ onMounted(async () => {
 .facility-row input,
 .equipment-row input {
   flex: 1;
+}
+
+.equipment-row select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border, #e4defa);
+  border-radius: 8px;
+  font: inherit;
+  min-width: 0;
 }
 
 
@@ -2133,5 +2160,14 @@ textarea {
 
 .edit-history-new {
   font-weight: 500;
+}
+
+.eq-help { margin: 0 0 0.5rem; font-size: 0.85rem; color: var(--text-muted, #6b6890); }
+.eq-row { display: grid; grid-template-columns: minmax(0, 2fr) 5.5rem minmax(0, 3fr) auto; gap: 0.5rem; align-items: center; }
+.eq-head { margin-bottom: 0.25rem; font-size: 0.8rem; font-weight: 500; color: var(--text-muted, #6b6890); }
+.eq-block { margin-bottom: 0.5rem; }
+.eq-row select, .eq-row input {
+  width: 100%; min-width: 0; box-sizing: border-box; padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border, #e4defa); border-radius: 8px; font: inherit;
 }
 </style>
