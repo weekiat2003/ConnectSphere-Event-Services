@@ -181,6 +181,16 @@ class TestISP102Organiser:
         client.post(f"/api/notifications/{mine[0]['id']}/read", headers=headers)
         assert client.get("/api/notifications/unread-count", headers=headers).get_json()["count"] == 0
 
+    def test_assignment_notifies_organiser_with_coordinator_and_status(self, app, organiser, coordinator, staff):
+        event = submitted_and_assigned(organiser, coordinator)
+        [n] = [n for n in inbox(organiser, TYPE_ORGANISER_UPDATE)
+            if n.data["kind"] == "assigned_to_coordinator"]
+        assert "Test Coordinator" in n.message
+        assert "Under review" in n.message
+        assert (n.data["oldStatus"], n.data["newStatus"]) == ("submitted", "under_review")
+        assert n.link == f"/events/{event.id}"
+        assert event.status == "under_review"
+
 
 # ===========================================================================
 # ISP-103 — Event Coordinator Lead
