@@ -1,10 +1,9 @@
 <template>
   <div>
-    <h2 class="page-title">
-      {{ auth.hasRole("event_coordinator") ? "Events Assigned to Me" : "My Events" }}
-    </h2>
+    <h2 class="page-title">{{ pageTitle }}</h2>
 
-    <template v-if="events.length">
+
+    <template v-if="!techOnly && events.length">
       <!-- Summary counts, worked out from the events list -->
       <div class="stats">
         <div class="stat sky">
@@ -25,6 +24,7 @@
         </div>
       </div>
 
+
       <div class="card">
         <div class="table-wrap">
           <table>
@@ -42,7 +42,7 @@
               <tr v-for="e in events" :key="e.id">
                 <td class="name">{{ e.name || "(untitled)" }}</td>
                 <td>
-                  <span class="badge" :class="e.status">{{ e.statusLabel || "Unknown status" }}</span>                
+                  <span class="badge" :class="e.status">{{ e.statusLabel || "Unknown status" }}</span>
                 </td>
                 <td class="muted">{{ e.proposedDate || "—" }} {{ e.proposedTime || "" }}</td>
                 <td>{{ venueSummary(e) }}</td>
@@ -57,23 +57,46 @@
       </div>
     </template>
 
-    <div v-else class="card empty">
+
+    <div v-else-if="!techOnly" class="card empty">
       <p>No events yet.</p>
       <router-link v-if="auth.hasRole('event_organiser')" to="/events/new" class="btn">
         Create an event
       </router-link>
     </div>
 
+
+    <EquipmentReservationCalendar v-if="auth.hasRole('technical_support_staff')" />
   </div>
 </template>
+
 
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useAuthStore } from "../stores/auth";
 import eventsApi from "../api/events";
+import EquipmentReservationCalendar from "../components/EquipmentReservationCalendar.vue";
+
 
 const auth = useAuthStore();
 const events = ref([]);
+
+
+// Technical Support only (no organiser/coordinator/safety role): they have no
+// "my events" list, so their dashboard is the equipment reservation calendar.
+const techOnly = computed(
+  () =>
+    auth.hasRole("technical_support_staff") &&
+    !auth.hasRole("event_organiser") &&
+    !auth.hasRole("event_coordinator") &&
+    !auth.hasRole("safety_officer")
+);
+
+const pageTitle = computed(() =>
+  techOnly.value
+    ? "Equipment Overview"
+    : auth.hasRole("event_coordinator") ? "Events Assigned to Me" : "My Events"
+);
 
 
 // Summary for the "Venue Reqs." column — this project doesn't have an actual
@@ -84,6 +107,7 @@ function venueSummary(e) {
   if (!v || (!v.capacityNeeded && !v.requiredLayout)) return "—";
   return [v.capacityNeeded ? `${v.capacityNeeded} pax` : null, v.requiredLayout].filter(Boolean).join(", ");
 }
+
 
 const stats = computed(() => {
   const count = (list) => events.value.filter((e) => list.includes(e.status)).length;
@@ -97,6 +121,7 @@ const stats = computed(() => {
 
 
 onMounted(async () => {
+  if (techOnly.value) return;
   const call = auth.hasRole("safety_officer")
     ? eventsApi.allEvents
     : auth.hasRole("event_coordinator")
@@ -107,6 +132,7 @@ onMounted(async () => {
 });
 </script>
 
+
 <style scoped>
 .page-title {
   margin: 0 0 1rem;
@@ -114,6 +140,7 @@ onMounted(async () => {
   font-weight: 600;
   color: var(--text, #2d2a4a);
 }
+
 
 /* Summary cards */
 .stats {
@@ -123,6 +150,7 @@ onMounted(async () => {
   margin-bottom: 1rem;
 }
 
+
 .stat {
   display: flex;
   flex-direction: column;
@@ -131,21 +159,25 @@ onMounted(async () => {
   border-radius: 14px;
 }
 
+
 .stat-num {
   font-size: 1.75rem;
   font-weight: 600;
   line-height: 1.1;
 }
 
+
 .stat-label {
   font-size: 0.85rem;
   font-weight: 500;
 }
 
+
 .stat.sky { background: var(--sky-bg, #d6ecff); color: var(--sky-text, #1f5f99); }
 .stat.butter { background: var(--butter-bg, #fff1c2); color: var(--butter-text, #8a5a00); }
 .stat.mint { background: var(--mint-bg, #d3f5e3); color: var(--mint-text, #1e6b47); }
 .stat.rose { background: var(--rose-bg, #ffdce3); color: var(--rose-text, #a12b47); }
+
 
 /* Card around the table */
 .card {
@@ -156,16 +188,19 @@ onMounted(async () => {
   overflow: hidden;
 }
 
+
 /* Lets the table scroll sideways on small screens */
 .table-wrap {
   overflow-x: auto;
 }
+
 
 table {
   width: 100%;
   border-collapse: collapse;
   text-align: left;
 }
+
 
 th {
   padding: 0.75rem 1rem;
@@ -177,31 +212,38 @@ th {
   white-space: nowrap;
 }
 
+
 td {
   padding: 0.85rem 1rem;
   border-bottom: 1px solid var(--border, #e4defa);
   color: var(--text, #2d2a4a);
 }
 
+
 tbody tr:last-child td {
   border-bottom: none;
 }
+
 
 tbody tr:hover {
   background: #faf9ff;
 }
 
+
 .name {
   font-weight: 500;
 }
+
 
 .muted {
   color: var(--text-muted, #6b6890);
 }
 
+
 .action {
   text-align: right;
 }
+
 
 .view-link {
   color: var(--primary, #6d5bd0);
@@ -209,10 +251,12 @@ tbody tr:hover {
   text-decoration: none;
 }
 
+
 .view-link:hover {
   color: var(--primary-hover, #5b49bd);
   text-decoration: underline;
 }
+
 
 .view-link:focus-visible,
 .btn:focus-visible {
@@ -220,6 +264,7 @@ tbody tr:hover {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
 
 /* Status badges: pastel background, darker text of the same colour */
 .badge {
@@ -234,6 +279,7 @@ tbody tr:hover {
   white-space: nowrap;
 }
 
+
 .badge.approved,
 .badge.confirmed,
 .badge.completed {
@@ -241,11 +287,13 @@ tbody tr:hover {
   color: var(--mint-text, #1e6b47);
 }
 
+
 .badge.rejected,
 .badge.cancelled {
   background: var(--rose-bg, #ffdce3);
   color: var(--rose-text, #a12b47);
 }
+
 
 .badge.under_review,
 .badge.submitted {
@@ -253,10 +301,12 @@ tbody tr:hover {
   color: var(--butter-text, #8a5a00);
 }
 
+
 .badge.planning {
   background: var(--sky-bg, #d6ecff);
   color: var(--sky-text, #1f5f99);
 }
+
 
 /* Empty state */
 .empty {
@@ -265,9 +315,11 @@ tbody tr:hover {
   color: var(--text-muted, #6b6890);
 }
 
+
 .empty p {
   margin: 0 0 1rem;
 }
+
 
 .btn {
   display: inline-block;
@@ -278,6 +330,7 @@ tbody tr:hover {
   font-weight: 500;
   text-decoration: none;
 }
+
 
 .btn:hover {
   background: var(--primary-hover, #5b49bd);

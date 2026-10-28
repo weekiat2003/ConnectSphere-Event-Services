@@ -14,31 +14,24 @@
           <td>{{ req.quantity }}</td>
           <td>{{ req.technicalNotes || "—" }}</td>
           <td>
-            <span :class="['badge', badgeClass(req.status)]">{{ statusText(req.status) }}</span>
-            <span v-if="req.needsRecheck" class="badge badge-warn">Needs recheck</span>
+            <StatusBadge kind="requirement" :status="req.status" />
+            <span v-if="req.needsRecheck" class="badge-warn">Needs recheck</span>
           </td>
-          <td>{{ progressText(req.testingStatus) }}</td>
-          <td>{{ progressText(req.installationStatus) }}</td>
+          <td><StatusBadge kind="preparation" :status="req.testingStatus" /></td>
+          <td><StatusBadge kind="preparation" :status="req.installationStatus" /></td>
         </tr>
       </tbody>
     </table>
   </div>
 </template>
 
+
 <script setup>
+import StatusBadge from "./StatusBadge.vue";
+
 defineProps({ requirements: { type: Array, default: () => [] } });
-
-const STATUS = { requested: "Requested", confirmed: "Reserved", unavailable: "Unavailable" };
-const PROGRESS = { pending: "Pending", in_progress: "In progress", done: "Done" };
-
-function statusText(s) { return STATUS[s] || s; }
-function progressText(s) { return PROGRESS[s] || "—"; }
-function badgeClass(s) {
-  if (s === "confirmed") return "badge-ok";
-  if (s === "unavailable") return "badge-bad";
-  return "badge-neutral";
-}
 </script>
+
 
 <style scoped>
 .card { background: var(--surface, #fff); border: 1px solid var(--border, #e4defa); border-radius: 14px;
@@ -47,10 +40,7 @@ function badgeClass(s) {
 .req-table { width: 100%; border-collapse: collapse; }
 .req-table th, .req-table td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border, #e4defa); }
 .req-table th { font-size: 0.8rem; color: var(--text-muted, #6b6890); font-weight: 500; }
-.badge { padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.8rem; font-weight: 500; margin-right: 0.35rem; }
-.badge-ok { background: #d9f5e3; color: #1f7a45; }
-.badge-warn { background: #ffe9c7; color: #8a5a00; }
-.badge-bad { background: #ffdce3; color: #a12b47; }
-.badge-neutral { background: #ece8fb; color: #4b3fa0; }
+.badge-warn { display: inline-block; padding: 0.15rem 0.65rem; border-radius: 999px; font-size: 0.8rem; font-weight: 500;
+  background: var(--butter-bg, #fff1c2); color: var(--butter-text, #8a5a00); }
 .empty { color: var(--text-muted, #6b6890); margin: 0; }
 </style>
