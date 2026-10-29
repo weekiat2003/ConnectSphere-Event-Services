@@ -137,19 +137,6 @@ def on_event_status_changed(event, old_status: str, new_status: str,
         if event.coordinator_id is None:
             created += notify_coordinator_leads_of_submission(event)
 
-    elif new_status == "under_review" and old_status == "submitted":
-        coordinator_name = _user_name(event.coordinator_id) or "a Coordinator"
-        created += _organiser(
-            event, "assigned_to_coordinator", "Request assigned to a coordinator",
-            f'Your request "{_name(event)}" has been assigned to {coordinator_name}. '
-            "Your event is now under review.",
-            {
-                "coordinatorId": event.coordinator_id,
-                "coordinatorName": coordinator_name,
-                "oldStatus": "submitted",
-                "newStatus": "under_review",
-            },
-        )
 
     elif new_status == "approved":
         message = f'"{_name(event)}" was approved by {_user_name(changed_by_id) or "your Coordinator"}.'
@@ -163,6 +150,11 @@ def on_event_status_changed(event, old_status: str, new_status: str,
                               {"reason": reason})
 
     elif new_status == "planning" and old_status == "approved":
+        created += _organiser(
+            event, "planning_started", "Planning has started",
+            f'"{_name(event)}" has moved to planning. '
+            "The equipment and venue arrangement processes have started.",
+        )
         # Planning starts: equipment becomes reservable, so Tech Support acts now.
         if event.equipment_requirements:
             created += notify_tech_support_of_equipment(event, kind="new")
@@ -187,6 +179,12 @@ def on_event_status_changed(event, old_status: str, new_status: str,
                               f'"{_name(event)}" was cancelled. Reason: {_sentence(reason)}',
                               {"reason": reason})
         created += notify_attendees_of_event_cancellation(event, reason)
+
+    elif new_status == "completed":
+        created += _organiser(
+            event, "completed", "Event completed",
+            f'"{_name(event)}" is now over.',
+        )
 
     return created
 
@@ -568,6 +566,15 @@ def notify_waitlist_positions_moved(event, withdrawn_registration_id: int) -> li
                   "oldPosition": new_position + 1, "newPosition": new_position},
         ))
     return created
+
+@_never_blocks
+def notify_organiser_of_registration_status(event, is_open: bool) -> list:
+    state = "opened" if is_open else "closed"
+    return _organiser(
+        event, f"registration_{state}", f"Registration {state}",
+        f'Registration for "{_name(event)}" has been {state}.',
+        {"registrationOpen": is_open},
+    )
 
 
 def notify_attendees_of_event_cancellation(event, reason: str = None) -> list:

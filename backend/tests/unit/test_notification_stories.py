@@ -181,15 +181,26 @@ class TestISP102Organiser:
         client.post(f"/api/notifications/{mine[0]['id']}/read", headers=headers)
         assert client.get("/api/notifications/unread-count", headers=headers).get_json()["count"] == 0
 
-    def test_assignment_notifies_organiser_with_coordinator_and_status(self, app, organiser, coordinator, staff):
-        event = submitted_and_assigned(organiser, coordinator)
-        [n] = [n for n in inbox(organiser, TYPE_ORGANISER_UPDATE)
-            if n.data["kind"] == "assigned_to_coordinator"]
-        assert "Test Coordinator" in n.message
-        assert "Under review" in n.message
-        assert (n.data["oldStatus"], n.data["newStatus"]) == ("submitted", "under_review")
-        assert n.link == f"/events/{event.id}"
-        assert event.status == "under_review"
+    def test_first_assignment_is_not_a_change(self, app, organiser, coordinator, staff):
+        submitted_and_assigned(organiser, coordinator)
+        assert "coordinator_changed" not in kinds(organiser)
+
+    def test_planning_started_even_without_equipment(self, app, organiser, coordinator, staff):
+        review.approve_event(submitted_and_assigned(organiser, coordinator), coordinator)
+        assert "planning_started" in kinds(organiser)
+
+    def test_completed(self, app, organiser, coordinator, staff):
+        event = new_event(organiser, "confirmed", coordinator)
+        status.change_status(event, "completed", coordinator)
+        assert kinds(organiser) == ["completed"]
+
+    def test_registration_open_close_notifies_organiser(self, app, organiser, coordinator):
+        event = public_event(organiser, coordinator)
+        registrations.open_registration(event.id, organiser)
+        registrations.close_registration(event.id, organiser)
+        notes = inbox(organiser, TYPE_ORGANISER_UPDATE)
+        assert [n.data["kind"] for n in notes] == ["registration_opened", "registration_closed"]
+        assert all(event.name in n.message for n in notes)
 
 
 # ===========================================================================
