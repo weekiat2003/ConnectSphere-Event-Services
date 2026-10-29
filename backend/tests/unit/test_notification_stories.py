@@ -181,6 +181,27 @@ class TestISP102Organiser:
         client.post(f"/api/notifications/{mine[0]['id']}/read", headers=headers)
         assert client.get("/api/notifications/unread-count", headers=headers).get_json()["count"] == 0
 
+    def test_first_assignment_is_not_a_change(self, app, organiser, coordinator, staff):
+        submitted_and_assigned(organiser, coordinator)
+        assert "coordinator_changed" not in kinds(organiser)
+
+    def test_planning_started_even_without_equipment(self, app, organiser, coordinator, staff):
+        review.approve_event(submitted_and_assigned(organiser, coordinator), coordinator)
+        assert "planning_started" in kinds(organiser)
+
+    def test_completed(self, app, organiser, coordinator, staff):
+        event = new_event(organiser, "confirmed", coordinator)
+        status.change_status(event, "completed", coordinator)
+        assert kinds(organiser) == ["completed"]
+
+    def test_registration_open_close_notifies_organiser(self, app, organiser, coordinator):
+        event = public_event(organiser, coordinator)
+        registrations.open_registration(event.id, organiser)
+        registrations.close_registration(event.id, organiser)
+        notes = inbox(organiser, TYPE_ORGANISER_UPDATE)
+        assert [n.data["kind"] for n in notes] == ["registration_opened", "registration_closed"]
+        assert all(event.name in n.message for n in notes)
+
 
 # ===========================================================================
 # ISP-103 — Event Coordinator Lead
