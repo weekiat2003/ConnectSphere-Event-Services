@@ -25,7 +25,6 @@ from app.models.notification import (
 from app.models.user import User
 from app.models.venue import Venue, VenueBooking, BOOKING_APPROVED
 from app.models.event import Event, EventEquipmentRequirement, EventSafetyReview
-from app.registrations.service import Conflict
 from app.registrations import service as registrations
 from app.venues.services import booking as booking_service
 from app.venues.services.booking_requests import (BookingRequestError,submit_booking_requests,)
