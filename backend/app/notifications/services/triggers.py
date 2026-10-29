@@ -280,27 +280,6 @@ def notify_event_details_changed(event, before: dict) -> list:
         created += notify_tech_support_of_equipment(event, kind="updated")
     return created
 
-def notify_organiser_assigned(event, coordinator):
-    """Tell the Organiser their request was assigned and moved Submitted -> Under review."""
-    core.notify(
-        event.organiser_id,
-        TYPE_ORGANISER_UPDATE,
-        "Request assigned to a coordinator",
-        (
-            f'Your request "{event.name}" has been assigned to {coordinator.name}. '
-            "Its status has changed from Submitted to Under review."
-        ),
-        event_id=event.id,
-        link=f"/events/{event.id}",
-        data={
-            "kind": "assigned_to_coordinator",
-            "coordinatorId": coordinator.id,
-            "coordinatorName": coordinator.name,
-            "oldStatus": "submitted",
-            "newStatus": "under_review",
-        },
-    )
-
 
 # ===========================================================================
 # ISP-103 — Event Coordinator Lead
