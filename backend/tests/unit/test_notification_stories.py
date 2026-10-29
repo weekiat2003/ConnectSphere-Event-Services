@@ -561,73 +561,247 @@ class TestISP106TechSupport:
 # ===========================================================================
 @pytest.fixture()
 def attendees(make_user):
-    return [make_user(f"att{i}@test.com", ["attendee"], name=f"Attendee {i}") for i in range(1, 5)]
+    return [make_user(f"att{i}@test.com", ["attendee"], name=f"Attendee {i}") for i in range(1, 6)]
 
 
-def public_event(organiser, coordinator, capacity=1):
+def public_event(organiser, coordinator, capacity=1, **fields):
     return new_event(organiser, "confirmed", coordinator, registration_required=True,
-                     intended_capacity=capacity, proposed_date=(utcnow() + timedelta(days=30)).date())
+                     intended_capacity=capacity, proposed_date=(utcnow() + timedelta(days=30)).date(),
+                     **fields)
 
 
-class TestISP108Attendees:
-    def test_ac1_only_opted_in_attendees_hear_about_open_and_close(self, app, organiser, coordinator, attendees):
+def open_event(organiser, coordinator, capacity=1, **fields):
+    event = public_event(organiser, coordinator, capacity=capacity, **fields)
+    registrations.open_registration(event.id, organiser)
+    return event
+
+
+def count_all():
+    return Notification.query.count()
+
+
+def status_pair(notification):
+    return notification.data["oldStatus"], notification.data["newStatus"]
+
+
+# ===========================================================================
+# AC1  Opted-in Attendee: registration opens or closes
+# ===========================================================================
+# class TestISP108AC1RegistrationOpensOrCloses:
+    def test_opted_in_attendee_is_notified_when_registration_opens(self, app, organiser, coordinator, attendees):
         event = public_event(organiser, coordinator)
         registrations.set_following(event.id, attendees[0], True)
+
+        registrations.open_registration(event.id, organiser)
+
+        [n] = inbox(attendees[0])
+        assert n.type == TYPE_REGISTRATION_CHANGE
+        assert n.title == "Registration open"
+        assert "Gala Night" in n.message and "open" in n.message  # event name + new status
+        assert n.data["registrationOpen"] is True
+
+    def test_opted_in_attendee_is_notified_when_registration_closes(self, app, organiser, coordinator, attendees):
+        event = open_event(organiser, coordinator)
+        registrations.set_following(event.id, attendees[0], True)
+
+        registrations.close_registration(event.id, organiser)
+
+        [n] = inbox(attendees[0])
+        assert n.title == "Registration closed"
+        assert "Gala Night" in n.message and "closed" in n.message
+        assert n.data["registrationOpen"] is False
+
+        event = public_event(organiser, coordinator)
+        registrations.set_following(event.id, attendees[0], True)
+
+        registrations.open_registration(event.id, organiser)
+
+        [n] = inbox(attendees[0])
+        assert n.is_read is False
+        assert n.event_id == event.id and n.link == f"/attendee/events/{event.id}"
+
+    def test_attendee_who_did_not_opt_in_hears_nothing(self, app, organiser, coordinator, attendees):
+        event = public_event(organiser, coordinator)
+
         registrations.open_registration(event.id, organiser)
         registrations.close_registration(event.id, organiser)
 
-        assert [n.title for n in inbox(attendees[0], TYPE_REGISTRATION_CHANGE)] == [
-            "Registration open", "Registration closed",
-        ]
-        assert all(event.name in n.message for n in inbox(attendees[0]))
-        assert inbox(attendees[1]) == []
+        assert count_all() == 0
 
-    def test_ac2_ac3_withdrawal_promotes_and_notifies_only_the_first_waiting(
-        self, app, organiser, coordinator, attendees
-    ):
-        event = public_event(organiser, coordinator)
-        registrations.open_registration(event.id, organiser)
-        first = registrations.register(event.id, attendees[0])
+
+# ===========================================================================
+# AC2  Status changes: one notification with old status, new status, event name
+# ===========================================================================
+class TestISP108AC2StatusChanges:
+    def test_waitlisted_to_registered(self, app, organiser, coordinator, attendees):
+        event = open_event(organiser, coordinator, capacity=1)
+        holder = registrations.register(event.id, attendees[0])
         registrations.join_waitlist(event.id, attendees[1])
-        registrations.join_waitlist(event.id, attendees[2])
 
-        registrations.withdraw(first.id, attendees[0])
+        registrations.withdraw(holder.id, attendees[0])
 
-        [own] = inbox(attendees[0])
-        assert (own.data["oldStatus"], own.data["newStatus"]) == ("registered", "withdrawn")
-        [promoted] = inbox(attendees[1])
-        assert (promoted.data["oldStatus"], promoted.data["newStatus"]) == ("waitlisted", "registered")
-        assert promoted.title == "A place is available for you"
-        assert inbox(attendees[2]) == []
+        [n] = inbox(attendees[1])
+        assert status_pair(n) == ("waitlisted", "registered")
+        assert 'from Waiting list to Registered' in n.message and "Gala Night" in n.message
 
-    def test_ac2_waiting_list_position_changes(self, app, organiser, coordinator, attendees):
-        event = public_event(organiser, coordinator)
-        registrations.open_registration(event.id, organiser)
+    def test_registered_to_withdrawn(self, app, organiser, coordinator, attendees):
+        event = open_event(organiser, coordinator, capacity=3)
+        mine = registrations.register(event.id, attendees[0])
+
+        registrations.withdraw(mine.id, attendees[0])
+
+        [n] = inbox(attendees[0])
+        assert status_pair(n) == ("registered", "withdrawn")
+        assert "from Registered to Withdrawn" in n.message and "Gala Night" in n.message
+
+        event = open_event(organiser, coordinator, capacity=1)
         registrations.register(event.id, attendees[0])
-        leaving = registrations.join_waitlist(event.id, attendees[1])
-        registrations.join_waitlist(event.id, attendees[2])
-        registrations.join_waitlist(event.id, attendees[3])
+        waiting = registrations.join_waitlist(event.id, attendees[1])
 
-        registrations.withdraw(leaving.id, attendees[1])
+        registrations.withdraw(waiting.id, attendees[1])
 
-        assert [(n.data["oldPosition"], n.data["newPosition"]) for n in inbox(attendees[2])] == [(2, 1)]
-        assert [(n.data["oldPosition"], n.data["newPosition"]) for n in inbox(attendees[3])] == [(3, 2)]
-        assert inbox(attendees[0]) == []
+        [n] = inbox(attendees[1])
+        assert status_pair(n) == ("waitlisted", "withdrawn")
+        assert "from Waiting list to Withdrawn" in n.message
 
-    def test_ac4_event_cancellation_reaches_only_affected_attendees(self, app, organiser, coordinator, attendees):
-        event = public_event(organiser, coordinator, capacity=5)
-        other = public_event(organiser, coordinator, capacity=5)
-        registrations.open_registration(event.id, organiser)
-        registrations.open_registration(other.id, organiser)
+    def test_registered_to_cancelled_when_the_event_is_cancelled(self, app, organiser, coordinator, attendees):
+        event = open_event(organiser, coordinator, capacity=3)
         registrations.register(event.id, attendees[0])
-        registrations.register(other.id, attendees[1])
 
         status.cancel_event(event.id, coordinator, "The venue flooded overnight.")
 
         [n] = inbox(attendees[0])
-        assert n.data["newStatus"] == "cancelled" and "The venue flooded overnight." in n.message
+        assert status_pair(n) == ("registered", "cancelled")
+        assert "from Registered to Cancelled" in n.message and "Gala Night" in n.message
+        assert "The venue flooded overnight." in n.message
+
+        event = open_event(organiser, coordinator, capacity=1)
+        registrations.register(event.id, attendees[0])
+        registrations.join_waitlist(event.id, attendees[1])
+
+        status.cancel_event(event.id, coordinator, "No longer going ahead.")
+
+        assert status_pair(inbox(attendees[1])[0]) == ("waitlisted", "cancelled")
+
+    def test_one_notification_per_change_with_no_duplicates(self, app, organiser, coordinator, attendees):
+        event = open_event(organiser, coordinator, capacity=1)
+        holder = registrations.register(event.id, attendees[0])
+        registrations.join_waitlist(event.id, attendees[1])
+
+        registrations.withdraw(holder.id, attendees[0])
+
+        assert len(inbox(attendees[0])) == 1 and len(inbox(attendees[1])) == 1
+        # reading the event again must not repeat the promotion notice
+        registrations.get_event(event.id, attendees[1])
+        registrations.my_registrations(attendees[1])
+        assert len(inbox(attendees[1])) == 1
+
+
+# ===========================================================================
+# AC3  A place is released: only the first Attendee on the waiting list is told
+# ===========================================================================
+class TestISP108AC3OnlyTheFirstWaitingAttendeeIsNotified:
+    def test_first_in_waiting_list_order_is_notified_and_nobody_else(self, app, organiser, coordinator, attendees):
+        event = open_event(organiser, coordinator, capacity=1)
+        holder = registrations.register(event.id, attendees[0])
+        registrations.join_waitlist(event.id, attendees[1])
+        registrations.join_waitlist(event.id, attendees[2])
+        registrations.join_waitlist(event.id, attendees[3])
+
+        registrations.withdraw(holder.id, attendees[0])
+
+        [promoted] = inbox(attendees[1])
+        assert promoted.title == "A place is available for you"
+        assert status_pair(promoted) == ("waitlisted", "registered")
+        assert inbox(attendees[2]) == [] and inbox(attendees[3]) == []
+
+    def test_two_places_free_notifies_exactly_the_first_two_in_order(self, app, organiser, coordinator, attendees):
+        event = open_event(organiser, coordinator, capacity=1)
+        registrations.register(event.id, attendees[0])
+        for attendee in attendees[1:4]:
+            registrations.join_waitlist(event.id, attendee)
+
+        event.intended_capacity = 3  # two more places
+        db.session.commit()
+        registrations.get_event(event.id, attendees[4])
+
+        assert len(inbox(attendees[1])) == 1 and len(inbox(attendees[2])) == 1
+        assert inbox(attendees[3]) == []
+        assert inbox(attendees[1])[0].id < inbox(attendees[2])[0].id  # told in queue order
+
+
+# ===========================================================================
+# AC4  Only Attendees affected by the event are notified
+# ===========================================================================
+class TestISP108AC4OnlyAffectedAttendees:
+    def test_cancelling_one_event_does_not_notify_attendees_of_another(self, app, organiser, coordinator, attendees):
+        event = open_event(organiser, coordinator, capacity=5, name="Gala Night")
+        other = open_event(organiser, coordinator, capacity=5, name="Quiz Night")
+        registrations.register(event.id, attendees[0])
+        registrations.register(other.id, attendees[1])
+
+        status.cancel_event(event.id, coordinator, "Cancelled for testing.")
+
+        assert len(inbox(attendees[0])) == 1
         assert inbox(attendees[1]) == []
 
+    def test_cancellation_reaches_registered_and_waitlisted_but_not_withdrawn(self, app, organiser, coordinator, attendees):
+        event = open_event(organiser, coordinator, capacity=1)
+        registrations.register(event.id, attendees[0])
+        registrations.join_waitlist(event.id, attendees[1])
+        gone = registrations.join_waitlist(event.id, attendees[2])
+        registrations.withdraw(gone.id, attendees[2])
+        before = len(inbox(attendees[2]))  # their own withdrawal confirmation
+
+        status.cancel_event(event.id, coordinator, "Cancelled for testing.")
+
+        assert len(inbox(attendees[0])) == 1 and len(inbox(attendees[1])) == 1
+        assert len(inbox(attendees[2])) == before  # already withdrawn: not affected any more
+        assert inbox(attendees[3]) == [] and inbox(attendees[4]) == []
+
+# ---------------------------------------------------------------------------
+# The same notifications seen through the API (what the Attendee actually sees)
+# ---------------------------------------------------------------------------
+class TestISP108AttendeeInbox:
+    def test_the_attendee_lists_their_own_promotion_notice(self, app, client, auth_header, organiser, coordinator, attendees):
+        event = open_event(organiser, coordinator, capacity=1)
+        holder = registrations.register(event.id, attendees[0])
+        registrations.join_waitlist(event.id, attendees[1])
+        registrations.withdraw(holder.id, attendees[0])
+
+        listed = client.get("/api/notifications", headers=auth_header("att2@test.com")).get_json()
+
+        assert len(listed) == 1
+        assert listed[0]["isRead"] is False and "Gala Night" in listed[0]["message"]
+        assert client.get("/api/notifications/unread-count", headers=auth_header("att2@test.com")).get_json()["count"] == 1
+
+    def test_another_attendee_cannot_see_or_mark_it_read(self, app, client, auth_header, organiser, coordinator, attendees):
+        event = open_event(organiser, coordinator, capacity=1)
+        holder = registrations.register(event.id, attendees[0])
+        registrations.join_waitlist(event.id, attendees[1])
+        registrations.withdraw(holder.id, attendees[0])
+        promoted = inbox(attendees[1])[0]
+
+        stranger = auth_header("att3@test.com")
+
+        assert client.get("/api/notifications", headers=stranger).get_json() == []
+        assert client.post(f"/api/notifications/{promoted.id}/read", headers=stranger).status_code in (403, 404)
+        assert Notification.query.get(promoted.id).is_read is False
+
+    def test_opening_it_marks_it_read_and_the_unread_count_drops(self, app, client, auth_header, organiser, coordinator, attendees):
+        event = public_event(organiser, coordinator)
+        registrations.set_following(event.id, attendees[0], True)
+        registrations.open_registration(event.id, organiser)
+        headers = auth_header("att1@test.com")
+        [n] = client.get("/api/notifications", headers=headers).get_json()
+
+        client.post(f"/api/notifications/{n['id']}/read", headers=headers)
+
+        assert client.get("/api/notifications/unread-count", headers=headers).get_json()["count"] == 0
+        assert len(client.get("/api/notifications", headers=headers).get_json()) == 1  # still viewable
+
+
+class TestISP108Following:
     def test_follow_toggle_api(self, app, client, auth_header, organiser, coordinator, attendees):
         event = public_event(organiser, coordinator)
         headers = auth_header("att1@test.com")
@@ -635,7 +809,6 @@ class TestISP108Attendees:
             .get_json()["followingUpdates"] is True
         assert client.delete(f"/api/registrations/events/{event.id}/follow", headers=headers) \
             .get_json()["followingUpdates"] is False
-
 
 # ===========================================================================
 # ISP-130 — Safety Officer
