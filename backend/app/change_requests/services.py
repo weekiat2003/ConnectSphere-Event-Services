@@ -868,4 +868,11 @@ def apply_re_reviewed_change(
     notifications.notify_organiser_of_change_request(event, change_request, "applied")
     notifications.notify_event_details_changed(event, before)
     db.session.commit()
+
+
+    # The Coordinator has recorded the decision, so flagged arrangements count as re-reviewed.
+    # A venue change is excluded: the new venue must go through its own booking approval first.
+    if event.status == "planning" and "venue_id" not in (change_request.requested_changes or {}):
+        from app.events.services.status import try_advance_to_safety_check
+        try_advance_to_safety_check(event, coordinator_id)
     return change_request

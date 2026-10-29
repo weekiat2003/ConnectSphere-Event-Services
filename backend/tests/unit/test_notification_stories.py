@@ -28,6 +28,8 @@ from app.models.event import Event, EventEquipmentRequirement, EventSafetyReview
 from app.registrations import service as registrations
 from app.venues.services import booking as booking_service
 from app.venues.services.booking_requests import (BookingRequestError,submit_booking_requests,)
+from app.change_requests import services as cr 
+
 
 FUTURE = date.today() + timedelta(days=60)
 
@@ -790,6 +792,24 @@ class TestISP130SafetyOfficer:
         notices = inbox(staff["safety1"], TYPE_SAFETY_CHECK)
         assert [n.data["recheck"] for n in notices] == [False, True]
         assert notices[1].title == "Safety re-check required"
+
+    def test_ac5_significant_change_on_confirmed_event_returns_to_safety_check(
+        self, app, organiser, coordinator, staff
+    ):
+        event = ready_event(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator)
+        self._approve_and_confirm(event, staff, coordinator)
+
+        request = cr.submit_change_request(event, organiser, {"expected_attendance": 200},
+                                           "More sponsors are bringing guests.")
+        cr.trigger_re_review(request.id, coordinator)
+        db.session.refresh(event)
+        assert event.status == "planning"
+        cr.apply_re_reviewed_change(request.id, coordinator)
+
+        db.session.refresh(event)
+        assert event.status == "safety_check"
+        assert [n.data["recheck"] for n in inbox(staff["safety1"], TYPE_SAFETY_CHECK)] == [False, True]
 
 
 # ---- AC6

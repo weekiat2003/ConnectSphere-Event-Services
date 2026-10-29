@@ -1,11 +1,6 @@
 """
 Event Status Management
 ------------------------
-Owns the status-transition rules for the Event Status Management epic:
-- Display current event status consistently (single source of truth: Event.status)
-- Automatic transition to Confirmed once arrangements are complete
-- Revert a confirmed event to Planning on major change
-- Retain rejected and cancelled requests with final status visible (never deleted)
 """
 from sqlalchemy import func
 
