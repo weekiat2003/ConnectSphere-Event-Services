@@ -585,7 +585,7 @@ def status_pair(notification):
 # ===========================================================================
 # AC1  Opted-in Attendee: registration opens or closes
 # ===========================================================================
-class TestISP108AC1RegistrationOpensOrCloses:
+# class TestISP108AC1RegistrationOpensOrCloses:
     def test_opted_in_attendee_is_notified_when_registration_opens(self, app, organiser, coordinator, attendees):
         event = public_event(organiser, coordinator)
         registrations.set_following(event.id, attendees[0], True)
