@@ -13,6 +13,7 @@ import { useRoute } from "vue-router";
 const ROLE_LABELS = {
   safety_officer: "Safety Officers",
   event_coordinator: "Event Coordinators",
+  event_coordinator_lead: "Event Coordinator Leads",
   event_organiser: "Event Organisers",
   venue_staff: "Venue Staff",
   technical_support_staff: "Technical Support Staff",

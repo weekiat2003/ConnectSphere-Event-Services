@@ -406,6 +406,7 @@ def _set_open(event_id, organiser_id, want_open):
     if want_open:
         rebalance(event)
     notifications.notify_followers_of_registration_status(event, want_open)
+    notifications.notify_organiser_of_registration_status(event, want_open)
     db.session.commit()
     return event
 

@@ -137,6 +137,7 @@ def on_event_status_changed(event, old_status: str, new_status: str,
         if event.coordinator_id is None:
             created += notify_coordinator_leads_of_submission(event)
 
+
     elif new_status == "approved":
         message = f'"{_name(event)}" was approved by {_user_name(changed_by_id) or "your Coordinator"}.'
         if reason:
@@ -149,6 +150,11 @@ def on_event_status_changed(event, old_status: str, new_status: str,
                               {"reason": reason})
 
     elif new_status == "planning" and old_status == "approved":
+        created += _organiser(
+            event, "planning_started", "Planning has started",
+            f'"{_name(event)}" has moved to planning. '
+            "The equipment and venue arrangement processes have started.",
+        )
         # Planning starts: equipment becomes reservable, so Tech Support acts now.
         if event.equipment_requirements:
             created += notify_tech_support_of_equipment(event, kind="new")
@@ -173,6 +179,12 @@ def on_event_status_changed(event, old_status: str, new_status: str,
                               f'"{_name(event)}" was cancelled. Reason: {_sentence(reason)}',
                               {"reason": reason})
         created += notify_attendees_of_event_cancellation(event, reason)
+
+    elif new_status == "completed":
+        created += _organiser(
+            event, "completed", "Event completed",
+            f'"{_name(event)}" is now over.',
+        )
 
     return created
 
@@ -322,6 +334,20 @@ def notify_coordinator_assignment(event, coordinator, previous_coordinator_id: i
             event_id=event.id, link=_event_link(event),
             data={**data, "kind": "removed", "newCoordinatorName": coordinator.name},
         ))
+    # The organiser learns who is now handling their request.
+    if previous_coordinator_id and previous_coordinator_id != coordinator.id:
+        created += _organiser(
+            event, "coordinator_reassigned", "New Coordinator for your request",
+            f'"{_name(event)}" has been reassigned. {coordinator.name} is now your Event Coordinator.',
+            {"coordinatorName": coordinator.name,
+             "previousCoordinatorName": _user_name(previous_coordinator_id)},
+        )
+    else:
+        created += _organiser(
+            event, "coordinator_assigned", "Coordinator assigned",
+            f'{coordinator.name} has been assigned as the Event Coordinator for "{_name(event)}".',
+            {"coordinatorName": coordinator.name},
+        )
     # Other Leads' "awaiting assignment" notices no longer need action (ISP-103 AC5).
     clear_notifications(TYPE_NEW_EVENT_SUBMISSION, event.id,
                         {"assignedTo": coordinator.name, "assignedToId": coordinator.id})
@@ -350,7 +376,8 @@ def notify_coordinator_of_booking_update(booking, change: str, reason: str = Non
     )
     if reason:
         message += f" Reason: {_sentence(reason)}"
-    recipients = [booking.requested_by, event.coordinator_id if event else None]
+    current = event.coordinator_id if event else None
+    recipients = [current] if current else [booking.requested_by]
     return notify_users(recipients, TYPE_VENUE_BOOKING_UPDATE, BOOKING_UPDATE_TITLES[change], message,
                         event_id=booking.event_id, link=_event_link(event) if event else None,
                         data={"bookingId": booking.id, "change": change, "venueName": venue_name})
@@ -397,11 +424,17 @@ def notify_tech_support_of_equipment(event, kind: str = "new") -> list:
     summary = ", ".join(f"{r.quantity} × {r.equipment_type}" for r in items) or "all equipment removed"
     venues = ", ".join(_booked_venues(event)) or "venue not yet booked"
     requester = event.organiser.name if event.organiser else "Unknown requester"
-    submitted_at = event.submitted_at if kind == "new" else utcnow()
-    title = "New equipment requirements" if kind == "new" else "Equipment requirements updated"
+    if kind == "new":
+        title = "New equipment requirements"
+        when_text = f"submitted {_timestamp(event.submitted_at)}"
+        action = ""
+    else:
+        title = "Equipment requirements updated"
+        when_text = f"updated {_timestamp(utcnow())}"
+        action = " Please re-check suitability."
     message = (
         f'"{_name(event)}" — {_event_when(event)}, {venues}. Requested by {requester}, '
-        f"submitted {_timestamp(submitted_at)}. Equipment: {summary}."
+        f"{when_text}. Equipment: {summary}.{action}"
     )
     return notify_role(
         "technical_support_staff", TYPE_NEW_EQUIPMENT_REQUEST, title, message,
@@ -512,6 +545,15 @@ def notify_waitlist_positions_moved(event, withdrawn_registration_id: int) -> li
                   "oldPosition": new_position + 1, "newPosition": new_position},
         ))
     return created
+
+@_never_blocks
+def notify_organiser_of_registration_status(event, is_open: bool) -> list:
+    state = "opened" if is_open else "closed"
+    return _organiser(
+        event, f"registration_{state}", f"Registration {state}",
+        f'Registration for "{_name(event)}" has been {state}.',
+        {"registrationOpen": is_open},
+    )
 
 
 def notify_attendees_of_event_cancellation(event, reason: str = None) -> list:

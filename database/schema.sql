@@ -628,3 +628,9 @@ INSERT IGNORE INTO roles (name) VALUES ('event_coordinator_lead');
 
 ALTER TABLE event_coordinator_history
     MODIFY assignment_type ENUM('auto','reassignment','lead') NOT NULL DEFAULT 'auto';
+
+-- Event Coordinator Lead: record which Lead made each (re)assignment so the
+-- assignment history shows who assigned the request to whom, and when.
+ALTER TABLE event_coordinator_history
+    ADD COLUMN assigned_by BIGINT UNSIGNED NULL AFTER assignment_type,
+    ADD CONSTRAINT fk_ech_assigned_by FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL;
