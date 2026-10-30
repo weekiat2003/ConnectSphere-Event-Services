@@ -38,9 +38,15 @@ def create_item():
 
 
 @equipment_bp.get("/items")
-@roles_required("technical_support_staff", "event_coordinator")
+@roles_required(
+    "technical_support_staff",
+    "event_coordinator",
+    "event_organiser",
+)
 def list_items():
-    return jsonify([i.to_dict() for i in catalogue.list_items()]), 200
+    return jsonify(
+        [i.to_dict() for i in catalogue.list_items()]
+    ), 200
 
 
 

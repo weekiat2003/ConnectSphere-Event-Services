@@ -47,7 +47,7 @@ def create_venue():
 
 
 @venues_bp.get("")
-@roles_required(*INTERNAL_ROLES)
+@roles_required(*INTERNAL_ROLES, "event_organiser")
 def list_venues():
     return jsonify([v.to_dict() for v in catalogue.list_venues()]), 200
 

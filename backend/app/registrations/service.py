@@ -212,17 +212,29 @@ def event_summary(event, attendee_id=None):
 
 
 def list_events(attendee_id):
-    """Confirmed events that take registrations (open or not, flagged in each item)."""
+    """List only confirmed events that are currently open for registration."""
     events = (
-        Event.query.filter(Event.status == STATUS_CONFIRMED, Event.registration_required.is_(True))
+        Event.query
+        .join(
+            EventRegistrationSetting,
+            EventRegistrationSetting.event_id == Event.id,
+        )
+        .filter(
+            Event.status == STATUS_CONFIRMED,
+            Event.registration_required.is_(True),
+            EventRegistrationSetting.is_open.is_(True),
+        )
         .order_by(Event.proposed_date, Event.proposed_time, Event.id)
         .all()
     )
+
     changed = False
     for event in events:
         changed = bool(rebalance(event)) or changed
+
     if changed:
         db.session.commit()
+
     return [event_summary(e, attendee_id) for e in events]
 
 
