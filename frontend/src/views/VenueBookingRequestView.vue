@@ -86,24 +86,34 @@
                 </p>
               </div>
 
-              <h5 class="subheading">Venue-specific requirements (optional)</h5>
-              <div class="form-grid">
-                <div class="form-group">
-                  <label :for="`label-${index}`">Booking Label</label>
-                  <input :id="`label-${index}`" v-model="venueRequest.label" type="text" maxlength="255" placeholder="e.g. Main auditorium" />
-                </div>
-                <div class="form-group">
-                  <label :for="`equipment-${index}`">Equipment</label>
-                  <input :id="`equipment-${index}`" v-model="venueRequest.equipment" type="text" placeholder="e.g. Projector" />
-                </div>
-                <div class="form-group">
-                  <label :for="`catering-${index}`">Catering</label>
-                  <input :id="`catering-${index}`" v-model="venueRequest.catering" type="text" />
-                </div>
-                <div class="form-group">
-                  <label :for="`other-${index}`">Other Requirements</label>
-                  <textarea :id="`other-${index}`" v-model="venueRequest.otherRequirements" rows="2"></textarea>
-                </div>
+              <div v-if="venueRequest.venueId && selectedEvent" class="suitability-box">
+                <h5 class="subheading">Venue Suitability Assessment</h5>
+                <template v-if="selectedVenue(venueRequest)">
+                  <p class="venue-summary">
+                    <strong>{{ selectedVenue(venueRequest).name }}</strong>
+                    · {{ selectedVenue(venueRequest).location || "Location not specified" }}
+                  </p>
+                  <p class="suitability-result" :class="suitability(venueRequest).status" role="status">
+                    {{ suitability(venueRequest).status === "suitable"
+                      ? "✓ Meets all specified event venue requirements"
+                      : suitability(venueRequest).status === "unknown"
+                        ? "ℹ Suitability cannot be fully assessed from the available information"
+                        : "⚠ Some event requirements are not met or could not be verified. You may still submit this request." }}
+                  </p>
+                  <div class="suitability-grid">
+                    <div v-for="check in suitability(venueRequest).checks" :key="check.label" class="suitability-check">
+                      <span class="check-indicator" :class="check.status">
+                        {{ check.status === "match" ? "✓" : check.status === "mismatch" ? "✕" : "?" }}
+                      </span>
+                      <div>
+                        <strong>{{ check.label }}</strong>
+                        <p>Required: {{ check.required }}</p>
+                        <p>Venue: {{ check.available }}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="hint">Suitability is based on catalogue information, not booking availability. Venue Staff will assess the request.</p>
+                </template>
               </div>
 
               <h5 class="subheading">Timing</h5>
@@ -178,14 +188,15 @@
 
       <div v-if="!statusLoading && !statusError && myBookings.length" class="booking-list">
         <article v-for="booking in myBookings" :key="booking.id" class="booking-card">
+          <button type="button" class="booking-expand-trigger" :aria-expanded="expandedBookingId === booking.id" :aria-controls="`booking-expanded-${booking.id}`" @click="toggleBooking(booking)">
           <div class="booking-heading">
             <div>
               <h4>{{ booking.eventName || `Event #${booking.eventId}` }}</h4>
               <p class="venue-label">{{ booking.venueName || `Venue #${booking.venueId}` }}</p>
             </div>
-            <span class="status-pill" :class="booking.status">
+            <span class="booking-heading-right"><span class="status-pill" :class="booking.status">
               {{ formatStatus(booking.status) }}
-            </span>
+            </span><span class="expand-chevron" :class="{ expanded: expandedBookingId === booking.id }" aria-hidden="true">⌄</span></span>
           </div>
           <div class="booking-details">
             <p><strong>Booking ID:</strong> #{{ booking.id }}</p>
@@ -193,6 +204,46 @@
             <p><strong>End:</strong> {{ formatBookingDate(booking.endDatetime) }}</p>
             <p><strong>Submitted:</strong> {{ formatBookingDate(booking.createdAt) }}</p>
           </div>
+          </button>
+          <div v-if="expandedBookingId === booking.id" :id="`booking-expanded-${booking.id}`" class="booking-expanded">
+            <h5>Full booking details</h5>
+            <div class="expanded-details">
+              <p><strong>Event:</strong> {{ booking.eventName || `Event #${booking.eventId}` }}</p>
+              <p><strong>Venue:</strong> {{ booking.venueName || `Venue #${booking.venueId}` }}</p>
+              <p><strong>Status:</strong> {{ formatStatus(booking.status) }}</p>
+              <p><strong>Start:</strong> {{ formatBookingDate(booking.startDatetime) }}</p>
+              <p><strong>End:</strong> {{ formatBookingDate(booking.endDatetime) }}</p>
+              <p><strong>Submitted:</strong> {{ formatBookingDate(booking.createdAt) }}</p>
+              <p v-if="booking.label"><strong>Booking label:</strong> {{ booking.label }}</p>
+              <p v-if="booking.equipment"><strong>Equipment:</strong> {{ booking.equipment }}</p>
+              <p v-if="booking.catering"><strong>Catering:</strong> {{ booking.catering }}</p>
+              <p v-if="booking.otherRequirements"><strong>Other requirements:</strong> {{ booking.otherRequirements }}</p>
+            </div>
+            <section class="event-equipment-section" aria-label="Event equipment requirements">
+              <h5>Equipment requirements for this event</h5>
+              <p v-if="equipmentLoading[booking.eventId]" class="expanded-note">Loading event equipment requirements...</p>
+              <p v-else-if="equipmentErrors[booking.eventId]" class="error-message" role="alert">
+                {{ equipmentErrors[booking.eventId] }}
+                <button type="button" class="equipment-retry" @click="loadEventEquipment(booking.eventId, true)">Retry</button>
+              </p>
+              <template v-else-if="eventEquipment[booking.eventId]">
+                <div v-if="eventEquipment[booking.eventId].length" class="equipment-table-wrap">
+                  <table class="equipment-details-table">
+                    <thead><tr><th>Equipment type</th><th>Quantity</th><th>Technical requirements</th><th>Review status</th></tr></thead>
+                    <tbody>
+                      <tr v-for="(item, index) in eventEquipment[booking.eventId]" :key="item.id ?? index">
+                        <td>{{ item.type || item.equipmentType || 'Not specified' }}</td>
+                        <td>{{ item.quantity ?? '—' }}</td>
+                        <td>{{ item.technicalNotes || '—' }}</td>
+                        <td>{{ item.status || 'Not reviewed' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p v-else class="expanded-note">No equipment requirements have been recorded for this event.</p>
+              </template>
+            </section>
+            <p v-if="!booking.label && !booking.equipment && !booking.catering && !booking.otherRequirements" class="expanded-note">No additional venue-specific details were recorded with this booking.</p>
           <p v-if="booking.advisory" class="advisory" :class="booking.advisory.type" role="status">
             <strong>{{ booking.advisory.type === 'venue_confirmed' ? 'Venue now confirmed for another event:' : 'Advisory:' }}</strong>
             {{ booking.advisory.message }}
@@ -221,6 +272,7 @@
           <p v-if="withdrawErrors[booking.id]" class="error-message" role="alert">
             {{ withdrawErrors[booking.id] }}
           </p>
+          </div>
         </article>
       </div>
     </section>
@@ -262,6 +314,42 @@ const successMessage = ref("");
 const resubmittingFromId = ref(null);
 
 const myBookings = ref([]);
+const expandedBookingId = ref(null);
+const eventEquipment = ref({});
+const equipmentLoading = ref({});
+const equipmentErrors = ref({});
+
+async function loadEventEquipment(eventId, force = false) {
+  if (eventId == null || eventId === "") {
+    equipmentErrors.value[eventId] = "This booking has no linked event ID.";
+    return;
+  }
+  if (equipmentLoading.value[eventId] || (!force && Object.prototype.hasOwnProperty.call(eventEquipment.value, eventId))) return;
+  equipmentLoading.value[eventId] = true;
+  equipmentErrors.value[eventId] = "";
+  try {
+    const { data } = await eventsApi.getEvent(eventId);
+    // Event detail responses may be either the event itself or wrapped in { event }.
+    const event = data?.event ?? data;
+    const requirements = event?.equipmentRequirements ?? event?.equipment_requirements;
+    if (!Array.isArray(requirements)) throw new Error("Equipment requirements were not included in the event response.");
+    eventEquipment.value[eventId] = requirements;
+  } catch (error) {
+    equipmentErrors.value[eventId] = error.response?.data?.error || error.message || "Could not load equipment requirements.";
+  } finally {
+    equipmentLoading.value[eventId] = false;
+  }
+}
+
+function toggleBooking(booking) {
+  if (expandedBookingId.value === booking.id) {
+    expandedBookingId.value = null;
+    return;
+  }
+  expandedBookingId.value = booking.id;
+  // Refresh each time a card opens so changes from Equipment Booking appear.
+  loadEventEquipment(booking.eventId, true);
+}
 
 function parseHoldExpiry(value) {
   if (!value) return null;
@@ -308,6 +396,87 @@ const submitAdvisories = ref([]);
 function formatFacilities(value) {
   if (Array.isArray(value)) return value.length ? value.join(", ") : "Not specified";
   return value || "Not specified";
+}
+
+function selectedVenue(request) {
+  return venues.value.find((venue) => Number(venue.id) === Number(request.venueId));
+}
+
+function values(value) {
+  if (Array.isArray(value)) return value.map(String).map(v => v.trim()).filter(Boolean);
+  if (typeof value === "string") return value.split(",").map(v => v.trim()).filter(Boolean);
+  return [];
+}
+
+function normalize(value) {
+  return String(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function featureMatches(required, available) {
+  const requirement = normalize(required);
+  const candidate = normalize(available);
+  if (requirement === candidate) return true;
+  // Common wording differences in catalogue and event requirements.
+  const stepFree = /step free/.test(requirement) && /step free/.test(candidate);
+  return stepFree;
+}
+
+function suitability(request) {
+  const venue = selectedVenue(request);
+  const requirements = selectedEvent.value?.venueRequirements;
+  if (!venue || !requirements) return { status: "unknown", checks: [] };
+
+  const checks = [];
+  const capacity = Number(requirements.capacityNeeded);
+  const venueCapacity = Number(venue.capacity);
+  checks.push({
+    label: "Capacity",
+    required: capacity > 0 ? `${capacity} people` : "Not specified",
+    available: Number.isFinite(venueCapacity) && venue.capacity != null ? `${venueCapacity} people` : "Not specified",
+    status: capacity > 0
+      ? (venue.capacity == null || !Number.isFinite(venueCapacity) ? "unknown" : venueCapacity >= capacity ? "match" : "mismatch")
+      : "unknown",
+    applicable: capacity > 0,
+  });
+
+  const layout = String(requirements.requiredLayout || "").trim();
+  const layouts = values(venue.supportedLayouts);
+  checks.push({
+    label: "Layout",
+    required: layout || "Not specified",
+    available: layouts.join(", ") || "Not specified",
+    status: !layout ? "unknown" : !layouts.length ? "unknown"
+      : layouts.some(item => featureMatches(layout, item)) ? "match" : "mismatch",
+    applicable: !!layout,
+  });
+
+  const access = values(requirements.accessibilityNeeds);
+  const accessible = values(venue.accessibilityFeatures);
+  checks.push({
+    label: "Accessibility",
+    required: access.join(", ") || "Not specified",
+    available: accessible.join(", ") || "Not specified",
+    status: !access.length ? "unknown" : !accessible.length ? "unknown"
+      : access.every(item => accessible.some(feature => featureMatches(item, feature))) ? "match" : "mismatch",
+    applicable: access.length > 0,
+  });
+
+  const facilities = values(requirements.requiredFacilities);
+  const availableFacilities = values(venue.facilities);
+  checks.push({
+    label: "Facilities",
+    required: facilities.join(", ") || "Not specified",
+    available: availableFacilities.join(", ") || "Not specified",
+    status: !facilities.length ? "unknown" : !availableFacilities.length ? "unknown"
+      : facilities.every(item => availableFacilities.some(feature => featureMatches(item, feature))) ? "match" : "mismatch",
+    applicable: facilities.length > 0,
+  });
+
+  const applicable = checks.filter(check => check.applicable);
+  const status = applicable.some(check => check.status === "mismatch")
+    ? "warning" : applicable.length && applicable.every(check => check.status === "match")
+      ? "suitable" : "unknown";
+  return { status, checks };
 }
 
 function availableVenues(currentIndex) {
@@ -646,5 +815,41 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary, #6
 .advisory.possible_conflict { background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
 .advisory.venue_confirmed { background: #fde8ee; border: 1px solid #f3b4c4; color: #a12b47; }
 
+/* Venue-to-event requirements comparison */
+.suitability-box { margin: 1rem 0 1.25rem; padding: 1rem; border: 1px solid #ddd6fb; background: #f7f5ff; border-radius: 10px; }
+.suitability-box .subheading { margin-top: 0; }
+.venue-summary { margin: .5rem 0 1rem; color: #4b3fa0; }
+.suitability-result { padding: .75rem; border-radius: 8px; font-size: .875rem; font-weight: 600; }
+.suitability-result.suitable { background: #d3f5e3; color: #1e6b47; }
+.suitability-result.warning { background: #fff1c9; color: #92400e; }
+.suitability-result.unknown { background: #e9e5fb; color: #4b3fa0; }
+.suitability-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin: 1rem 0; }
+.suitability-check { display: flex; align-items: flex-start; gap: .65rem; padding: .75rem; background: #fff; border: 1px solid #e4defa; border-radius: 8px; }
+.suitability-check strong { font-size: .875rem; }
+.suitability-check p { margin: .25rem 0 0; font-size: .8rem; color: #6b6890; overflow-wrap: anywhere; }
+.check-indicator { flex: 0 0 1.3rem; text-align: center; font-weight: 700; }
+.check-indicator.match { color: #1e6b47; }
+.check-indicator.mismatch { color: #a12b47; }
+.check-indicator.unknown { color: #6b6890; }
+@media (max-width: 700px) { .suitability-grid { grid-template-columns: 1fr; } }
+.booking-expand-trigger { display: block; width: 100%; padding: 0; text-align: left; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.booking-expand-trigger:focus-visible { outline: 2px solid #7159db; outline-offset: 5px; border-radius: 6px; }
+.booking-heading-right { display: flex; align-items: center; gap: 1rem; }
+.expand-chevron { font-size: 1.5rem; line-height: 1; color: #6c5ab3; transition: transform .2s ease; }
+.expand-chevron.expanded { transform: rotate(180deg); }
+.booking-expanded { border-top: 1px solid #e4defa; margin-top: 1rem; padding-top: 1rem; }
+.booking-expanded h5 { margin: 0 0 .75rem; font-size: .95rem; }
+.expanded-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem 1rem; }
+.expanded-details p { margin: 0; font-size: .875rem; overflow-wrap: anywhere; }
+.expanded-note { color: #71698f; font-size: .85rem; }
+@media (max-width: 700px) { .expanded-details { grid-template-columns: 1fr; } }
+
+.event-equipment-section { margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid #e4defa; }
+.event-equipment-section h5 { margin: 0 0 .7rem; }
+.equipment-table-wrap { overflow-x: auto; }
+.equipment-details-table { width: 100%; border-collapse: collapse; font-size: .85rem; text-align: left; }
+.equipment-details-table th, .equipment-details-table td { padding: .65rem .6rem; border-bottom: 1px solid #e8e3f8; vertical-align: top; }
+.equipment-details-table th { color: #50458a; background: #f5f2ff; white-space: nowrap; }
+.equipment-retry { margin-left: .5rem; border: 0; background: transparent; color: #5946c2; text-decoration: underline; cursor: pointer; }
 </style>
 

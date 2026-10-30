@@ -16,6 +16,7 @@ import CoordinatorCalendar from "../components/CoordinatorCalendar.vue";
 import VenueBookingRequestView from "../views/VenueBookingRequestView.vue";
 import VenueSearchView from "../views/VenueSearchView.vue";
 import EquipmentView from "../views/EquipmentView.vue";
+import EquipmentBookingRequestView from "../views/EquipmentBookingRequestView.vue";
 import TechnicalReviewView from "../views/TechnicalReviewView.vue";
 
 import VenueCatalogueView from "../views/VenueCatalogueView.vue";
@@ -128,6 +129,16 @@ const routes = [
     meta: {
       requiresAuth: true,
       roles: ["event_coordinator"],
+    },
+  },
+
+  {
+  path: "/equipment/request",
+  name: "equipment-booking-request",
+  component: EquipmentBookingRequestView,
+  meta: {
+    requiresAuth: true,
+    roles: ["event_coordinator"],
     },
   },
 
