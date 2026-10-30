@@ -7,7 +7,7 @@ production (Q&A #28/#45), so there is no self-registration endpoint. This
 script stands in for that external provisioning process during development.
 
 Run with:  python scripts/seed_users.py
-Safe to re-run: existing users and events (matched by name) are skipped.
+Safe to re-run: existing users, events, inventory items, and bookings are skipped.
 Existing sample venues are enriched with any missing seeded catalogue values.
 """
 import os
@@ -20,9 +20,10 @@ from werkzeug.security import generate_password_hash  # noqa: E402
 
 from app import create_app  # noqa: E402
 from app.extensions import db  # noqa: E402
-from app.models.event import Event, EventEquipmentRequirement  # noqa: E402  (adjust if your Event model lives elsewhere)
+from app.models.event import Event, EventEquipmentRequirement  # noqa: E402
 from app.models.user import Organisation, Role, User  # noqa: E402
-from app.models.venue import Venue, VenueBooking
+from app.models.venue import Venue, VenueBooking  # noqa: E402
+from app.models.equipment import EquipmentItem  # noqa: E402
 
 app = create_app(os.getenv("FLASK_ENV", "development"))
 
@@ -334,6 +335,59 @@ TEST_EVENTS = [
         "review_reason": "Expected attendance exceeds the capacity of all available venues.",
         "review_days_ago": 9,
     },
+    # Additional Planning events for the new Equipment Booking and Venue
+    # Suitability screens. These are assigned to different coordinators.
+    {
+        "name": "Campus Innovation Expo",
+        "purpose": "Student innovation showcase",
+        "description": "Exhibitor booths, demos and a short stage programme.",
+        "category": "Exhibition",
+        "status": "planning",
+        "coordinator": "coordinator1@example.com",
+        "days": 68, "time": time(10, 0),
+        "expected_attendance": 140, "capacity_needed": 150,
+        "required_layout": "Banquet",
+        "accessibility_needs": "Step-free access",
+        "required_facilities": ["Microphone", "Stage"],
+        "registration_required": 1, "intended_capacity": 150,
+        "submitted_days_ago": 14,
+        "review_outcome": "approved", "review_reason": "Approved for planning.",
+        "review_days_ago": 9,
+    },
+    {
+        "name": "Startup Pitch Finals",
+        "purpose": "Pitch competition",
+        "description": "Finalists present to judges with slides and microphones.",
+        "category": "Competition",
+        "status": "planning",
+        "coordinator": "coordinator1@example.com",
+        "days": 75, "time": time(15, 0),
+        "expected_attendance": 110, "capacity_needed": 130,
+        "required_layout": "Theatre",
+        "accessibility_needs": "Step-free access",
+        "required_facilities": ["Projector", "Microphone"],
+        "registration_required": 1, "intended_capacity": 130,
+        "submitted_days_ago": 12,
+        "review_outcome": "approved", "review_reason": "Approved for planning.",
+        "review_days_ago": 8,
+    },
+    {
+        "name": "Digital Skills Bootcamp",
+        "purpose": "Hands-on training",
+        "description": "Practical digital tools workshop with live demonstrations.",
+        "category": "Workshop",
+        "status": "planning",
+        "coordinator": "coordinator2@example.com",
+        "days": 56, "time": time(9, 30),
+        "expected_attendance": 50, "capacity_needed": 60,
+        "required_layout": "Classroom",
+        "accessibility_needs": "Step-free access",
+        "required_facilities": ["Projector", "Whiteboard", "Wi-Fi"],
+        "registration_required": 1, "intended_capacity": 60,
+        "submitted_days_ago": 16,
+        "review_outcome": "approved", "review_reason": "Approved for planning.",
+        "review_days_ago": 11,
+    },
     {
         "name": "Open Air Music Night (Revised)",
         "purpose": "Student entertainment",
@@ -484,25 +538,83 @@ with app.app_context():
 
     db.session.commit()
 
-    # Equipment for the safety-check demo (the Community Fair demo deliberately
-    # has none, so "Not specified" can be seen in the safety assessment).
-    SAFETY_DEMO_EQUIPMENT = {
+    # -----------------------------------------------------------------
+    # Equipment catalogue + event equipment requests
+    # -----------------------------------------------------------------
+    # Names intentionally match EventEquipmentRequirement.equipment_type,
+    # which is how the equipment reservation workflow links inventory.
+    TEST_EQUIPMENT_ITEMS = [
+        ("Microphone", "Audio", 16),
+        ("Projector", "Visual", 8),
+        ("PA system", "Audio", 4),
+        ("Speaker", "Audio", 12),
+        ("Laptop", "Computing", 20),
+        ("Display screen", "Visual", 6),
+        ("Wireless microphone", "Audio", 10),
+        ("Extension cord", "Power", 30),
+        ("Camera", "Recording", 5),
+        ("Lighting kit", "Lighting", 6),
+    ]
+    equipment_created = 0
+    for name, category, total_quantity in TEST_EQUIPMENT_ITEMS:
+        if EquipmentItem.query.filter_by(name=name).first():
+            continue  # Never overwrite a Technical Staff member's inventory.
+        db.session.add(EquipmentItem(
+            name=name, category=category,
+            total_quantity=total_quantity, status="active",
+        ))
+        equipment_created += 1
+    db.session.commit()
+
+    # Requests already submitted for technical review. Deliberately include
+    # some Planning events with no requests so Coordinators can test creating
+    # their first request from the Equipment Booking page.
+    EVENT_EQUIPMENT = {
+        "Alumni Networking Dinner": [
+            ("Microphone", 2, "Wireless microphones for host and speeches"),
+            ("Speaker", 2, "Audio coverage near banquet stage"),
+        ],
+        "Hackathon Kickoff": [
+            ("Projector", 2, "HDMI input; test both screens before kickoff"),
+            ("Microphone", 3, "One handheld and two backup microphones"),
+            ("Extension cord", 6, "Cable covers needed in participant walkways"),
+        ],
+        "Campus Innovation Expo": [
+            ("Microphone", 2, "One on stage and one for audience Q&A"),
+            ("Display screen", 3, "Loop exhibitor presentations"),
+        ],
+        "Digital Skills Bootcamp": [
+            ("Projector", 1, "HDMI adapter and screen mirroring"),
+            ("Laptop", 2, "One presenter laptop and one backup"),
+        ],
         "Hackathon Safety Check Demo": [
             ("Projector", 2, "Ceiling-mounted; cables routed overhead"),
             ("Extension cord", 6, "Run along walls and taped down"),
         ],
+        # "Startup Pitch Finals" intentionally has no equipment requirements.
+        # "Community Fair Safety Check Demo" intentionally has none so
+        # Safety Officers can test the empty-requirements state.
     }
-    for event_name, items in SAFETY_DEMO_EQUIPMENT.items():
+    equipment_requirements_created = 0
+    for event_name, items in EVENT_EQUIPMENT.items():
         event = Event.query.filter_by(name=event_name, organiser_id=organiser.id).first()
-        if event and not event.equipment_requirements:
-            for equipment_type, quantity, notes in items:
-                event.equipment_requirements.append(
-                    EventEquipmentRequirement(
-                        equipment_type=equipment_type, quantity=quantity, technical_notes=notes
-                    )
-                )
+        if not event:
+            continue
+        existing_types = {
+            requirement.equipment_type.strip().casefold()
+            for requirement in event.equipment_requirements
+        }
+        for equipment_type, quantity, notes in items:
+            if equipment_type.casefold() in existing_types:
+                continue  # Preserve existing quantities, statuses and notes.
+            event.equipment_requirements.append(EventEquipmentRequirement(
+                equipment_type=equipment_type,
+                quantity=quantity,
+                technical_notes=notes,
+            ))
+            existing_types.add(equipment_type.casefold())
+            equipment_requirements_created += 1
     db.session.commit()
-
 
     # -----------------------------------------------------------------
     # Venue Booking Requests
@@ -511,6 +623,29 @@ with app.app_context():
     # Safe to re-run: existing bookings are not duplicated.
 
     TEST_BOOKINGS = [
+        # Planning events: one suitable and one intentionally unsuitable
+        # venue for exercising the new venue suitability warning UI.
+        {
+            "event": "Campus Innovation Expo",
+            "venue": "Banquet Hall",
+            "status": "pending",
+            "start_hour": 10, "duration": 5,
+            "coordinator": "coordinator1@example.com",
+        },
+        {
+            "event": "Startup Pitch Finals",
+            "venue": "Collaborative Workshop Studio",
+            "status": "pending",
+            "start_hour": 15, "duration": 3,
+            "coordinator": "coordinator1@example.com",
+        },
+        {
+            "event": "Digital Skills Bootcamp",
+            "venue": "Collaborative Workshop Studio",
+            "status": "approved",
+            "start_hour": 9, "start_minute": 30, "duration": 4,
+            "coordinator": "coordinator2@example.com",
+        },
         {
             "event": "Quarterly All-Hands Meeting",
             "venue": "Main Auditorium",
@@ -669,3 +804,5 @@ with app.app_context():
         f"added {venues_enriched} missing catalogue value(s)."
     )
     print(f"Seeded {events_created} new sample event(s).")
+    print(f"Seeded {equipment_created} new catalogue equipment item(s).")
+    print(f"Seeded {equipment_requirements_created} new event equipment requirement(s).")

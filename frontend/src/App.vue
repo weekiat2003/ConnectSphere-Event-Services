@@ -13,6 +13,7 @@
         <router-link v-if="auth.hasRole('event_coordinator') || auth.hasRole('safety_officer')" to="/planning">Planning View</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/calendar">My Calendar</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/venues/request">Venue Booking</router-link>
+        <router-link v-if="auth.hasRole('event_coordinator')" to="/equipment/request">Equipment Booking</router-link>
         <router-link v-if="auth.hasRole('venue_staff')" to="/venues/approval">Venue Approval</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/venues/search">Venue Search</router-link>
         <router-link v-if="auth.hasRole('technical_support_staff')" to="/equipment">Equipment</router-link>
