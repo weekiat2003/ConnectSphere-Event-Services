@@ -11,7 +11,6 @@ import pytest
 from app.extensions import db
 from app.models.venue import Venue, VenueUnavailability
 from app.venues.services.suitability import check_suitability
-from app.venues.services import booking
 from app.venues.services.availability import add_flag_once
 
 URL = "/api/venues"
