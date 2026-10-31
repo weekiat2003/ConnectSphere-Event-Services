@@ -156,18 +156,23 @@ class TestAddUnavailability:
         with pytest.raises(ValueError, match="ISO datetimes"):
             add_unavailability(_venue(), 1, start, end)
 
-    def test_overlapping_approved_booking_is_flagged_not_cancelled(self, app):
+    def test_overlapping_approved_booking_is_flagged_and_rejected(self, app):
         venue = _venue()
         booking = _booking(venue, dt(5, 10), dt(5, 12))
         event = db.session.get(Event, booking.event_id)
         status_before = event.status
-        _, flags = add_unavailability(venue, 1, dt(5, 9), dt(5, 17), "Renovation")
+
+        _, flags = add_unavailability(
+            venue, 1, dt(5, 9), dt(5, 17), "Renovation"
+        )
+
         assert len(flags) == 1
         assert flags[0].event_id == booking.event_id
         assert flags[0].reason == "Renovation"
-        assert VenueBooking.query.get(booking.id).status == BOOKING_APPROVED
+        assert VenueBooking.query.get(booking.id).status == BOOKING_REJECTED
+
         db.session.refresh(event)
-        assert event.status == status_before  # event information is preserved
+        assert event.status == status_before
 
     def test_default_reason_is_used_for_the_flag_when_none_given(self, app):
         venue = _venue()
@@ -750,7 +755,12 @@ class TestFlagsResolvedWhenBookingIsCancelled:
     def test_cancelling_the_booking_closes_its_flags_and_frees_the_venue(self, app):
         venue = _venue(created_by=7)
         booking = _booking(venue, dt(5, 10), dt(5, 12), coordinator_id=3)
-        add_unavailability(venue, 1, dt(5, 9), dt(5, 17), "Roof repairs")
+
+        # Create a flag independently so the booking remains approved
+        # and can be cancelled through the normal cancellation process.
+        add_flag_once(booking.event_id, venue.id, "Roof repairs")
+        db.session.commit()
+
         assert len(list_unresolved_flags_for_coordinator(3)) == 1
 
         cancel_booking(booking, decided_by=7, reason="Venue unavailable")

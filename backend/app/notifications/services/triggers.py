@@ -370,17 +370,41 @@ def notify_coordinator_of_booking_update(booking, change: str, reason: str = Non
     event = booking.event or db.session.get(Event, booking.event_id)
     venue = db.session.get(Venue, booking.venue_id)
     venue_name = venue.name if venue else f"Venue #{booking.venue_id}"
-    message = (
-        f'{BOOKING_UPDATE_TITLES[change]}: {venue_name} for "{_name(event)}" '
-        f"({_timestamp(booking.start_datetime).replace(' UTC', '')})."
-    )
-    if reason:
+
+    # Use a clearer message when a booking is rejected.
+    if change == "rejected":
+        message = (
+            f'Your venue booking for "{_name(event)}" at {venue_name} '
+            "has been rejected because the venue is unavailable. "
+            "Please resubmit your venue booking request."
+        )
+    else:
+        message = (
+            f'{BOOKING_UPDATE_TITLES[change]}: {venue_name} for "{_name(event)}" '
+            f"({_timestamp(booking.start_datetime).replace(' UTC', '')})."
+        )
+
+    # Include the reason for other booking updates.
+    if reason and change != "rejected":
         message += f" Reason: {_sentence(reason)}"
+
+    # Send the notification to the event coordinator.
     current = event.coordinator_id if event else None
     recipients = [current] if current else [booking.requested_by]
-    return notify_users(recipients, TYPE_VENUE_BOOKING_UPDATE, BOOKING_UPDATE_TITLES[change], message,
-                        event_id=booking.event_id, link=_event_link(event) if event else None,
-                        data={"bookingId": booking.id, "change": change, "venueName": venue_name})
+
+    return notify_users(
+        recipients,
+        TYPE_VENUE_BOOKING_UPDATE,
+        BOOKING_UPDATE_TITLES[change],
+        message,
+        event_id=booking.event_id,
+        link=_event_link(event) if event else None,
+        data={
+            "bookingId": booking.id,
+            "change": change,
+            "venueName": venue_name,
+        },
+    )
 
 
 # ===========================================================================
