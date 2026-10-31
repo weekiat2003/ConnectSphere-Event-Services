@@ -11,6 +11,8 @@ import pytest
 from app.extensions import db
 from app.models.venue import Venue, VenueUnavailability
 from app.venues.services.suitability import check_suitability
+from app.venues.services import booking
+from app.venues.services.availability import add_flag_once
 
 URL = "/api/venues"
 RANGE = "start=2026-11-30T00:00:00&end=2026-12-03T00:00:00"
@@ -427,7 +429,8 @@ class TestFlagsForCoordinators:
         assert (flag["eventName"], flag["venueName"], flag["reason"]) == ("Annual Conference", "Main Hall", "Roof repairs")
         assert flag["bookingId"] == booking.id
         assert flag["unavailablePeriods"][0]["start"] == "2026-12-05T09:00:00"
-        assert VenueBooking.query.get(booking.id).status == "approved"  # event not cancelled
+        # The booking is rejected, but the event itself is not cancelled.
+        assert VenueBooking.query.get(booking.id).status == "rejected"
 
     def test_other_coordinators_do_not_see_it(self, client, owner, coordinators):
         venue = _owned_venue(owner)
@@ -452,18 +455,37 @@ class TestFlagsForCoordinators:
 
 
 class TestReleasingTheOriginalBooking:
-    def test_staff_cancel_frees_the_venue_and_closes_the_flag(self, client, owner, coordinators):
+    def test_staff_cancel_frees_the_venue_and_closes_the_flag(
+        self, client, owner, coordinators
+    ):
         venue = _owned_venue(owner)
         booking = _booking_at(venue, coordinators["id"])
-        _block_for(client, owner["hdr"], venue.id)
 
-        resp = client.post(f"{URL}/bookings/{booking.id}/cancel", json={"reason": "Venue unavailable"}, headers=owner["hdr"])
+        # Create a flag without marking the venue unavailable.
+        # This keeps the booking approved so staff can cancel it.
+        add_flag_once(
+            booking.event_id,
+            venue.id,
+            "Venue unavailable",
+        )
+        db.session.commit()
+
+        resp = client.post(
+            f"{URL}/bookings/{booking.id}/cancel",
+            json={"reason": "Venue unavailable"},
+            headers=owner["hdr"],
+        )
 
         assert resp.status_code == 200
         assert VenueBooking.query.get(booking.id).status == "cancelled"
-        assert client.get(f"{URL}/flags/mine", headers=coordinators["mine"]).get_json() == []
+        assert client.get(
+            f"{URL}/flags/mine",
+            headers=coordinators["mine"],
+        ).get_json() == []
+
         event = Event.query.get(booking.event_id)
-        assert event.status != "cancelled" and event.name == "Annual Conference"
+        assert event.status != "cancelled"
+        assert event.name == "Annual Conference"
 
     def test_another_staff_member_cannot_cancel_this_venues_booking(self, client, owner, coordinators, make_user, auth_header):
         make_user("intruder@test.com", ["venue_staff"])

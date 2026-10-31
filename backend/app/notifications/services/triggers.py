@@ -371,22 +371,23 @@ def notify_coordinator_of_booking_update(booking, change: str, reason: str = Non
     venue = db.session.get(Venue, booking.venue_id)
     venue_name = venue.name if venue else f"Venue #{booking.venue_id}"
 
-    # Use a clearer message when a booking is rejected.
     if change == "rejected":
         message = (
             f'Your venue booking for "{_name(event)}" at {venue_name} '
             "has been rejected because the venue is unavailable. "
             "Please resubmit your venue booking request."
         )
+
+        if reason:
+            message += f" Reason: {_sentence(reason)}"
     else:
         message = (
             f'{BOOKING_UPDATE_TITLES[change]}: {venue_name} for "{_name(event)}" '
             f"({_timestamp(booking.start_datetime).replace(' UTC', '')})."
         )
 
-    # Include the reason for other booking updates.
-    if reason and change != "rejected":
-        message += f" Reason: {_sentence(reason)}"
+        if reason:
+            message += f" Reason: {_sentence(reason)}"
 
     # Send the notification to the event coordinator.
     current = event.coordinator_id if event else None
