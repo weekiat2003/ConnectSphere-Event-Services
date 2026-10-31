@@ -32,6 +32,7 @@ ALLOWED_TRANSITIONS = {
     "rejected": set(),
 }
 
+CLOSED_STATUSES = ("cancelled", "rejected", "completed")
 CANCELLABLE_STATUSES = ("approved", "planning", "confirmed", "safety_check")
 CANCEL_STATUS_MESSAGE = "An event can only be cancelled while it is approved, planning or in safety check"
 
@@ -102,6 +103,10 @@ def _record_status_change(event: Event, new_status: str, changed_by_id: int, rea
     # notifications. Saved in the same commit as the status change.
     if notify:
         notifications.on_event_status_changed(event, old_status, new_status, changed_by_id, reason)
+    if new_status in CLOSED_STATUSES:
+        # Imported here: assignment imports this module.
+        from app.events.services.assignment import close_reassignment_request_for_closed_event
+        close_reassignment_request_for_closed_event(event)
     db.session.commit()
     return event
 
@@ -244,5 +249,7 @@ def cancel_event(event_id: int, coordinator_id: int, reason, dry_run: bool = Fal
     ))
     _release_arrangements(event, coordinator_id, reason, now)
     notifications.on_event_status_changed(event, old_status, "cancelled", coordinator_id, reason)
+    from app.events.services.assignment import close_reassignment_request_for_closed_event
+    close_reassignment_request_for_closed_event(event)
     db.session.commit()
     return event

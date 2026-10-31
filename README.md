@@ -48,6 +48,13 @@ connectsphere/
        ADD CONSTRAINT fk_ech_assigned_by FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL;
    ```
 
+   **Existing database, Coordinator reassignment requests?** Coordinators now
+   ask a Lead to reassign an event instead of reassigning it themselves. If your
+   database was created before this change, add the new table by running only
+   the last statement of `database/schema.sql`
+   (`CREATE TABLE IF NOT EXISTS coordinator_reassignment_requests ...`), or
+   recreate the database from the full schema.
+
 ## 2. Backend setup (Flask API)
 
 ```bash

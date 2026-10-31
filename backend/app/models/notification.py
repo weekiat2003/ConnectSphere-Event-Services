@@ -13,6 +13,7 @@ TYPE_VENUE_BOOKING_UPDATE = "venue_booking_update"            # ISP-105 (story n
 TYPE_NEW_EQUIPMENT_REQUEST = "new_equipment_request"          # ISP-106
 TYPE_REGISTRATION_CHANGE = "registration_change"              # ISP-108
 TYPE_SAFETY_CHECK = "safety_check"                            # ISP-130
+TYPE_REASSIGNMENT_REQUEST = "reassignment_request"            # Coordinator Assignment
 
 NOTIFICATION_TYPES = (
     TYPE_ORGANISER_UPDATE,
@@ -23,6 +24,7 @@ NOTIFICATION_TYPES = (
     TYPE_NEW_EQUIPMENT_REQUEST,
     TYPE_REGISTRATION_CHANGE,
     TYPE_SAFETY_CHECK,
+    TYPE_REASSIGNMENT_REQUEST,
 )
 
 
