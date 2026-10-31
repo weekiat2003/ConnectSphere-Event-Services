@@ -209,7 +209,17 @@ def reserve_equipment():
 
     try:
         start, end = _parse_reservation_period(data)
-        result = reservation.reserve(event, requirement, item, start, end, user.id)
+        result = reservation.reserve(
+            event,
+            requirement,
+            item,
+            start,
+            end,
+            user.id,
+            quantity=data.get("quantity", requirement.quantity),
+        )
+    except reservation.ReservationError as e:
+        return jsonify({"error": str(e)}), e.status_code
     except (ValueError, TypeError) as e:
         return jsonify({"error": str(e)}), 400
     return jsonify(result.to_dict()), 201

@@ -28,11 +28,11 @@ def item(app):
 
 @pytest.fixture()
 def setup_event(organiser, make_event):
-    def _setup(quantity=4, status="approved"):
+    def _setup(quantity=4, status="approved", equipment_type="Projector"):
         event_id = make_event(organiser)
         db.session.get(Event, event_id).status = status
         req = EventEquipmentRequirement(
-            event_id=event_id, equipment_type="Projector", quantity=quantity
+            event_id=event_id, equipment_type=equipment_type, quantity=quantity
         )
         db.session.add(req)
         db.session.commit()
@@ -82,6 +82,46 @@ def test_reserve_creates_reservation_and_confirms_requirement(client, tech_heade
     assert body["id"] and body["quantity"] == 4 and body["status"] == "reserved"
     assert body["eventId"] == event_id and body["equipmentItemId"] == item
     assert requirement_status(req_id) == "confirmed"
+
+
+def test_reservation_matches_equipment_type_case_insensitively_and_trims(
+    client, tech_headers, item, setup_event
+):
+    event_id, req_id = setup_event(equipment_type=" projector ")
+
+    res = reserve(client, tech_headers, payload(event_id, req_id, item))
+
+    assert res.status_code == 201
+    db.session.expire_all()
+    assert EquipmentReservation.query.one().equipment_requirement_id == req_id
+
+
+def test_reservation_rejects_wrong_equipment_type(client, tech_headers, item, setup_event):
+    event_id, req_id = setup_event(equipment_type="Camera")
+
+    res = reserve(client, tech_headers, payload(event_id, req_id, item))
+
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "This item doesn't match the requested equipment type."
+    assert count() == 0
+
+
+@pytest.mark.parametrize(
+    "quantity,error_message",
+    [(5, "cannot exceed"), (None, "positive whole number")],
+)
+def test_reservation_quantity_must_be_valid_and_within_requirement(
+    client, tech_headers, item, setup_event, quantity, error_message
+):
+    event_id, req_id = setup_event(quantity=4)
+    body = payload(event_id, req_id, item)
+    body["quantity"] = quantity
+
+    res = reserve(client, tech_headers, body)
+
+    assert res.status_code == 400
+    assert error_message in res.get_json()["error"]
+    assert count() == 0
 
 
 def test_reserve_records_creator_period_and_leaves_total_unchanged(client, tech_headers, item, setup_event):
@@ -191,6 +231,7 @@ def test_inactive_item_is_rejected(client, tech_headers, item, setup_event, stat
     res = reserve(client, tech_headers, payload(event_id, req_id, item))
 
     assert res.status_code == 400
+    assert "not active" in res.get_json()["error"]
     assert count() == 0
 
 
@@ -227,6 +268,42 @@ def test_second_reservation_for_last_units_is_rejected(client, tech_headers, ite
     assert second.status_code == 400
     assert count() == 1
     assert free_quantity(client, tech_headers, item) == 4
+
+
+def test_overlapping_reservation_exceeding_stock_is_rejected(
+    client, tech_headers, item, setup_event
+):
+    db.session.get(EquipmentItem, item).total_quantity = 5
+    db.session.commit()
+    first_event, first_req = setup_event(quantity=4)
+    second_event, second_req = setup_event(quantity=2)
+
+    assert reserve(client, tech_headers, payload(first_event, first_req, item)).status_code == 201
+    second = reserve(client, tech_headers, payload(second_event, second_req, item))
+
+    assert second.status_code == 400
+    assert count() == 1
+
+
+def test_non_overlapping_reservation_succeeds_when_other_slot_is_full(
+    client, tech_headers, item, setup_event
+):
+    db.session.get(EquipmentItem, item).total_quantity = 4
+    db.session.commit()
+    first_event, first_req = setup_event(quantity=4)
+    second_event, second_req = setup_event(quantity=4)
+    later_start = END
+    later_end = datetime(2026, 12, 1, 12, 0)
+
+    assert reserve(client, tech_headers, payload(first_event, first_req, item)).status_code == 201
+    second = reserve(
+        client,
+        tech_headers,
+        payload(second_event, second_req, item, later_start, later_end),
+    )
+
+    assert second.status_code == 201
+    assert count() == 2
 
 
 @pytest.mark.parametrize("email,role", [
