@@ -46,6 +46,7 @@ const TYPE_LABELS = {
   organiser_update: "Your request",
   new_event_submission: "Assignment queue",
   coordinator_assignment: "Assignment",
+  reassignment_request: "Reassignment",
   venue_booking_update: "Venue booking",
   new_venue_booking_request: "Booking request",
   new_equipment_request: "Equipment",

@@ -655,27 +655,78 @@ def lead_reassign_event(event_id):
     )
 
 
-@events_bp.post("/<int:event_id>/reassign")
+# ---------------------------------------------------------------------
+# Reassignment requests (Week 7): Coordinators cannot hand an event to a
+# colleague themselves. They ask the Leads, who decide in the Assignment Queue.
+# ---------------------------------------------------------------------
+
+@events_bp.post("/<int:event_id>/reassignment-request")
 @roles_required("event_coordinator")
-def reassign_event(event_id):
-    """Reassignment after offline agreement: the currently assigned
-    Coordinator hands the event to a named replacement Coordinator
-    (Q&A #6/#13/#22 — no accept/decline step, agreement happens outside
-    the system first)."""
+def request_reassignment(event_id):
+    """Body: {reason}. Only the assigned Coordinator; every Lead is notified."""
     user = _current_user()
     event = Event.query.get(event_id)
     if not event:
         return jsonify({"error": "Event not found"}), 404
-    if event.coordinator_id != user.id:
-        return jsonify({"error": "Only the currently assigned Coordinator can hand off this event"}), 403
-
     data = request.get_json() or {}
-    new_coordinator = User.query.get(data.get("newCoordinatorId"))
-    if not new_coordinator or not new_coordinator.has_role("event_coordinator"):
-        return jsonify({"error": "newCoordinatorId must reference an active Event Coordinator"}), 400
+    try:
+        req = assignment.request_reassignment(event, user.id, data.get("reason"))
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(req.to_dict()), 201
 
-    event = assignment.reassign_coordinator(event, new_coordinator, assigned_by_id=user.id)
-    return jsonify(event.to_dict()), 200
+
+@events_bp.get("/<int:event_id>/reassignment-request")
+@roles_required("event_coordinator", "event_coordinator_lead")
+def get_reassignment_request(event_id):
+    """The latest reassignment request for this event (or null), so the
+    event page can show "waiting for a Lead" or the last decision."""
+    event = Event.query.get(event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+    req = assignment.latest_reassignment_request(event.id)
+    return jsonify(req.to_dict() if req else None), 200
+
+
+@events_bp.delete("/<int:event_id>/reassignment-request")
+@roles_required("event_coordinator")
+def withdraw_reassignment_request(event_id):
+    user = _current_user()
+    event = Event.query.get(event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+    try:
+        req = assignment.withdraw_reassignment_request(event, user.id)
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(req.to_dict()), 200
+
+
+@events_bp.post("/<int:event_id>/reassignment-request/decline")
+@roles_required("event_coordinator_lead")
+def decline_reassignment_request(event_id):
+    """Body: {note?}. The Lead keeps the current Coordinator."""
+    lead = _current_user()
+    event = Event.query.get(event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+    data = request.get_json() or {}
+    try:
+        req = assignment.decline_reassignment_request(event, lead.id, data.get("note"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(req.to_dict()), 200
+
+
+@events_bp.get("/reassignment-requests")
+@roles_required("event_coordinator_lead")
+def list_reassignment_requests():
+    """Every pending reassignment request, oldest first."""
+    return jsonify(assignment.pending_reassignment_requests()), 200
 
 
 # ---------------------------------------------------------------------

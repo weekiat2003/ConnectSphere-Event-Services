@@ -21,7 +21,6 @@ export default {
   cancelEvent: (id, reason, confirmed = false) => apiClient.post(`/events/${id}/cancel`, { reason, confirmed }),
   deleteClarification: (eventId, reviewId) => apiClient.delete(`/events/${eventId}/clarification/${reviewId}`),
   resubmitEvent: (id, payload) => apiClient.post(`/events/${id}/resubmit`, payload),
-  reassign: (id, newCoordinatorId) => apiClient.post(`/events/${id}/reassign`, { newCoordinatorId }),
   changeStatus: (id, statusValue, reason) => apiClient.post(`/events/${id}/status`, { status: statusValue, reason }),
   reviewSafety: (id, payload) => apiClient.post(`/events/${id}/safety-review`, payload),
   // Operational Safety Check (Safety Officer only)
@@ -45,5 +44,13 @@ export default {
   leadReassign: (id, coordinatorId, confirmed = false) =>
     apiClient.post(`/events/${id}/lead-reassign`, { coordinatorId, confirmed }),
   supervision: () => apiClient.get("/events/supervision"),
+
+  // Reassignment requests: a Coordinator asks, a Lead decides (Week 7).
+  requestReassignment: (id, reason) => apiClient.post(`/events/${id}/reassignment-request`, { reason }),
+  getReassignmentRequest: (id) => apiClient.get(`/events/${id}/reassignment-request`),
+  withdrawReassignmentRequest: (id) => apiClient.delete(`/events/${id}/reassignment-request`),
+  declineReassignmentRequest: (id, note) =>
+    apiClient.post(`/events/${id}/reassignment-request/decline`, { note }),
+  listReassignmentRequests: () => apiClient.get("/events/reassignment-requests"),
   assignmentHistory: (id) => apiClient.get(`/events/${id}/assignment-history`),
 };

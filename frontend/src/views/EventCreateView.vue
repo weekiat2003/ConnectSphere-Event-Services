@@ -17,6 +17,17 @@
         </label>
 
         <label>
+          Event Type
+          <select v-model="form.category">
+            <option value="">Select a type (optional)</option>
+            <option v-for="t in EVENT_TYPES" :key="t" :value="t">{{ t }}</option>
+            <option v-if="form.category && !EVENT_TYPES.includes(form.category)" :value="form.category">
+              {{ form.category }}
+            </option>
+          </select>
+        </label>
+
+        <label>
           Description
           <textarea v-model="form.description" required></textarea>
         </label>
@@ -214,9 +225,16 @@ const { confirm } = useConfirm();
 
 const draftId = route.params.id;
 const isEditMode = Boolean(draftId);
+// Shown to the Event Coordinator Lead in the Assignment Queue.
+const EVENT_TYPES = [
+  "Conference", "Seminar", "Workshop", "Meeting", "Panel", "Networking", "Social",
+  "Community", "Competition", "Entertainment", "Exhibition", "Orientation", "Ceremony", "Other",
+];
+
 const form = reactive({
   name: "",
   purpose: "",
+  category: "",
   description: "",
   proposed_date: "",
   proposed_time: "",
@@ -269,6 +287,7 @@ async function loadDraft() {
     Object.assign(form, {
       name: data.name || "",
       purpose: data.purpose || "",
+      category: data.category || "",
       description: data.description || "",
       proposed_date: data.proposedDate || "",
       proposed_time: data.proposedTime ? data.proposedTime.slice(0, 5) : "",

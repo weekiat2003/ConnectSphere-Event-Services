@@ -2,10 +2,11 @@
   <div id="layout">
     <nav v-if="auth.isAuthenticated">
       <div class="nav-inner">
-        <router-link to="/">Dashboard</router-link>
+        <router-link :to="dashboardPath">Dashboard</router-link>
         <router-link v-if="auth.hasRole('event_organiser')" to="/events/new">New Request</router-link>
         <router-link v-if="auth.hasRole('event_organiser')" to="/drafts">My Drafts</router-link>
         <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/assignments">Assignment Queue</router-link>
+        <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/lead/calendar">Calendar</router-link>
         <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/supervision">Supervision</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/review">Review Queue</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/change-requests">Change Requests</router-link>
@@ -38,6 +39,7 @@
 </template>
 
 <script setup>
+import { computed } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "./stores/auth";
 import ConfirmDialog from './components/ConfirmDialog.vue';
@@ -45,6 +47,11 @@ import NotificationBell from './components/NotificationBell.vue';
 
 const auth = useAuthStore();
 const router = useRouter();
+
+// Leads have their own dashboard; everyone else uses the shared one.
+const dashboardPath = computed(() =>
+  auth.roles.length === 1 && auth.hasRole("event_coordinator_lead") ? "/lead" : "/"
+);
 
 async function handleLogout() {
   try {
