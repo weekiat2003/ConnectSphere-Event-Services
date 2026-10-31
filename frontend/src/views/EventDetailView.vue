@@ -151,9 +151,6 @@
           <div class="thread-message request">
             <span class="thread-meta">Coordinator · {{ formatDate(item.request.createdAt) }}</span>
             <p>{{ item.request.comments }}</p>
-            <p v-if="item.request.editableFields?.length" class="thread-fields">
-              Fields opened for editing: {{ formatFieldNames(item.request.editableFields) }}
-            </p>
           </div>
           <div v-if="item.response" class="thread-message response">
             <span class="thread-meta">Organiser · {{ formatDate(item.response.createdAt) }}</span>
@@ -240,21 +237,8 @@
       <div v-if="event.status === 'under_review'" class="action-block">
         <textarea v-model="comment" placeholder="Comments / reason"></textarea>
 
-        <div class="field-select">
-          <span class="detail-label">Allow organiser to edit:</span>
-          <div class="checkbox-grid">
-            <label v-for="opt in EDITABLE_FIELD_OPTIONS" :key="opt.key" class="checkbox-option">
-              <input type="checkbox" :value="opt.key" v-model="editableFields" />
-              {{ opt.label }}
-            </label>
-          </div>
-        </div>
-
         <div v-if="event.clarificationFlag" class="notice">
           <strong>Clarification requested:</strong> {{ event.clarificationComments }}
-          <div v-if="event.clarificationEditableFields?.length" class="editable-fields-note">
-            Organiser can edit: {{ formatFieldNames(event.clarificationEditableFields) }}
-          </div>
         </div>
 
         <p v-if="clarificationError" class="field-error">{{ clarificationError }}</p>
@@ -426,26 +410,6 @@
                 placeholder="Explain what you changed, or answer the coordinator's question"></textarea>
             </div>
           </label>
-
-          <template v-if="item.request.editableFields?.length">
-            <div v-for="field in EDITABLE_FIELD_OPTIONS.filter((o) => item.request.editableFields.includes(o.key))"
-              :key="field.key" class="field-row">
-              <label>
-                {{ field.label }}
-                <input v-if="field.type === 'checkbox'" type="checkbox"
-                  v-model="openResponseForms[item.reviewId].fields[field.key]" />
-                <textarea v-else-if="field.type === 'textarea'"
-                  v-model="openResponseForms[item.reviewId].fields[field.key]"></textarea>
-                <input v-else-if="field.type === 'number'" type="number"
-                  v-model.number="openResponseForms[item.reviewId].fields[field.key]" />
-                <input v-else :type="field.type" v-model="openResponseForms[item.reviewId].fields[field.key]" />
-              </label>
-            </div>
-          </template>
-          <p v-else class="notice-inline">
-            The coordinator hasn't opened any fields for editing on this request. You can still respond in words.
-          </p>
-
           <p v-if="respondErrors[item.reviewId]" class="field-error">{{ respondErrors[item.reviewId] }}</p>
           <div class="actions">
             <button class="btn btn-primary" @click="respondToItem(item.reviewId)">Send Response</button>
@@ -739,8 +703,6 @@ const canEditEvent = computed(() =>
   isAssignedCoordinator.value && EDITABLE_EVENT_STATUSES.includes(event.value.status)
 );
 
-const editableFields = ref([]);       // coordinator's selection when requesting clarification
-
 const isAssignedCoordinator = computed(
   () => auth.hasRole("event_coordinator") && event.value?.coordinatorId === auth.user?.id
 );
@@ -833,6 +795,9 @@ const currentEquipmentLabel = computed(() =>
     (event.value?.equipmentRequirements || []).map((e) => ({ type: e.type, quantity: e.quantity }))
   )
 );
+
+const statusLabel = (value) =>
+  String(value || "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 
 async function ensureCatalogue() {
   if (venues.value.length || equipmentCatalogue.value.length) return;
@@ -1003,9 +968,8 @@ async function loadCoordinators() {
 async function clarify() {
   clarificationError.value = "";
   try {
-    await eventsApi.requestClarification(event.value.id, comment.value, editableFields.value);
+    await eventsApi.requestClarification(event.value.id, comment.value);
     comment.value = "";
-    editableFields.value = [];
     await load();
   } catch (e) {
     clarificationError.value = e.response?.data?.error || "Could not request clarification.";
@@ -1013,23 +977,8 @@ async function clarify() {
 }
 
 function ensureResponseForm(item) {
-  if (openResponseForms[item.reviewId]) return;
-  const source = {
-    name: event.value.name,
-    purpose: event.value.purpose,
-    description: event.value.description,
-    proposed_date: event.value.proposedDate,
-    proposed_time: event.value.proposedTime,
-    expected_attendance: event.value.expectedAttendance,
-    capacity_needed: event.value.venueRequirements?.capacityNeeded,
-    required_layout: event.value.venueRequirements?.requiredLayout,
-    accessibility_needs: event.value.venueRequirements?.accessibilityNeeds,
-    registration_required: event.value.registrationRequired,
-  };
   const fields = {};
-  (item.request.editableFields || []).forEach((key) => {
-    fields[key] = source[key] ?? (key === "registration_required" ? false : "");
-  });
+  if (openResponseForms[item.reviewId]) return;
   openResponseForms[item.reviewId] = { comments: "", fields };
 }
 
@@ -1384,18 +1333,6 @@ onMounted(async () => {
   font-size: 0.85rem;
 }
 
-.field-select {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.checkbox-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 0.4rem 1rem;
-}
-
 .checkbox-option {
   display: flex;
   align-items: center;
@@ -1411,12 +1348,6 @@ onMounted(async () => {
   font-size: 0.85rem;
   font-weight: 500;
   color: var(--text, #2d2a4a);
-}
-
-.editable-fields-note {
-  margin-top: 0.35rem;
-  font-size: 0.85rem;
-  font-weight: 500;
 }
 
 .edit-event-form {
@@ -1577,11 +1508,6 @@ onMounted(async () => {
   font-size: 0.75rem;
   font-weight: 600;
   opacity: 0.75;
-}
-
-.thread-fields {
-  font-size: 0.8rem;
-  font-style: italic;
 }
 
 .thread-pending {

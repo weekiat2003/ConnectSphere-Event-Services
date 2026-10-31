@@ -196,31 +196,6 @@ def test_request_clarification_only_assigned_coordinator_can_request(app, event,
             request_clarification(event, second_coordinator["id"], "Trying to clarify someone else's event.")
 
 
-def test_request_clarification_records_editable_fields(app, event, coordinator):
-    with app.app_context():
-        event.proposed_date = date(2023, 12, 1)
-        event.proposed_time = time(10, 0)
-        db.session.add(event)
-        db.session.commit()
-
-        request_clarification(
-            event, coordinator["id"], "Please confirm the venue capacity.", editable_fields=["capacity_needed"]
-        )
-
-        latest_review = event.reviews[-1]
-        assert latest_review.action == "clarification_requested"
-        assert latest_review.editable_fields == ["capacity_needed"]
-        assert event.clarification_flag is True
-
-
-def test_request_clarification_rejects_unknown_editable_field(app, event, coordinator):
-    with app.app_context():
-        with pytest.raises(ValueError, match="Unknown field.*not_a_real_field"):
-            request_clarification(
-                event, coordinator["id"], "Testing an invalid field grant.", editable_fields=["not_a_real_field"]
-            )
-
-
 def test_multiple_clarifications_are_all_recorded_in_order(app, event, coordinator):
     with app.app_context():
         event.proposed_date = date(2023, 12, 1)
@@ -279,42 +254,8 @@ def test_cannot_reject_an_already_rejected_event(app, event, coordinator):
 
 
 # =======================================================================
-# Organiser's response to clarification: editable-fields whitelist,
-# one-response-per-request, and answering by reviewId
+# Organiser's response to clarification
 # =======================================================================
-
-def test_respond_to_clarification_applies_only_granted_fields(app, event, coordinator, organiser):
-    with app.app_context():
-        event.proposed_date = date(2023, 12, 1)
-        event.proposed_time = time(10, 0)
-        db.session.add(event)
-        db.session.commit()
-
-        request_clarification(
-            event, coordinator["id"], "Please update the description only.", editable_fields=["description"]
-        )
-        review_id = event.reviews[-1].id
-
-        respond_to_clarification(
-            event,
-            organiser["id"],
-            review_id,
-            {
-                "comments": "Updated as requested.",
-                "description": "A much more detailed description.",
-                "name": "Attempted Rename",  # not granted - must be ignored
-            },
-        )
-
-        assert event.description == "A much more detailed description."
-        assert event.name == "Annual Tech Conference"  # unchanged
-        assert event.clarification_flag is False
-
-        response = EventClarificationResponse.query.filter_by(review_id=review_id).first()
-        assert response.updated_fields == {"description": "A much more detailed description."}
-
-
-
 @pytest.mark.parametrize("invalid_comment", ["", "   ", "!!!", "12345"])
 def test_respond_to_clarification_requires_valid_comment(app, event, coordinator, organiser, invalid_comment):
     with app.app_context():

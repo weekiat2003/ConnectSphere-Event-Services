@@ -391,7 +391,6 @@ def request_clarification(event_id):
             event,
             user.id,
             data.get("comments", ""),
-            editable_fields=data.get("editableFields", []),
         )
     except (ValueError, PermissionError) as e:
         return jsonify({"error": str(e)}), 400
