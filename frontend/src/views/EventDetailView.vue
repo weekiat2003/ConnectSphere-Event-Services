@@ -151,9 +151,6 @@
           <div class="thread-message request">
             <span class="thread-meta">Coordinator · {{ formatDate(item.request.createdAt) }}</span>
             <p>{{ item.request.comments }}</p>
-            <p v-if="item.request.editableFields?.length" class="thread-fields">
-              Fields opened for editing: {{ formatFieldNames(item.request.editableFields) }}
-            </p>
           </div>
           <div v-if="item.response" class="thread-message response">
             <span class="thread-meta">Organiser · {{ formatDate(item.response.createdAt) }}</span>
@@ -219,12 +216,21 @@
         </router-link>
       </div>
     </section>
-    <p v-else-if="auth.hasRole('event_coordinator_lead') && event.coordinatorName" class="assigned-note">
-      Assigned to {{ event.coordinatorName }}
-    </p>
+    <div v-else-if="auth.hasRole('event_coordinator_lead') && event.coordinatorName" class="assigned-note">
+      <span>Assigned to {{ event.coordinatorName }}</span>
+      <router-link
+        v-if="REASSIGNABLE_STATUSES.includes(event.status)"
+        :to="{ name: 'assignments', query: { event: event.id } }"
+      >
+        {{ reassignmentRequest?.status === "pending" ? "Review reassignment request" : "Reassign in the Assignment Queue" }}
+      </router-link>
+    </div>
 
     <!-- Coordinator Actions: Event Review and Approval + Coordinator Assignment + Event Status Management -->
-    <section v-if="isAssignedCoordinator">
+    <!-- Only shown while the coordinator can act: from Under Review (a Lead has
+         assigned it) to Confirmed. Submitted requests belong to the Leads' queue;
+         cancelled/rejected/completed events are closed. -->
+    <section v-if="isAssignedCoordinator && REASSIGNABLE_STATUSES.includes(event.status)">
       <h3 class="section-title">Coordinator Actions</h3>
 
       <div v-if="showCancelForm" class="action-block">
@@ -240,21 +246,8 @@
       <div v-if="event.status === 'under_review'" class="action-block">
         <textarea v-model="comment" placeholder="Comments / reason"></textarea>
 
-        <div class="field-select">
-          <span class="detail-label">Allow organiser to edit:</span>
-          <div class="checkbox-grid">
-            <label v-for="opt in EDITABLE_FIELD_OPTIONS" :key="opt.key" class="checkbox-option">
-              <input type="checkbox" :value="opt.key" v-model="editableFields" />
-              {{ opt.label }}
-            </label>
-          </div>
-        </div>
-
         <div v-if="event.clarificationFlag" class="notice">
           <strong>Clarification requested:</strong> {{ event.clarificationComments }}
-          <div v-if="event.clarificationEditableFields?.length" class="editable-fields-note">
-            Organiser can edit: {{ formatFieldNames(event.clarificationEditableFields) }}
-          </div>
         </div>
 
         <p v-if="clarificationError" class="field-error">{{ clarificationError }}</p>
@@ -380,20 +373,40 @@
         </div>
       </div>
 
-      <div class="action-block">
-
-        <label>
-          Reassign to
-          <select v-model.number="newCoordinatorId">
-            <option disabled :value="null">Select a coordinator</option>
-            <option v-for="c in otherCoordinators" :key="c.id" :value="c.id">{{ c.name }}</option>
-          </select>
-        </label>
-        <div class="actions">
-          <button class="btn btn-primary" :disabled="!newCoordinatorId" @click="reassign">Reassign (after offline
-            agreement)</button>
-        </div>
-
+      <!-- Coordinator Assignment (Week 7): only a Lead can reassign. The
+           Coordinator asks, with a reason; hidden once the event is closed. -->
+      <div v-if="REASSIGNABLE_STATUSES.includes(event.status)" class="action-block reassignment-block">
+        <h3 class="block-title">Coordinator reassignment</h3>
+        <template v-if="reassignmentRequest?.status === 'pending'">
+          <p class="reassign-status">
+            <span class="badge-pending">Waiting for a Coordinator Lead</span>
+            You asked on {{ formatDate(reassignmentRequest.createdAt) }}.
+          </p>
+          <p class="reassign-reason"><strong>Your reason:</strong> {{ reassignmentRequest.reason }}</p>
+          <div class="actions">
+            <button class="btn btn-grey" :disabled="reassignBusy" @click="withdrawReassignment">Withdraw request</button>
+          </div>
+        </template>
+        <template v-else>
+          <p v-if="reassignmentRequest?.status === 'declined'" class="reassign-declined">
+            Your last request was declined by {{ reassignmentRequest.decidedByName || "a Coordinator Lead" }}
+            on {{ formatDate(reassignmentRequest.decidedAt) }}<template v-if="reassignmentRequest.decisionNote">:
+              "{{ reassignmentRequest.decisionNote }}"</template><template v-else>.</template>
+          </p>
+          <p class="hint">
+            Can't continue with this event? Ask a Coordinator Lead to reassign it. The Lead chooses who takes over,
+            and you keep read-only access afterwards.
+          </p>
+          <label for="reassign-reason">Reason (required)</label>
+          <textarea id="reassign-reason" v-model="reassignReason" maxlength="500" rows="3"
+            placeholder="e.g. On leave from 1 Dec, or workload too high this month"></textarea>
+          <p v-if="reassignError" class="field-error">{{ reassignError }}</p>
+          <div class="actions">
+            <button class="btn btn-primary" :disabled="reassignBusy || !reassignReason.trim()" @click="requestReassignment">
+              Request reassignment
+            </button>
+          </div>
+        </template>
       </div>
     </section>
 
@@ -426,26 +439,6 @@
                 placeholder="Explain what you changed, or answer the coordinator's question"></textarea>
             </div>
           </label>
-
-          <template v-if="item.request.editableFields?.length">
-            <div v-for="field in EDITABLE_FIELD_OPTIONS.filter((o) => item.request.editableFields.includes(o.key))"
-              :key="field.key" class="field-row">
-              <label>
-                {{ field.label }}
-                <input v-if="field.type === 'checkbox'" type="checkbox"
-                  v-model="openResponseForms[item.reviewId].fields[field.key]" />
-                <textarea v-else-if="field.type === 'textarea'"
-                  v-model="openResponseForms[item.reviewId].fields[field.key]"></textarea>
-                <input v-else-if="field.type === 'number'" type="number"
-                  v-model.number="openResponseForms[item.reviewId].fields[field.key]" />
-                <input v-else :type="field.type" v-model="openResponseForms[item.reviewId].fields[field.key]" />
-              </label>
-            </div>
-          </template>
-          <p v-else class="notice-inline">
-            The coordinator hasn't opened any fields for editing on this request. You can still respond in words.
-          </p>
-
           <p v-if="respondErrors[item.reviewId]" class="field-error">{{ respondErrors[item.reviewId] }}</p>
           <div class="actions">
             <button class="btn btn-primary" @click="respondToItem(item.reviewId)">Send Response</button>
@@ -638,7 +631,6 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import eventsApi from "../api/events";
-import usersApi from "../api/users";
 import { useConfirm } from "../composables/useConfirm";
 import changeRequestsApi from "../api/changeRequests";
 import equipmentApi from "../api/equipment";
@@ -652,8 +644,12 @@ const auth = useAuthStore();
 const event = ref(null);
 const comment = ref("");
 const responseNotes = ref("");
-const newCoordinatorId = ref(null);
-const coordinators = ref([]);
+// Coordinator Assignment: statuses in which an event can still change hands.
+const REASSIGNABLE_STATUSES = ["under_review", "approved", "planning", "safety_check", "confirmed"];
+const reassignmentRequest = ref(null);
+const reassignReason = ref("");
+const reassignError = ref("");
+const reassignBusy = ref(false);
 
 const clarificationError = ref("");
 const reviewHistory = ref([]);
@@ -739,16 +735,12 @@ const canEditEvent = computed(() =>
   isAssignedCoordinator.value && EDITABLE_EVENT_STATUSES.includes(event.value.status)
 );
 
-const editableFields = ref([]);       // coordinator's selection when requesting clarification
-
 const isAssignedCoordinator = computed(
   () => auth.hasRole("event_coordinator") && event.value?.coordinatorId === auth.user?.id
 );
 const isOwningOrganiser = computed(
   () => auth.hasRole("event_organiser") && event.value?.organiserId === auth.user?.id
 );
-// Exclude yourself — reassigning "to" the coordinator who already owns it is a no-op the backend rejects anyway.
-const otherCoordinators = computed(() => coordinators.value.filter((c) => c.id !== auth.user?.id));
 
 const clarificationThread = ref([]);
 const openResponseForms = reactive({}); // keyed by reviewId -> { comments, fields }
@@ -833,6 +825,9 @@ const currentEquipmentLabel = computed(() =>
     (event.value?.equipmentRequirements || []).map((e) => ({ type: e.type, quantity: e.quantity }))
   )
 );
+
+const statusLabel = (value) =>
+  String(value || "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 
 async function ensureCatalogue() {
   if (venues.value.length || equipmentCatalogue.value.length) return;
@@ -995,17 +990,46 @@ async function load() {
   await loadChangeRequests();
 }
 
-async function loadCoordinators() {
-  const { data } = await usersApi.listCoordinators();
-  coordinators.value = data;
+async function loadReassignmentRequest() {
+  try {
+    reassignmentRequest.value = (await eventsApi.getReassignmentRequest(event.value.id)).data;
+  } catch {
+    reassignmentRequest.value = null;
+  }
+}
+
+async function requestReassignment() {
+  reassignError.value = "";
+  if (!(await confirm("Ask a Coordinator Lead to reassign this event? All Leads will be notified."))) return;
+  reassignBusy.value = true;
+  try {
+    reassignmentRequest.value = (await eventsApi.requestReassignment(event.value.id, reassignReason.value)).data;
+    reassignReason.value = "";
+  } catch (e) {
+    reassignError.value = e.response?.data?.error || "Could not send the request.";
+  } finally {
+    reassignBusy.value = false;
+  }
+}
+
+async function withdrawReassignment() {
+  if (!(await confirm("Withdraw your reassignment request? You stay the Coordinator for this event."))) return;
+  reassignBusy.value = true;
+  try {
+    await eventsApi.withdrawReassignmentRequest(event.value.id);
+    await loadReassignmentRequest();
+  } catch (e) {
+    reassignError.value = e.response?.data?.error || "Could not withdraw the request.";
+  } finally {
+    reassignBusy.value = false;
+  }
 }
 
 async function clarify() {
   clarificationError.value = "";
   try {
-    await eventsApi.requestClarification(event.value.id, comment.value, editableFields.value);
+    await eventsApi.requestClarification(event.value.id, comment.value);
     comment.value = "";
-    editableFields.value = [];
     await load();
   } catch (e) {
     clarificationError.value = e.response?.data?.error || "Could not request clarification.";
@@ -1013,23 +1037,8 @@ async function clarify() {
 }
 
 function ensureResponseForm(item) {
-  if (openResponseForms[item.reviewId]) return;
-  const source = {
-    name: event.value.name,
-    purpose: event.value.purpose,
-    description: event.value.description,
-    proposed_date: event.value.proposedDate,
-    proposed_time: event.value.proposedTime,
-    expected_attendance: event.value.expectedAttendance,
-    capacity_needed: event.value.venueRequirements?.capacityNeeded,
-    required_layout: event.value.venueRequirements?.requiredLayout,
-    accessibility_needs: event.value.venueRequirements?.accessibilityNeeds,
-    registration_required: event.value.registrationRequired,
-  };
   const fields = {};
-  (item.request.editableFields || []).forEach((key) => {
-    fields[key] = source[key] ?? (key === "registration_required" ? false : "");
-  });
+  if (openResponseForms[item.reviewId]) return;
   openResponseForms[item.reviewId] = { comments: "", fields };
 }
 
@@ -1259,17 +1268,6 @@ async function revertToPlanning() {
   await load();
 }
 
-async function reassign() {
-  if (!newCoordinatorId.value) return;
-
-  const confirmed = await confirm("Reassign this event to the selected coordinator?");
-  if (!confirmed) return;
-
-  await eventsApi.reassign(event.value.id, newCoordinatorId.value);
-  newCoordinatorId.value = null;
-  await load();
-}
-
 async function resubmit() {
   revisionError.value = "";
 
@@ -1317,10 +1315,8 @@ async function cancelEvent() {
 
 onMounted(async () => {
   await load();
-  // /auth/users is coordinator-only server-side; only fetch it if this
-  // viewer actually has that role, to avoid a needless 403.
-  if (auth.hasRole("event_coordinator")) {
-    await loadCoordinators();
+  if (auth.hasRole("event_coordinator") || auth.hasRole("event_coordinator_lead")) {
+    await loadReassignmentRequest();
   }
 });
 </script>
@@ -1384,18 +1380,6 @@ onMounted(async () => {
   font-size: 0.85rem;
 }
 
-.field-select {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.checkbox-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 0.4rem 1rem;
-}
-
 .checkbox-option {
   display: flex;
   align-items: center;
@@ -1411,12 +1395,6 @@ onMounted(async () => {
   font-size: 0.85rem;
   font-weight: 500;
   color: var(--text, #2d2a4a);
-}
-
-.editable-fields-note {
-  margin-top: 0.35rem;
-  font-size: 0.85rem;
-  font-weight: 500;
 }
 
 .edit-event-form {
@@ -1577,11 +1555,6 @@ onMounted(async () => {
   font-size: 0.75rem;
   font-weight: 600;
   opacity: 0.75;
-}
-
-.thread-fields {
-  font-size: 0.8rem;
-  font-style: italic;
 }
 
 .thread-pending {
@@ -1805,7 +1778,38 @@ onMounted(async () => {
 
 /* Action blocks */
 .assigned-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
   color: var(--text-muted);
+  font-weight: 500;
+}
+
+.reassignment-block .hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.reassign-status,
+.reassign-reason,
+.reassign-declined {
+  margin: 0;
+}
+
+.reassign-declined {
+  color: var(--rose-text);
+}
+
+.badge-pending {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0.15rem 0.65rem;
+  border-radius: 999px;
+  background: var(--butter-bg);
+  color: var(--butter-text);
+  font-size: 0.8rem;
   font-weight: 500;
 }
 

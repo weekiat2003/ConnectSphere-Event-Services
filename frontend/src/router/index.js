@@ -34,6 +34,8 @@ import RegistrationManageView from "../views/RegistrationManageView.vue";
 import NotificationsView from "../views/NotificationsView.vue";
 import AssignmentQueueView from "../views/AssignmentQueueView.vue";
 import SupervisionView from "../views/SupervisionView.vue";
+import LeadDashboardView from "../views/LeadDashboardView.vue";
+import LeadCalendarView from "../views/LeadCalendarView.vue";
 
 const routes = [
   {
@@ -112,6 +114,7 @@ const routes = [
     component: CoordinatorCalendar,
     meta: {
       requiresAuth: true,
+      roles: ["event_coordinator"],
     },
   },
 
@@ -246,6 +249,16 @@ const routes = [
     component: AssignmentQueueView,
     meta: { requiresAuth: true, roles: ["event_coordinator_lead"], showAccessDenied: true },
   },
+  { path: "/lead",
+    name: "lead-dashboard",
+    component: LeadDashboardView,
+    meta: { requiresAuth: true, roles: ["event_coordinator_lead"], showAccessDenied: true },
+  },
+  { path: "/lead/calendar",
+    name: "lead-calendar",
+    component: LeadCalendarView,
+    meta: { requiresAuth: true, roles: ["event_coordinator_lead"], showAccessDenied: true },
+  },
   { path: "/supervision",
     name: "supervision",
     component: SupervisionView,
@@ -282,9 +295,9 @@ router.beforeEach((to) => {
     return { name: "venue-booking-approval" };
   }
 
-  // A Lead with no other role has nothing on the Dashboard; start them in the queue.
+  // A Lead with no other role gets the Lead dashboard instead of the generic one.
   if (to.name === "dashboard" && auth.roles.length === 1 && auth.hasRole("event_coordinator_lead")) {
-    return { name: "assignments" };
+    return { name: "lead-dashboard" };
   }
 
   if (to.meta.roles && !to.meta.roles.some((role) => auth.hasRole(role))) {
