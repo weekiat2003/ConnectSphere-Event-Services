@@ -14,7 +14,17 @@ from sqlalchemy import func
 
 from app.events.services.status import change_status
 from app.extensions import db
-from app.models.event import Event, EventCoordinatorHistory
+from app.common.text_validation import validate_descriptive_text
+from app.models.event import (
+    REASSIGNMENT_CLOSED,
+    REASSIGNMENT_COMPLETED,
+    REASSIGNMENT_DECLINED,
+    REASSIGNMENT_PENDING,
+    REASSIGNMENT_WITHDRAWN,
+    CoordinatorReassignmentRequest,
+    Event,
+    EventCoordinatorHistory,
+)
 from app.models.user import Role, User
 from app.notifications.services import triggers as notifications
 
@@ -139,21 +149,30 @@ def lead_reassign(event: Event, new_coordinator: User, dry_run: bool = False,
         raise ValueError("This request is already assigned to that Coordinator")
     if dry_run:
         return event
-    return reassign_coordinator(event, new_coordinator, assigned_by_id=assigned_by_id)
+    previous_coordinator_id = event.coordinator_id
+    event = reassign_coordinator(event, new_coordinator, assigned_by_id=assigned_by_id)
+    _resolve_pending_request(event, REASSIGNMENT_COMPLETED, assigned_by_id,
+                             note=f"Reassigned to {new_coordinator.name}",
+                             requested_by=previous_coordinator_id)
+    return event
 
 
 def coordinators_with_workload() -> list[dict]:
-    """Active Coordinators with their open-request count, least busy first —
-    the first entry is the one automatic assignment would have picked."""
+    """Active Coordinators with their number of active events (Under Review
+    through Confirmed), least busy first — the first entry is the suggestion.
+    openRequests is kept as an alias of activeEvents for older clients."""
     coordinators = _active_coordinators()
     counts = dict(
         db.session.query(Event.coordinator_id, func.count(Event.id))
-        .filter(Event.status.in_(OPEN_STATUSES))
+        .filter(Event.status.in_(ACTIVE_ASSIGNED_STATUSES))
         .group_by(Event.coordinator_id)
         .all()
     )
-    rows = [{"id": c.id, "name": c.name, "openRequests": counts.get(c.id, 0)} for c in coordinators]
-    return sorted(rows, key=lambda r: (r["openRequests"], r["id"]))
+    rows = []
+    for c in coordinators:
+        active = counts.get(c.id, 0)
+        rows.append({"id": c.id, "name": c.name, "activeEvents": active, "openRequests": active})
+    return sorted(rows, key=lambda r: (r["activeEvents"], r["id"]))
 
 
 # Statuses in which an assigned event still needs its Coordinator's attention.
@@ -265,4 +284,111 @@ def coordinator_calendar(user_id: int):
         seen_event_ids.add(entry.event_id)
         event = entry.event
         results.append({**event.to_dict(), "isReadOnly": event.coordinator_id != user_id})
+    # Events assigned before assignment history was recorded (older data)
+    # still belong on the current Coordinator's calendar.
+    for event in Event.query.filter(Event.coordinator_id == user_id, Event.status != "draft").all():
+        if event.id not in seen_event_ids:
+            results.append({**event.to_dict(), "isReadOnly": False})
     return results
+
+
+# ---------------------------------------------------------------------
+# Reassignment requests: Coordinators ask, Leads decide
+# ---------------------------------------------------------------------
+
+# Statuses in which an event can still be handed to another Coordinator.
+REASSIGNABLE_STATUSES = ACTIVE_ASSIGNED_STATUSES
+REASON_MAX_LENGTH = 500
+
+
+def pending_reassignment_request(event_id: int):
+    return (CoordinatorReassignmentRequest.query
+            .filter_by(event_id=event_id, status=REASSIGNMENT_PENDING)
+            .order_by(CoordinatorReassignmentRequest.id.desc()).first())
+
+
+def latest_reassignment_request(event_id: int):
+    return (CoordinatorReassignmentRequest.query.filter_by(event_id=event_id)
+            .order_by(CoordinatorReassignmentRequest.id.desc()).first())
+
+
+def request_reassignment(event: Event, coordinator_id: int, reason: str):
+    """The assigned Coordinator asks the Leads to move the event to someone
+    else. They cannot choose the new Coordinator; a Lead does."""
+    if event.coordinator_id != coordinator_id:
+        raise PermissionError("Only the currently assigned Coordinator can ask for this event to be reassigned")
+    if event.status not in REASSIGNABLE_STATUSES:
+        raise ValueError(f"A {event.status.replace('_', ' ')} event cannot be reassigned")
+    reason = (reason or "").strip()
+    validate_descriptive_text(reason, "reason")
+    if len(reason) > REASON_MAX_LENGTH:
+        raise ValueError(f"Reason must be {REASON_MAX_LENGTH} characters or fewer")
+    if pending_reassignment_request(event.id):
+        raise ValueError("A reassignment request for this event is already waiting for a Coordinator Lead")
+
+    req = CoordinatorReassignmentRequest(event_id=event.id, requested_by=coordinator_id, reason=reason)
+    db.session.add(req)
+    db.session.flush()
+    notifications.notify_leads_of_reassignment_request(event, req)
+    db.session.commit()
+    return req
+
+
+def decline_reassignment_request(event: Event, lead_id: int, note: str = None):
+    """A Lead keeps the current Coordinator; the Coordinator is told why."""
+    req = pending_reassignment_request(event.id)
+    if req is None:
+        raise ValueError("There is no pending reassignment request for this event")
+    note = (note or "").strip() or None
+    if note and len(note) > REASON_MAX_LENGTH:
+        raise ValueError(f"Note must be {REASON_MAX_LENGTH} characters or fewer")
+    req.status = REASSIGNMENT_DECLINED
+    req.decided_by = lead_id
+    req.decided_at = utcnow()
+    req.decision_note = note
+    notifications.notify_coordinator_of_reassignment_decision(event, req)
+    db.session.commit()
+    return req
+
+
+def withdraw_reassignment_request(event: Event, coordinator_id: int):
+    req = pending_reassignment_request(event.id)
+    if req is None:
+        raise ValueError("There is no pending reassignment request for this event")
+    if req.requested_by != coordinator_id:
+        raise PermissionError("Only the Coordinator who asked can withdraw this request")
+    req.status = REASSIGNMENT_WITHDRAWN
+    req.decided_at = utcnow()
+    notifications.clear_reassignment_request_notices(event, {"outcome": "withdrawn"})
+    db.session.commit()
+    return req
+
+
+def _resolve_pending_request(event: Event, status: str, decided_by: int = None, note: str = None,
+                             requested_by: int = None, commit: bool = True):
+    """Closes the event's pending request (if any) once it no longer needs a
+    decision. requested_by limits it to that Coordinator's request."""
+    req = pending_reassignment_request(event.id)
+    if req is None or (requested_by is not None and req.requested_by != requested_by):
+        return None
+    req.status = status
+    req.decided_by = decided_by
+    req.decided_at = utcnow()
+    req.decision_note = note
+    notifications.clear_reassignment_request_notices(event, {"outcome": status})
+    if commit:
+        db.session.commit()
+    return req
+
+
+def close_reassignment_request_for_closed_event(event: Event):
+    """Called (inside the status change, which commits) when an event is
+    cancelled, rejected or completed: nobody needs to act on it any more."""
+    return _resolve_pending_request(event, REASSIGNMENT_CLOSED, note=f"Event {event.status}", commit=False)
+
+
+def pending_reassignment_requests() -> list[dict]:
+    """Every pending request, oldest first, for the Leads' Assignment Queue."""
+    rows = (CoordinatorReassignmentRequest.query.filter_by(status=REASSIGNMENT_PENDING)
+            .order_by(CoordinatorReassignmentRequest.created_at.asc()).all())
+    return [r.to_dict() for r in rows]

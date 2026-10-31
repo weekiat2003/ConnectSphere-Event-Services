@@ -203,7 +203,6 @@ class EventReview(db.Model):
             "coordinatorId": self.coordinator_id,
             "action": self.action,
             "comments": self.comments,
-            "editableFields": self.editable_fields or [],
             "withdrawnAt": self.withdrawn_at.isoformat() if self.withdrawn_at else None,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
         }
@@ -339,6 +338,49 @@ class EventCoordinatorHistory(db.Model):
             "assignedById": self.assigned_by,
             "assignedByName": self.assigner.name if self.assigner else None,
             "isCurrent": self.unassigned_at is None,
+        }
+
+
+# Coordinator Assignment: a Coordinator cannot hand an event to someone else
+# directly; they ask the Leads to reassign it, with a reason.
+REASSIGNMENT_PENDING = "pending"
+REASSIGNMENT_COMPLETED = "completed"   # a Lead reassigned the event
+REASSIGNMENT_DECLINED = "declined"     # a Lead kept the current Coordinator
+REASSIGNMENT_WITHDRAWN = "withdrawn"   # the Coordinator no longer needs it
+REASSIGNMENT_CLOSED = "closed"         # the event was cancelled/rejected/completed
+
+
+class CoordinatorReassignmentRequest(db.Model):
+    __tablename__ = "coordinator_reassignment_requests"
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    event_id = db.Column(db.BigInteger, db.ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    requested_by = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=False)
+    reason = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(20), nullable=False, default=REASSIGNMENT_PENDING)
+    decided_by = db.Column(db.BigInteger, db.ForeignKey("users.id"), nullable=True)
+    decision_note = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    decided_at = db.Column(db.DateTime)
+
+    event = db.relationship("Event")
+    requester = db.relationship("User", foreign_keys=[requested_by])
+    decider = db.relationship("User", foreign_keys=[decided_by])
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "eventId": self.event_id,
+            "eventName": self.event.name if self.event else None,
+            "requestedById": self.requested_by,
+            "requestedByName": self.requester.name if self.requester else None,
+            "reason": self.reason,
+            "status": self.status,
+            "decidedById": self.decided_by,
+            "decidedByName": self.decider.name if self.decider else None,
+            "decisionNote": self.decision_note,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "decidedAt": self.decided_at.isoformat() if self.decided_at else None,
         }
 
 class EventFieldEditLog(db.Model):
