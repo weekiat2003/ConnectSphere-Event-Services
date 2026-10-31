@@ -568,3 +568,20 @@ def notify_attendees_of_event_cancellation(event, reason: str = None) -> list:
             note=f"The event was cancelled. Reason: {_sentence(reason)}" if reason else "The event was cancelled.",
         )
     return created
+
+@_never_blocks
+def notify_attendee_of_successful_registration(event, attendee_id: int) -> list:
+    return [
+        notify(
+            attendee_id,
+            TYPE_REGISTRATION_CHANGE,
+            "Registration successful",
+            f'You have successfully registered for "{_name(event)}".',
+            event_id=event.id,
+            link=_attendee_link(event),
+            data={
+                "kind": "registration_success",
+                "status": "registered",
+            },
+        )
+    ]
