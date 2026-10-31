@@ -200,12 +200,10 @@ def _organiser(event, kind: str, title: str, message: str, extra: dict = None) -
 
 
 @_never_blocks
-def notify_organiser_of_clarification(event, comments: str, editable_fields: list) -> list:
-    fields = [_humanise(f) for f in (editable_fields or [])]
+def notify_organiser_of_clarification(event, comments):
     message = f'Your Coordinator needs clarification on "{_name(event)}": {_sentence(comments)}'
-    message += f" You may edit: {', '.join(fields)}." if fields else " No fields are open for editing."
     return _organiser(event, "clarification_requested", "Clarification needed", message,
-                      {"comments": comments, "editableFields": list(editable_fields or [])})
+                      {"comments": comments})
 
 
 @_never_blocks

@@ -203,7 +203,6 @@ class EventReview(db.Model):
             "coordinatorId": self.coordinator_id,
             "action": self.action,
             "comments": self.comments,
-            "editableFields": self.editable_fields or [],
             "withdrawnAt": self.withdrawn_at.isoformat() if self.withdrawn_at else None,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
         }

@@ -52,19 +52,12 @@ def submit_event(event: Event, organiser_id: int) -> Event:
     return event
 
 
-def request_clarification(event: Event, coordinator_id: int, comments: str, editable_fields: list = None) -> Event:
+def request_clarification(event, coordinator_id, comments):
     if event.coordinator_id != coordinator_id:
         raise PermissionError("Only the assigned Coordinator can request clarification")
     if event.status != "under_review":
         raise ValueError("Clarification can only be requested while a request is under review")
     validate_descriptive_text(comments, "clarification comment")
-
-    from app.events.services.drafts import CLARIFICATION_EDITABLE_FIELD_CHOICES  # local import avoids circular import
-
-    editable_fields = editable_fields or []
-    invalid_fields = [f for f in editable_fields if f not in CLARIFICATION_EDITABLE_FIELD_CHOICES]
-    if invalid_fields:
-        raise ValueError(f"Unknown field(s) in editableFields: {', '.join(invalid_fields)}")
 
     db.session.add(
         EventReview(
@@ -72,7 +65,6 @@ def request_clarification(event: Event, coordinator_id: int, comments: str, edit
             coordinator_id=coordinator_id,
             action="clarification_requested",
             comments=comments,
-            editable_fields=editable_fields,
         )
     )
 
@@ -80,7 +72,7 @@ def request_clarification(event: Event, coordinator_id: int, comments: str, edit
     # any number of requests can be open at once, each answered independently
     event.clarification_flag = True
     event.clarification_comments = comments
-    notifications.notify_organiser_of_clarification(event, comments, editable_fields)
+    notifications.notify_organiser_of_clarification(event, comments)
     db.session.commit()
     return event
 
@@ -105,20 +97,12 @@ def respond_to_clarification(event: Event, organiser_id: int, review_id: int, da
     comments = data.get("comments", "")
     validate_descriptive_text(comments, "response comment")
 
-    allowed_fields = target_review.editable_fields or []
-    restricted_data = {k: v for k, v in data.items() if k in allowed_fields}
-
-    from app.events.services.drafts import _apply_fields
-
-    _apply_fields(event, restricted_data)
-
     db.session.add(
         EventClarificationResponse(
             event_id=event.id,
             review_id=review_id,
             organiser_id=organiser_id,
             comments=comments,
-            updated_fields=restricted_data,
         )
     )
 
@@ -277,7 +261,6 @@ def get_clarification_thread(event: Event) -> list:
                 "request": {
                     "coordinatorId": entry.coordinator_id,
                     "comments": entry.comments,
-                    "editableFields": entry.editable_fields or [],
                     "createdAt": entry.created_at.isoformat() if entry.created_at else None,
                 },
                 "response": response.to_dict() if response else None,

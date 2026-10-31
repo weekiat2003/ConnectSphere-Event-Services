@@ -14,7 +14,7 @@ export default {
   allEvents: () => apiClient.get("/events"),
   getEvent: (id) => apiClient.get(`/events/${id}`),
   getOutcome: (id) => apiClient.get(`/events/${id}/outcome`),
-  requestClarification: (id, comments, editableFields = []) => apiClient.post(`/events/${id}/clarification`, { comments, editableFields }),
+  requestClarification: (id, comments) => apiClient.post(`/events/${id}/clarification`, { comments }),
   respondClarification: (id, payload) => apiClient.post(`/events/${id}/clarification/response`, payload),
   approveEvent: (id, comments, confirmed = false) => apiClient.post(`/events/${id}/approve`, { comments, confirmed }),
   rejectEvent: (id, reason, confirmed = false) => apiClient.post(`/events/${id}/reject`, { reason, confirmed }),
