@@ -215,6 +215,42 @@ def test_removing_a_requirement_releases_only_its_reservation(client, path, tech
     assert _free(client, path, tech, item) == 8
 
 
+@pytest.mark.parametrize(
+    "new_quantity,expected_status",
+    [(4, "released"), (5, "reserved"), (7, "reserved")],
+)
+def test_editing_requirement_quantity_releases_only_oversized_reservation(
+    client, path, coord_headers, item, new_event, new_quantity, expected_status
+):
+    event_id, (requirement_id,) = new_event([6])
+    requirement = db.session.get(EventEquipmentRequirement, requirement_id)
+    requirement.status = "confirmed"
+    reservation_id = _reserve(event_id, requirement_id, item, 5)
+
+    res = client.put(
+        path("events.update_event_route", event_id=event_id),
+        json={
+            "fields": {
+                "equipment_requirements": [
+                    {"id": requirement_id, "type": "Projector", "quantity": new_quantity}
+                ]
+            },
+            "offlineReviewConfirmed": True,
+        },
+        headers=coord_headers,
+    )
+
+    assert res.status_code == 200
+    assert _status(reservation_id) == expected_status
+    db.session.expire_all()
+    updated_requirement = db.session.get(EventEquipmentRequirement, requirement_id)
+    if expected_status == "released":
+        assert updated_requirement.status == "requested"
+        assert updated_requirement.needs_recheck is True
+    else:
+        assert updated_requirement.status == "confirmed"
+
+
 def test_released_units_are_free_for_another_event(client, path, tech, item, new_event):
     event_a, (req_a,) = new_event([10], status="approved")
     event_b, (req_b,) = new_event([3], status="approved")
@@ -254,12 +290,40 @@ def test_processed_change_keeps_the_reservation_of_a_type_that_stays(
 ):
     event_id, (req,) = new_event([4])
     reservation = _reserve(event_id, req, item, 4)
-    _process_equipment_change(event_id, organiser, coord, [{"type": "Projector", "quantity": 2}])
+    _process_equipment_change(event_id, organiser, coord, [{"type": "Projector", "quantity": 5}])
     db.session.expire_all()
     record = db.session.get(EquipmentReservation, reservation)
     new_requirement = db.session.get(Event, event_id).equipment_requirements[0]
     assert record.status == "reserved"
     assert record.equipment_requirement_id == new_requirement.id
+
+
+@pytest.mark.parametrize(
+    "new_quantity,expected_status",
+    [(4, "released"), (5, "reserved"), (7, "reserved")],
+)
+def test_re_reviewed_change_releases_only_oversized_reservation(
+    item, new_event, organiser, coord, new_quantity, expected_status
+):
+    event_id, (requirement_id,) = new_event([6])
+    requirement = db.session.get(EventEquipmentRequirement, requirement_id)
+    requirement.status = "confirmed"
+    reservation_id = _reserve(event_id, requirement_id, item, 5)
+
+    _process_equipment_change(
+        event_id, organiser, coord,
+        [{"type": "Projector", "quantity": new_quantity}],
+    )
+
+    db.session.expire_all()
+    reservation = db.session.get(EquipmentReservation, reservation_id)
+    updated_requirement = db.session.get(Event, event_id).equipment_requirements[0]
+    assert reservation.status == expected_status
+    if expected_status == "released":
+        assert updated_requirement.status == "requested"
+        assert updated_requirement.needs_recheck is True
+    else:
+        assert reservation.equipment_requirement_id == updated_requirement.id
 
 
 def test_processed_change_releases_only_the_removed_types_reservation(

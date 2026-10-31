@@ -267,6 +267,16 @@ def _update_equipment_requirements(event: Event, requirements: list):
             event.equipment_requirements.append(item)
         item.equipment_type = values.get("type", values.get("equipment_type"))
         item.quantity = values["quantity"]
+        if requirement_id is not None:
+            oversized_reservations = EquipmentReservation.query.filter_by(
+                equipment_requirement_id=item.id, status="reserved"
+            ).filter(EquipmentReservation.quantity > item.quantity).all()
+            if oversized_reservations:
+                for reservation in oversized_reservations:
+                    reservation.status = "released"
+                    db.session.add(reservation)
+                item.status = "requested"
+                item.needs_recheck = True
         if "technicalNotes" in values:
             item.technical_notes = values["technicalNotes"]
         elif "technical_notes" in values:

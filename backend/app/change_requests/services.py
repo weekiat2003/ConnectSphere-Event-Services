@@ -748,7 +748,12 @@ def _replace_equipment_requirements(event: Event, items: list[dict]) -> None:
     for reservation, old_requirement_id in reserved:
         target = new_by_type.get(old_types.get(old_requirement_id))
         if target is not None:
-            reservation.equipment_requirement_id = target.id
+            if target.quantity < reservation.quantity:
+                reservation.status = "released"
+                target.status = "requested"
+                target.needs_recheck = True
+            else:
+                reservation.equipment_requirement_id = target.id
         else:
             reservation.status = "released"
 
