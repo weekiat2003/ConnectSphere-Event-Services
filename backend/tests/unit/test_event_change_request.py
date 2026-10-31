@@ -31,8 +31,8 @@ STAFF_ID = 900
 BASE_DAY = date.today() + timedelta(days=60)
 NEW_DAY = BASE_DAY + timedelta(days=7)
 REASON = "The client moved their launch to a later week."
-ALLOWED_STATUSES = ("approved", "planning", "confirmed")
-OTHER_STATUSES = ("draft", "submitted", "under_review", "rejected", "completed", "cancelled")
+ALLOWED_STATUSES = ("submitted", "under_review", "approved", "planning", "confirmed")
+OTHER_STATUSES = ("draft", "rejected", "completed", "cancelled")
 
 
 # ---------------------------------------------------------------------
