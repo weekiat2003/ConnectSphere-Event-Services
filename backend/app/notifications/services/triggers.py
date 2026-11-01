@@ -22,9 +22,11 @@ from flask import current_app
 
 from app.common.time import utcnow
 from app.extensions import db
+from app.models.equipment import EquipmentItem
 from app.models.event import Event, EventSafetyReview
 from app.models.notification import (
     TYPE_COORDINATOR_ASSIGNMENT,
+    TYPE_EQUIPMENT_RESERVATION_UPDATE,
     TYPE_NEW_EQUIPMENT_REQUEST,
     TYPE_NEW_EVENT_SUBMISSION,
     TYPE_NEW_VENUE_BOOKING_REQUEST,
@@ -441,6 +443,71 @@ def notify_tech_support_of_equipment(event, kind: str = "new") -> list:
         event_id=event.id, link=f"/technical-review?event={event.id}",
         data={"kind": kind, "summary": summary, "venues": venues, "requesterName": requester},
     )
+
+
+@_never_blocks
+def notify_coordinator_of_equipment_reservation(
+    reservation, action: str, actor_id: int = None
+) -> list:
+    event = reservation.event or db.session.get(Event, reservation.event_id)
+    if event is None or event.coordinator_id is None:
+        return []
+
+    actor_id = actor_id if actor_id is not None else reservation.created_by
+    if actor_id == event.coordinator_id:
+        return []
+
+    item = db.session.get(EquipmentItem, reservation.equipment_item_id)
+    item_name = item.name if item else f"Equipment item #{reservation.equipment_item_id}"
+    title = (
+        "Equipment reserved"
+        if action == "reserved"
+        else "Equipment reservation released"
+    )
+    time_window = (
+        f"{reservation.start_datetime.isoformat()} to "
+        f"{reservation.end_datetime.isoformat()}"
+    )
+    return [notify(
+        event.coordinator_id,
+        TYPE_EQUIPMENT_RESERVATION_UPDATE,
+        title,
+        f'{reservation.quantity} × {item_name} for "{_name(event)}", {time_window}',
+        event_id=event.id,
+        link=_event_link(event),
+        data={
+            "event_id": event.id,
+            "requirement_id": reservation.equipment_requirement_id,
+            "reservation_id": reservation.id,
+            "kind": action,
+        },
+    )]
+
+
+@_never_blocks
+def notify_coordinator_of_equipment_shortage(
+    event, requirement, item, requested_quantity: int, available_quantity: int,
+    actor_id: int = None,
+) -> list:
+    if event.coordinator_id is None or actor_id == event.coordinator_id:
+        return []
+
+    return [notify(
+        event.coordinator_id,
+        TYPE_EQUIPMENT_RESERVATION_UPDATE,
+        "Equipment unavailable",
+        f'{requested_quantity} × {item.name} requested for "{_name(event)}", '
+        f"but only {available_quantity} available for the selected time window.",
+        event_id=event.id,
+        link=f"/technical-review?event={event.id}",
+        data={
+            "event_id": event.id,
+            "requirement_id": requirement.id,
+            "kind": "reservation_refused",
+            "requested_quantity": requested_quantity,
+            "available_quantity": available_quantity,
+        },
+    )]
 
 
 # ===========================================================================
