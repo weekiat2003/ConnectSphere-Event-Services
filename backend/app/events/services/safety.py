@@ -280,25 +280,33 @@ def review_safety_check(
         factor_notes=factor_notes,
     )
     db.session.add(review)
+
     # The decision now holds the assessment; the next safety check starts fresh.
     if event.safety_assessment is not None:
         db.session.delete(event.safety_assessment)
+
     if decision != "approved":
         reason = f"Safety check {decision.replace('_', ' ')}"
         reason = f"{reason}: {comments}"
-        status_service.change_status(event, "planning", changed_by_id=safety_officer.id, reason=reason, notify=False)
+
+        status_service.change_status(
+            event,
+            "planning",
+            changed_by_id=safety_officer.id,
+            reason=reason,
+            notify=False,
+        )
         notifications.notify_organiser_of_safety_decision(event, review)
+
     else:
-        # Approval moves the event out of Safety Check to Safety approved; the
-        # Coordinator then confirms it (Clarification Session 3), so tell them
-        # it is their turn.
-        change_status(event, "safety_approved", changed_by_id=safety_officer.id,
-                      reason="Safety check approved", notify=False)
+        # On approval, the event stays in "safety_check".
+        # The assigned Coordinator must explicitly confirm it.
         notifications.notify_coordinator_of_safety_approval(event, review)
-    # Add an explicit commit at the end of review_safety_check, so both approved and non-approved branches persist consistently instead of relying on change_status to do it only for one of them:
+
     db.session.commit()
 
     return event
+
 
 def _validate_values(
     values: list[str] | None, allowed_values: set[str], label: str
