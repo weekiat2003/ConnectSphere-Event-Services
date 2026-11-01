@@ -90,7 +90,7 @@ const allEvents = ref([]);
 const loading = ref(true);
 const error = ref("");
 
-const ACTIVE = ["submitted", "under_review", "approved", "planning", "safety_check", "confirmed"];
+const ACTIVE = ["submitted", "under_review", "approved", "planning", "safety_check", "safety_approved", "confirmed"];
 const activeCount = computed(() => allEvents.value.filter((e) => ACTIVE.includes(e.status)).length);
 
 const attention = computed(() => {

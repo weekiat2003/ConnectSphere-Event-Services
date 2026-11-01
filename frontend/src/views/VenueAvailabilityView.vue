@@ -15,28 +15,7 @@
     <p v-if="notice" class="notice" role="status">{{ notice }}</p>
     <p v-if="pageError" class="field-error" role="alert">{{ pageError }}</p>
 
-    <!-- Event Coordinators: events affected by an availability change -->
-    <div v-if="isCoordinator && flags.length" class="card flags">
-      <h3>Events affected by availability changes</h3>
-      <ul>
-        <li v-for="f in flags" :key="f.id">
-          <span>
-            <router-link :to="`/events/${f.eventId}`">{{ f.eventName || `Event #${f.eventId}` }}</router-link>
-            at {{ f.venueName || venueName(f.venueId) }} is affected: {{ f.reason || "venue availability changed" }}.
-            <span v-if="f.bookingStart" class="flag-detail">
-              Booked {{ fmt(f.bookingStart) }} to {{ fmt(f.bookingEnd) }}.
-            </span>
-            <span v-for="p in f.unavailablePeriods" :key="p.id" class="flag-detail">
-              Unavailable {{ fmt(p.start) }} to {{ fmt(p.end) }}.
-            </span>
-          </span>
-          <span class="flag-actions">
-            <router-link to="/venues/search" class="btn-primary">Find replacement venue</router-link>
-            <button type="button" class="btn-ghost" @click="resolveFlag(f)">Mark resolved</button>
-          </span>
-        </li>
-      </ul>
-    </div>
+
 
     <!-- Venue Staff: block a venue out -->
     <form v-if="isStaff" class="card block-form" novalidate @submit.prevent="addBlock">

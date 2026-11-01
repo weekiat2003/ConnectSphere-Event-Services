@@ -27,7 +27,7 @@
               <label for="event">Select Event *</label>
               <select id="event" v-model="eventId" required>
                 <option value="" disabled>Select an event</option>
-                <option v-for="event in events" :key="event.id" :value="event.id">
+                <option v-for="event in planningEvents" :key="event.id" :value="event.id">
                   {{ event.name || event.title || `Event ${event.id}` }}
                 </option>
               </select>
@@ -300,7 +300,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import eventsApi from "../api/events";
 import venuesApi from "../api/venues";
 
@@ -371,9 +371,28 @@ const withdrawingId = ref(null);
 const withdrawErrors = ref({});
 const withdrawNotice = ref("");
 
+const planningEvents = computed(() => events.value.filter(
+  (event) => String(event.status || "").toLowerCase() === "planning"
+));
 const selectedEvent = computed(() =>
-  events.value.find((event) => Number(event.id) === Number(eventId.value))
+  planningEvents.value.find((event) => Number(event.id) === Number(eventId.value))
 );
+
+// Prefill from event details. The event provides a proposed start but does
+// not provide a reliable booking end time, so leave that field editable.
+watch(selectedEvent, (event) => {
+  if (!event || resubmittingFromId.value !== null) return;
+  const proposedDate = event.proposedDate || event.proposed_date || "";
+  const proposedTime = event.proposedTime || event.proposed_time || "";
+  const date = String(proposedDate).slice(0, 10);
+  const time = String(proposedTime).slice(0, 5);
+  venueRequests.value.forEach((request) => {
+    request.date = date;
+    request.startTime = time;
+    request.endDate = "";
+    request.endTime = "";
+  });
+});
 
 const today = new Date().toLocaleDateString("en-CA");
 let nextVenueKey = 0;
@@ -488,7 +507,12 @@ function availableVenues(currentIndex) {
 }
 
 function addVenue() {
-  venueRequests.value.push(emptyVenue());
+  const request = emptyVenue();
+  if (selectedEvent.value) {
+    request.date = String(selectedEvent.value.proposedDate || selectedEvent.value.proposed_date || "").slice(0, 10);
+    request.startTime = String(selectedEvent.value.proposedTime || selectedEvent.value.proposed_time || "").slice(0, 5);
+  }
+  venueRequests.value.push(request);
 }
 
 function removeVenue(index) {
@@ -513,6 +537,7 @@ function resubmitRejectedBooking(booking) {
   const startDate = start.slice(0, 10);
   const endDate = end.slice(0, 10);
 
+  resubmittingFromId.value = booking.id;
   eventId.value = Number(booking.eventId);
   venueRequests.value = [{
     ...emptyVenue(),
@@ -553,7 +578,7 @@ async function submitBooking() {
   errors.value = [];
   successMessage.value = "";
 
-  if (!eventId.value) {
+  if (!selectedEvent.value) {
     errors.value = [{ field: "venues", message: "Please select an event." }];
     return;
   }
@@ -701,7 +726,7 @@ function formatBookingDate(value) {
 onMounted(async () => {
   try {
     const eventsResponse = await eventsApi.assignedEvents();
-    events.value = eventsResponse.data;
+    events.value = Array.isArray(eventsResponse.data) ? eventsResponse.data : [];
   } catch (error) {
     console.error("EVENTS ERROR:", error);
   }

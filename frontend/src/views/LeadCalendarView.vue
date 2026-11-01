@@ -49,11 +49,11 @@ import { computed, onMounted, ref } from "vue";
 import eventsApi from "../api/events";
 import EventMonthCalendar from "../components/EventMonthCalendar.vue";
 
-const ACTIVE_STATUSES = ["submitted", "under_review", "approved", "planning", "safety_check", "confirmed"];
+const ACTIVE_STATUSES = ["submitted", "under_review", "approved", "planning", "safety_check", "safety_approved", "confirmed"];
 const CLOSED_STATUSES = ["cancelled", "rejected", "completed"];
 const STATUS_LABEL = {
   submitted: "Submitted", under_review: "Under review", approved: "Approved",
-  planning: "Planning", safety_check: "Safety check", confirmed: "Confirmed",
+  planning: "Planning", safety_check: "Safety check", safety_approved: "Safety approved", confirmed: "Confirmed",
 };
 
 const events = ref([]);

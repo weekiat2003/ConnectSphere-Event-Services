@@ -160,7 +160,7 @@ def on_event_status_changed(event, old_status: str, new_status: str,
         if event.equipment_requirements:
             created += notify_tech_support_of_equipment(event, kind="new")
 
-    elif new_status == "planning" and old_status in ("safety_check", "confirmed"):
+    elif new_status == "planning" and old_status in ("safety_check", "safety_approved", "confirmed"):
         created += _organiser(event, "returned_to_planning", "Event returned to planning",
                               f'"{_name(event)}" has returned to planning. Reason: {_sentence(reason)}',
                               {"reason": reason})
@@ -274,7 +274,7 @@ def notify_event_details_changed(event, before: dict) -> list:
             {"previous": old_text, "new": new_text},
         )
     if before["equipment"] != _equipment_signature(event) and event.status in (
-        "approved", "planning", "safety_check", "confirmed"
+        "approved", "planning", "safety_check", "safety_approved", "confirmed"
     ):
         created += notify_tech_support_of_equipment(event, kind="updated")
     return created
@@ -506,6 +506,22 @@ def notify_safety_officers_of_safety_check(event) -> list:
         event_id=event.id, link=f"/safety-reviews/{event.id}",
         data={"recheck": recheck, "venues": venues, "expectedAttendance": event.expected_attendance},
     )
+
+
+@_never_blocks
+def notify_coordinator_of_safety_approval(event, review: EventSafetyReview) -> list:
+    """The event stays in Safety Check until its Coordinator confirms it, so the
+    Coordinator is told the approval is in and the next step is theirs."""
+    if not event.coordinator_id:
+        return []
+    officer = review.safety_officer.name if review.safety_officer else "The Safety Officer"
+    return [notify(
+        event.coordinator_id, TYPE_SAFETY_CHECK, "Safety check approved: confirm the event",
+        f'{officer} approved the safety check for "{_name(event)}". '
+        "Open the event and select Confirm event so it can proceed to preparation.",
+        event_id=event.id, link=_event_link(event),
+        data={"decision": "approved"},
+    )]
 
 
 # ===========================================================================

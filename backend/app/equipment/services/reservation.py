@@ -7,7 +7,7 @@ from app.models.event import Event, EventEquipmentRequirement
 RESERVED = "reserved"
 RELEASED = "released"
 ACTIVE = "active"
-RESERVABLE_EVENT_STATUSES = ("approved", "planning", "safety_check", "confirmed")
+RESERVABLE_EVENT_STATUSES = ("approved", "planning", "safety_check", "safety_approved", "confirmed")
 
 
 def reserve(

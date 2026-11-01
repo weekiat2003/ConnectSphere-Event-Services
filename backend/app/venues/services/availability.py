@@ -10,18 +10,19 @@ reused by booking.py's conflict detection so the two can never drift apart.
 from datetime import datetime, timedelta, time
 import re
 
+from app.notifications.services.triggers import notify_coordinator_of_booking_update
 from app.extensions import db
 from app.common.time import utcnow
 from app.models.venue import (
     BOOKING_APPROVED,
     BOOKING_HELD,
+    BOOKING_REJECTED,
     Venue,
     VenueAvailabilityFlag,
     VenueBooking,
     VenueUnavailability,
 )
 _HOURS_PATTERN = re.compile(r"(\d{1,2}):(\d{2})\s*[-\u2013\u2014]\s*(\d{1,2}):(\d{2})")
-
 
 def parse_operating_hours(venue: Venue):
     """Return (opens, closes) as times, or None when there is no usable restriction."""
@@ -211,22 +212,50 @@ def flag_timing_conflicts(venue: Venue, reason: str):
                             flags.append(flag)
     return flags
 
-
 def add_unavailability(venue: Venue, user_id: int, start, end, reason: str = None):
-    """Venue Staff mark a venue unavailable for operational reasons.
-    Returns (block, flags_raised) -- flags_raised is non-empty when this
-    block collides with an already-approved booking's effective window."""
+    """Venue Staff mark a venue unavailable for operational reasons."""
     if not isinstance(start, datetime) or not isinstance(end, datetime):
         raise ValueError("start and end must be ISO datetimes")
     if end <= start:
         raise ValueError("End time must be after start time")
 
     block = VenueUnavailability(
-        venue_id=venue.id, start_datetime=start, end_datetime=end, reason=reason, created_by=user_id
+        venue_id=venue.id,
+        start_datetime=start,
+        end_datetime=end,
+        reason=reason,
+        created_by=user_id
     )
     db.session.add(block)
 
     flags = _flag_affected_events(venue, start, end, reason)
+
+    affected_bookings = VenueBooking.query.filter(
+        VenueBooking.venue_id == venue.id,
+        VenueBooking.status == BOOKING_APPROVED,
+    ).all()
+
+    for booking in affected_bookings:
+        booking_start, booking_end = compute_booking_window(booking, venue)
+
+        if booking_start < end and start < booking_end:
+            booking.status = BOOKING_REJECTED
+
+            booking.decision_reason = (
+                f"Venue marked unavailable: {reason}"
+                if reason
+                else "Venue marked unavailable."
+            )
+
+            booking.decided_by = user_id
+            booking.decided_at = utcnow()
+
+            # Notify the event coordinator.
+            notify_coordinator_of_booking_update(
+                booking,
+                change="rejected",
+                reason=booking.decision_reason,
+            )
 
     db.session.commit()
     return block, flags
@@ -300,8 +329,10 @@ def describe_flag(flag: VenueAvailabilityFlag) -> dict:
     venue = db.session.get(Venue, flag.venue_id)
     event = db.session.get(Event, flag.event_id)
     booking = (
-        VenueBooking.query.filter_by(
-            event_id=flag.event_id, venue_id=flag.venue_id, status=BOOKING_APPROVED
+        VenueBooking.query.filter(
+            VenueBooking.event_id == flag.event_id,
+            VenueBooking.venue_id == flag.venue_id,
+            VenueBooking.status.in_([BOOKING_APPROVED, BOOKING_REJECTED]),
         )
         .order_by(VenueBooking.start_datetime)
         .first()

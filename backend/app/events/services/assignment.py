@@ -145,7 +145,7 @@ def lead_reassign(event: Event, new_coordinator: User, dry_run: bool = False,
     """A Lead moves an assigned, still-open request to another Coordinator."""
     if event.coordinator_id is None:
         raise ValueError("This request is not assigned yet; assign it instead")
-    if event.status not in UNASSIGNED_VISIBLE_STATUSES + ("safety_check", "confirmed"):
+    if event.status not in UNASSIGNED_VISIBLE_STATUSES + ("safety_check", "safety_approved", "confirmed"):
         raise ValueError(f"A {event.status.replace('_', ' ')} request cannot be reassigned")
     _require_active_coordinator(new_coordinator)
     if new_coordinator.id == event.coordinator_id:
@@ -179,7 +179,7 @@ def coordinators_with_workload() -> list[dict]:
 
 
 # Statuses in which an assigned event still needs its Coordinator's attention.
-ACTIVE_ASSIGNED_STATUSES = OPEN_STATUSES + ("safety_check", "confirmed")
+ACTIVE_ASSIGNED_STATUSES = OPEN_STATUSES + ("safety_check", "safety_approved", "confirmed")
 
 
 def supervision_overview() -> list[dict]:

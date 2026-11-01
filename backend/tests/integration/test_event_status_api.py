@@ -443,7 +443,7 @@ class TestStory3SafetyReviewOverHTTP:
         )
 
         assert response.status_code == 200
-        assert response.get_json()["status"] == "safety_check"  # still pending Coordinator confirmation
+        assert response.get_json()["status"] == "safety_approved"  # out of Safety Check; Coordinator confirms next
 
     def test_coordinator_cannot_bypass_safety_review_with_generic_status_endpoint(
         self, client, auth_header, organiser, coordinator, make_event

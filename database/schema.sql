@@ -76,7 +76,7 @@ CREATE TABLE events (
 
     status ENUM(
         'draft','submitted','under_review','approved',
-        'planning','safety_check','confirmed','completed','cancelled','rejected'
+        'planning','safety_check','safety_approved','confirmed','completed','cancelled','rejected'
     ) NOT NULL DEFAULT 'draft',
 
     proposed_date           DATE NULL,
@@ -652,3 +652,12 @@ CREATE TABLE IF NOT EXISTS coordinator_reassignment_requests (
     CONSTRAINT fk_crr_decided_by FOREIGN KEY (decided_by) REFERENCES users(id) ON DELETE SET NULL,
     INDEX idx_crr_event_status (event_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Operational Feasibility Check: approving a safety check moves the event out
+-- of Safety Check to 'safety_approved'; the Coordinator then confirms it.
+-- (Already part of the CREATE TABLE above; this line updates older databases.)
+ALTER TABLE events
+    MODIFY status ENUM(
+        'draft','submitted','under_review','approved',
+        'planning','safety_check','safety_approved','confirmed','completed','cancelled','rejected'
+    ) NOT NULL DEFAULT 'draft';

@@ -25,7 +25,9 @@ ALLOWED_TRANSITIONS = {
     "under_review": {"approved", "rejected", "cancelled"},
     "approved": {"planning", "cancelled"},
     "planning": {"safety_check", "cancelled"},
-    "safety_check": {"planning", "cancelled"},
+    "safety_check": {"safety_approved", "planning", "cancelled"},
+    # Safety Officer approved; the Coordinator confirms (Clarification Session 3).
+    "safety_approved": {"confirmed", "planning", "cancelled"},
     "confirmed": {"planning", "completed", "cancelled"},
     "completed": set(),
     "cancelled": set(),
@@ -33,7 +35,7 @@ ALLOWED_TRANSITIONS = {
 }
 
 CLOSED_STATUSES = ("cancelled", "rejected", "completed")
-CANCELLABLE_STATUSES = ("approved", "planning", "confirmed", "safety_check")
+CANCELLABLE_STATUSES = ("approved", "planning", "confirmed", "safety_check", "safety_approved")
 CANCEL_STATUS_MESSAGE = "An event can only be cancelled while it is approved, planning or in safety check"
 
 
@@ -60,8 +62,8 @@ def change_status(event: Event, new_status: str, changed_by_id: int, reason: str
 
 # Coordinator confirms an event after a safety officer has approved it.
 def confirm_after_safety_approval(event: Event, review: EventSafetyReview, changed_by_id: int) -> Event:
-    if event.status != "safety_check":
-        raise InvalidTransitionError("Only an event awaiting safety check can be confirmed")
+    if event.status != "safety_approved":
+        raise InvalidTransitionError("Only an event whose safety check has been approved can be confirmed")
     if review.decision != "approved":
         raise InvalidTransitionError("Safety check must be approved before the event can be confirmed")
     if not review.safety_officer.has_role("safety_officer"):
@@ -178,19 +180,19 @@ def arrangements_are_complete(event: Event) -> bool:
 
 
 def return_to_planning(event: Event, changed_by_id: int, reason: str, commit: bool = True) -> Event:
-    """Send a safety_check/confirmed event back to planning (lost arrangement or
-    significant change). Other statuses are left alone. The unfinished safety
-    assessment is discarded because the facts it covered have changed."""
-    if event.status not in ("safety_check", "confirmed"):
+    """Return an event to planning if its arrangements change."""
+    if event.status not in ("safety_check", "safety_approved", "confirmed"):
         return event
+
     if event.safety_assessment is not None:
         db.session.delete(event.safety_assessment)
+
     return change_status(event, "planning", changed_by_id, reason=reason, commit=commit)
 
 
 def reconsider_event_after_arrangement_loss(event: Event, changed_by_id: int, reason: str) -> Event:
     """Return an event to planning if a required arrangement is lost."""
-    if event.status in ("safety_check", "confirmed") and not arrangements_are_complete(event):
+    if event.status in ("safety_check", "safety_approved", "confirmed") and not arrangements_are_complete(event):
         return return_to_planning(event, changed_by_id, reason)
     return event
 
