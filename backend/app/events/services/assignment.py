@@ -60,8 +60,7 @@ def get_next_coordinator():
     return min(coordinators, key=lambda c: (workload[c.id], c.id))
 
 
-def assign_coordinator(event: Event, coordinator: User = None, assignment_type: str = "auto",
-                       previous_coordinator_id: int = None, assigned_by_id: int = None) -> Event:
+def assign_coordinator(event: Event, coordinator: User = None, assignment_type: str = "auto", previous_coordinator_id: int = None, assigned_by_id: int = None, commit: bool = True) -> Event:
     coordinator = coordinator or get_next_coordinator()
     if coordinator is None:
         raise ValueError("No active Event Coordinator is available for assignment")
@@ -78,7 +77,8 @@ def assign_coordinator(event: Event, coordinator: User = None, assignment_type: 
     # Notification System (ISP-105, ISP-103 AC5): tell the new Coordinator,
     # the previous one (if any) and the organiser, and clear the Leads' queue notices.
     notifications.notify_coordinator_assignment(event, coordinator, previous_coordinator_id)
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return event
 
 
@@ -117,7 +117,7 @@ def _require_active_coordinator(coordinator: User):
         raise ValueError("coordinatorId must reference an active Event Coordinator")
 
 
-def lead_assign(event: Event, coordinator: User, dry_run: bool = False, assigned_by_id: int = None) -> Event:
+def lead_assign(event: Event, coordinator: User, dry_run: bool = False, assigned_by_id: int = None, commit: bool = True) -> Event:
     """A Lead assigns an Unassigned request: it moves to under_review
     ("Assigned"), leaves the queue, the Coordinator is notified, and every
     Lead's queue notification for it is cleared. dry_run checks only."""
@@ -130,10 +130,13 @@ def lead_assign(event: Event, coordinator: User, dry_run: bool = False, assigned
     if dry_run:
         return locked
 
-    assign_coordinator(locked, coordinator=coordinator, assignment_type="lead",
-                       assigned_by_id=assigned_by_id)
+    assign_coordinator(locked, 
+                       coordinator=coordinator, assignment_type="lead", assigned_by_id=assigned_by_id,
+                       commit=False
+)
+    
     change_status(locked, "under_review", changed_by_id=assigned_by_id or coordinator.id,
-                  reason=f"Assigned to {coordinator.name} by a Coordinator Lead")
+                  reason=f"Assigned to {coordinator.name} by a Coordinator Lead", commit=commit)
     return locked
 
 
@@ -247,7 +250,7 @@ def list_unassigned_events():
     )
 
 
-def try_assign_and_advance(event: Event) -> Event:
+def try_assign_and_advance(event: Event, commit: bool = False) -> Event:
     """Retries automatic assignment for an event that was submitted while no
     Coordinator was available (see review.submit_event) and, on success,
     advances it into under_review the same way a normal submission would.
@@ -261,8 +264,8 @@ def try_assign_and_advance(event: Event) -> Event:
     if event.status != "submitted":
         raise ValueError("Only a submitted, unassigned event can be auto-assigned")
 
-    assign_coordinator(event)  # raises ValueError again if still nobody available
-    change_status(event, "under_review", changed_by_id=event.coordinator_id)
+    assign_coordinator(event, commit=commit)  # raises ValueError again if still nobody available
+    change_status(event, "under_review", changed_by_id=event.coordinator_id, commit=commit)
     return event
 
 

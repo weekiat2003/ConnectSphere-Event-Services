@@ -17,6 +17,8 @@ from app.common.text_validation import validate_descriptive_text
 from app.models.equipment import EquipmentReservation
 from app.models.event import Event, EventEquipmentRequirement, EventFieldEditLog
 from app.notifications.services import triggers as notifications
+from app.events.services.status import return_to_planning
+
 
 ORDINARY_FIELDS = {"name", "purpose", "description", "category", "registration_required", "intended_capacity"}
 SIGNIFICANT_FIELDS = {
@@ -107,6 +109,11 @@ def update_event_fields(event: Event, user, changes: dict, offline_review_confir
 
     if significant_fields:
         _flag_arrangements_needs_reconsideration(event, significant_fields)
+        return_to_planning(
+            event, user.id,
+            reason="Significant change to " + ", ".join(sorted(significant_fields)),
+            commit=False,
+        )
 
     _log_edit(
         event, user, list(changes), old_values,

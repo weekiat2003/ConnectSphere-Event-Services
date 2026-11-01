@@ -213,17 +213,23 @@
 
     <!-- Coordinator Assignment (Notification System, ISP-103): every submitted
          request waits Unassigned until an Event Coordinator Lead assigns it. -->
-    <section v-if="!event.coordinatorId && event.status === 'submitted' && (auth.hasRole('event_coordinator') || auth.hasRole('event_coordinator_lead'))">
+    <section
+      v-if="!event.coordinatorId && event.status === 'submitted' && (auth.hasRole('event_coordinator') || auth.hasRole('event_coordinator_lead'))">
       <div class="action-block">
         <p>This request is waiting for an Event Coordinator Lead to assign it.</p>
-        <router-link v-if="auth.hasRole('event_coordinator_lead')" :to="{ name: 'assignments', query: { event: event.id } }">
+        <router-link v-if="auth.hasRole('event_coordinator_lead')"
+          :to="{ name: 'assignments', query: { event: event.id } }">
           Assign it from the Assignment Queue
         </router-link>
       </div>
     </section>
-    <p v-else-if="auth.hasRole('event_coordinator_lead') && event.coordinatorName" class="assigned-note">
-      Assigned to {{ event.coordinatorName }}
-    </p>
+    <div v-else-if="auth.hasRole('event_coordinator_lead') && event.coordinatorName" class="assigned-note">
+      <span>Assigned to {{ event.coordinatorName }}</span>
+      <router-link v-if="REASSIGNABLE_STATUSES.includes(event.status)"
+        :to="{ name: 'assignments', query: { event: event.id } }">
+        {{ reassignmentRequest?.status === "pending" ? "Review reassignment request" : "Reassign in the Assignment Queue" }}
+      </router-link>
+    </div>
 
     <!-- Coordinator Actions: Event Review and Approval + Coordinator Assignment + Event Status Management -->
     <section v-if="isAssignedCoordinator">
@@ -305,13 +311,15 @@
 
         <div class="edit-field edit-field-wide">
           <label>Equipment requirements</label>
-          <p class="eq-help">Choose equipment from the catalogue, set how many are needed, and add any technical notes.</p>
+          <p class="eq-help">Choose equipment from the catalogue, set how many are needed, and add any technical notes.
+          </p>
 
           <div v-if="editForm.equipment_requirements.length" class="eq-row eq-head" aria-hidden="true">
             <span>Equipment</span><span>Qty</span><span>Technical notes</span><span></span>
           </div>
 
-          <div v-for="(item, index) in editForm.equipment_requirements" :key="item.id ?? `new-${index}`" class="eq-block">
+          <div v-for="(item, index) in editForm.equipment_requirements" :key="item.id ?? `new-${index}`"
+            class="eq-block">
             <div class="eq-row">
               <select v-if="equipmentOptions.length" v-model="item.type" aria-label="Equipment">
                 <option value="" disabled>Choose equipment</option>
@@ -324,7 +332,8 @@
               </select>
               <input v-else type="text" v-model="item.type" placeholder="Equipment type" aria-label="Equipment" />
               <input type="number" min="1" v-model.number="item.quantity" aria-label="Quantity" />
-              <input type="text" v-model="item.technicalNotes" placeholder="e.g. ceiling-mounted, 5 m cable" aria-label="Technical notes" />
+              <input type="text" v-model="item.technicalNotes" placeholder="e.g. ceiling-mounted, 5 m cable"
+                aria-label="Technical notes" />
               <button type="button" class="btn btn-grey btn-small"
                 @click="editForm.equipment_requirements.splice(index, 1)">Remove</button>
             </div>
@@ -372,6 +381,42 @@
         </div>
       </div>
 
+      <div v-if="event.status === 'approved'" class="action-block">
+        <p class="notice-inline">This request is approved. Move it into planning to start arranging the venue and equipment.
+        </p>
+        <p v-if="actionError" class="field-error">{{ actionError }}</p>
+        <div class="actions">
+          <button class="btn btn-sky" :disabled="statusBusy" @click="proceedToPlanning">Proceed to Planning</button>
+        </div>
+      </div>
+
+      <div v-if="event.status === 'planning'" class="action-block">
+        <p class="notice-inline">
+          {{ event.canSendForSafetyCheck
+            ? "All venue and equipment arrangements are complete. Send this event for its safety check."
+            : "Complete every venue booking and equipment reservation to send this event for its safety check." }}
+        </p>
+        <p v-if="actionError" class="field-error">{{ actionError }}</p>
+        <div class="actions">
+          <button class="btn btn-primary" :disabled="!event.canSendForSafetyCheck || statusBusy"
+            @click="sendForSafetyCheck">Send for Safety Check</button>
+        </div>
+      </div>
+
+      <div v-if="event.status === 'safety_approved'" class="action-block">
+        <p class="notice-inline">
+          {{ event.awaitingConfirmation ? "The Safety Officer has approved this event. Confirm it to complete planning."
+            :
+          "Waiting for the Safety Officer's decision." }}
+        </p>
+        <p v-if="actionError" class="field-error">{{ actionError }}</p>
+        <div class="actions">
+          <button class="btn btn-mint" :disabled="!event.awaitingConfirmation || statusBusy"
+            @click="confirmEvent">Confirm
+            Event</button>
+        </div>
+      </div>
+
       <div v-if="confirmState" class="confirm-overlay">
         <div class="confirm-box">
           <p>{{ confirmState.message }}</p>
@@ -382,20 +427,42 @@
         </div>
       </div>
 
-      <div class="action-block">
-
-        <label>
-          Reassign to
-          <select v-model.number="newCoordinatorId">
-            <option disabled :value="null">Select a coordinator</option>
-            <option v-for="c in otherCoordinators" :key="c.id" :value="c.id">{{ c.name }}</option>
-          </select>
-        </label>
-        <div class="actions">
-          <button class="btn btn-primary" :disabled="!newCoordinatorId" @click="reassign">Reassign (after offline
-            agreement)</button>
-        </div>
-
+      <!-- Coordinator Assignment (Week 7): only a Lead can reassign. The
+           Coordinator asks, with a reason; hidden once the event is closed. -->
+      <div v-if="REASSIGNABLE_STATUSES.includes(event.status)" class="action-block reassignment-block">
+        <h3 class="block-title">Coordinator reassignment</h3>
+        <template v-if="reassignmentRequest?.status === 'pending'">
+          <p class="reassign-status">
+            <span class="badge-pending">Waiting for a Coordinator Lead</span>
+            You asked on {{ formatDate(reassignmentRequest.createdAt) }}.
+          </p>
+          <p class="reassign-reason"><strong>Your reason:</strong> {{ reassignmentRequest.reason }}</p>
+          <div class="actions">
+            <button class="btn btn-grey" :disabled="reassignBusy" @click="withdrawReassignment">Withdraw
+              request</button>
+          </div>
+        </template>
+        <template v-else>
+          <p v-if="reassignmentRequest?.status === 'declined'" class="reassign-declined">
+            Your last request was declined by {{ reassignmentRequest.decidedByName || "a Coordinator Lead" }}
+            on {{ formatDate(reassignmentRequest.decidedAt) }}<template v-if="reassignmentRequest.decisionNote">:
+              "{{ reassignmentRequest.decisionNote }}"</template><template v-else>.</template>
+          </p>
+          <p class="hint">
+            Can't continue with this event? Ask a Coordinator Lead to reassign it. The Lead chooses who takes over,
+            and you keep read-only access afterwards.
+          </p>
+          <label for="reassign-reason">Reason (required)</label>
+          <textarea id="reassign-reason" v-model="reassignReason" maxlength="500" rows="3"
+            placeholder="e.g. On leave from 1 Dec, or workload too high this month"></textarea>
+          <p v-if="reassignError" class="field-error">{{ reassignError }}</p>
+          <div class="actions">
+            <button class="btn btn-primary" :disabled="reassignBusy || !reassignReason.trim()"
+              @click="requestReassignment">
+              Request reassignment
+            </button>
+          </div>
+        </template>
       </div>
     </section>
 
@@ -662,6 +729,26 @@ const reviewHistory = ref([]);
 
 const confirmState = ref(null); // { message, onConfirm, onCancel }
 const actionError = ref("");
+const statusBusy = ref(false);
+
+async function runStatusAction(call, fallbackMessage, question = null) {
+  if (question && !(await confirm(question))) return;
+  actionError.value = "";
+  statusBusy.value = true;
+  try {
+    await call(event.value.id);
+    await load();
+  } catch (e) {
+    actionError.value = e.response?.data?.error || fallbackMessage;
+  } finally {
+    statusBusy.value = false;
+  }
+}
+const proceedToPlanning = () => runStatusAction(eventsApi.proceedToPlanning, "Could not move this event into planning.");
+const sendForSafetyCheck = () => runStatusAction(eventsApi.sendForSafetyCheck, "Could not send this event for safety check.", "Send this event for its safety check?");
+const confirmEvent = () => runStatusAction(eventsApi.confirmEvent, "Could not confirm this event.", "Confirm this event?");
+
+
 const { confirm } = useConfirm();
 
 const safetyFactors = [
@@ -676,7 +763,7 @@ const safetyFactors = [
 ];
 const SAFETY_FACTOR_LABELS = Object.fromEntries(safetyFactors.map((f) => [f.key, f.label]));
 
-const latestSafetyReview = computed(() => event.value?.safetyReviews?.at(-1) || null);
+const latestSafetyReview = computed(() => event.value?.currentSafetyReview || null);
 
 function safetyDecisionHeading(decision) {
   if (decision === "approved") return "Safety approved: cleared for preparation";
@@ -722,6 +809,15 @@ const EVENT_EDIT_FIELD_OPTIONS = [
 ];
 
 const EVENT_EDIT_FIELD_LABELS = Object.fromEntries(EVENT_EDIT_FIELD_OPTIONS.map((f) => [f.key, f.label]));
+
+const REASSIGNABLE_STATUSES = [
+  "under_review",
+  "approved",
+  "planning",
+  "safety_check",
+  "safety_approved",
+  "confirmed",
+];
 
 function formatHistoryValue(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -1260,6 +1356,11 @@ async function revertToPlanning() {
   comment.value = "";
   await load();
 }
+
+const reassignmentRequest = ref(null);
+const reassignReason = ref("");
+const reassignError = ref("");
+const reassignBusy = ref(false);
 
 async function reassign() {
   if (!newCoordinatorId.value) return;
@@ -2141,12 +2242,38 @@ textarea {
   font-weight: 500;
 }
 
-.eq-help { margin: 0 0 0.5rem; font-size: 0.85rem; color: var(--text-muted, #6b6890); }
-.eq-row { display: grid; grid-template-columns: minmax(0, 2fr) 5.5rem minmax(0, 3fr) auto; gap: 0.5rem; align-items: center; }
-.eq-head { margin-bottom: 0.25rem; font-size: 0.8rem; font-weight: 500; color: var(--text-muted, #6b6890); }
-.eq-block { margin-bottom: 0.5rem; }
-.eq-row select, .eq-row input {
-  width: 100%; min-width: 0; box-sizing: border-box; padding: 0.4rem 0.6rem;
-  border: 1px solid var(--border, #e4defa); border-radius: 8px; font: inherit;
+.eq-help {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted, #6b6890);
+}
+
+.eq-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) 5.5rem minmax(0, 3fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.eq-head {
+  margin-bottom: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-muted, #6b6890);
+}
+
+.eq-block {
+  margin-bottom: 0.5rem;
+}
+
+.eq-row select,
+.eq-row input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border, #e4defa);
+  border-radius: 8px;
+  font: inherit;
 }
 </style>

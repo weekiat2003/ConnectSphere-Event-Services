@@ -201,7 +201,7 @@ TEST_EVENTS = [
         "purpose": "Alumni engagement",
         "description": "Evening dinner and networking for alumni and sponsors.",
         "category": "Social",
-        "status": "approved",
+        "status": "planning",
         "coordinator": "coordinator1@example.com",
         "days": 60, "time": time(18, 30),
         "expected_attendance": 120, "capacity_needed": 130,
