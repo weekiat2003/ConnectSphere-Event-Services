@@ -295,6 +295,17 @@ router.beforeEach((to) => {
     return { name: "venue-booking-approval" };
   }
 
+  // A Safety Officer with no other role only works on events awaiting a
+  // safety check, so the all-events Dashboard and Planning View send them to
+  // their Safety Reviews list instead.
+  if (
+    (to.name === "dashboard" || to.name === "planning") &&
+    auth.roles.length === 1 &&
+    auth.hasRole("safety_officer")
+  ) {
+    return { name: "safety-reviews" };
+  }
+
   // A Lead with no other role gets the Lead dashboard instead of the generic one.
   if (to.name === "dashboard" && auth.roles.length === 1 && auth.hasRole("event_coordinator_lead")) {
     return { name: "lead-dashboard" };

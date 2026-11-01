@@ -97,7 +97,7 @@ const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MAX_PER_DAY = 3;
 const TONES = {
   submitted: "butter", under_review: "butter", approved: "mint", planning: "sky",
-  safety_check: "lilac", confirmed: "mint", completed: "mint", cancelled: "rose", rejected: "rose",
+  safety_check: "lilac", safety_approved: "mint", confirmed: "mint", completed: "mint", cancelled: "rose", rejected: "rose",
 };
 
 const today = new Date();

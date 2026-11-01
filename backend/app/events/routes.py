@@ -757,6 +757,9 @@ def change_event_status(event_id):
     if new_status not in MANUAL_STATUS_TARGETS:
         return jsonify({"error": "Use the dedicated action to move an event to that status"}), 400
 
+    if new_status == "safety_approved":
+        return jsonify({"error": "Only a Safety Officer can approve a safety check"}), 403
+
     try:
         if new_status == "planning" and event.status == "confirmed":
             event = status_service.revert_to_planning(
