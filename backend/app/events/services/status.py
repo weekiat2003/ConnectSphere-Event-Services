@@ -99,12 +99,18 @@ def current_safety_review(event: Event):
     if latest is None or _decided_before_current_check(event, latest):
         return None
     if latest.decision == "approved":
-        return latest if event.status in ("safety_check", "confirmed", "completed") else None
-    return latest if event.status == "planning" else None
+        return latest if event.status in (
+            "safety_approved",
+            "confirmed",
+            "completed",
+    ) else None
 
 
 def awaiting_confirmation(event: Event) -> bool:
-    return event.status == "safety_check" and approved_safety_review_for_current_check(event) is not None
+    return (
+        event.status == "safety_approved"
+        and approved_safety_review_for_current_check(event) is not None
+    )
 
 def _record_status_change(event: Event, new_status: str, changed_by_id: int, reason: str = None, notify: bool = True, commit: bool = True) -> Event:
     old_status = event.status

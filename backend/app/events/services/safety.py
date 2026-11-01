@@ -299,8 +299,15 @@ def review_safety_check(
         notifications.notify_organiser_of_safety_decision(event, review)
 
     else:
-        # On approval, the event stays in "safety_check".
-        # The assigned Coordinator must explicitly confirm it.
+        # Safety Officer approves the safety check.
+        # The event moves to safety_approved, awaiting Coordinator confirmation.
+        status_service.change_status(
+            event,
+            "safety_approved",
+            changed_by_id=safety_officer.id,
+            reason="Safety check approved",
+            notify=False,
+        )
         notifications.notify_coordinator_of_safety_approval(event, review)
 
     db.session.commit()

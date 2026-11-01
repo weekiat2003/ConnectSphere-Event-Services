@@ -754,11 +754,13 @@ def change_event_status(event_id):
     data = request.get_json() or {}
     new_status = data.get("status")
     reason = data.get("reason")
-    if new_status not in MANUAL_STATUS_TARGETS:
-        return jsonify({"error": "Use the dedicated action to move an event to that status"}), 400
+
 
     if new_status == "safety_approved":
         return jsonify({"error": "Only a Safety Officer can approve a safety check"}), 403
+
+    if new_status not in MANUAL_STATUS_TARGETS:
+        return jsonify({"error": "Use the dedicated action to move an event to that status"}), 400
 
     try:
         if new_status == "planning" and event.status == "confirmed":
