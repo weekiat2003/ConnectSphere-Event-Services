@@ -751,6 +751,9 @@ def change_event_status(event_id):
     new_status = data.get("status")
     reason = data.get("reason")
 
+    if new_status == "safety_approved":
+        return jsonify({"error": "Only a Safety Officer can approve a safety check"}), 403
+
     try:
         if new_status == "planning" and event.status == "confirmed":
             event = status_service.revert_to_planning(

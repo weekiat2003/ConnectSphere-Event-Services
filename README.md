@@ -55,6 +55,17 @@ connectsphere/
    (`CREATE TABLE IF NOT EXISTS coordinator_reassignment_requests ...`), or
    recreate the database from the full schema.
 
+   **Existing database, Safety approved status?** Approving a safety check now
+   moves the event to a new `safety_approved` status until its Coordinator
+   confirms it. Add the status to an older database with:
+
+   ```sql
+   ALTER TABLE events MODIFY status ENUM(
+       'draft','submitted','under_review','approved',
+       'planning','safety_check','safety_approved','confirmed','completed','cancelled','rejected'
+   ) NOT NULL DEFAULT 'draft';
+   ```
+
 ## 2. Backend setup (Flask API)
 
 ```bash

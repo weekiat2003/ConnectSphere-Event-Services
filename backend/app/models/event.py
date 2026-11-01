@@ -6,7 +6,7 @@ created_at = db.Column(db.DateTime, default=utcnow)
 updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 EVENT_STATUSES = (
     "draft", "submitted", "under_review", "approved",
-    "planning", "safety_check", "confirmed", "completed", "cancelled", "rejected",
+    "planning", "safety_check", "safety_approved", "confirmed", "completed", "cancelled", "rejected",
 )
 STATUS_LABELS = {s: s.replace("_", " ").capitalize() for s in EVENT_STATUSES}
 UNKNOWN_STATUS_LABEL = "Unknown status"
@@ -89,9 +89,15 @@ class Event(db.Model):
         return self.status in STATUS_LABELS
 
     @property
+    def safety_approved(self) -> bool:
+        """The Safety Officer approved the event; it now waits for its
+        Coordinator to confirm it (Clarification Session 3)."""
+        return self.status == "safety_approved"
+
+    @property
     def status_label(self) -> str:
         return STATUS_LABELS.get(self.status, UNKNOWN_STATUS_LABEL)
-    
+
     def cancellation_dict(self):
         """Who cancelled the event, when, and why. None unless it is cancelled."""
         if self.status != "cancelled":
@@ -125,6 +131,7 @@ class Event(db.Model):
             "status": self.status,
             "statusLabel": self.status_label,
             "statusValid": self.status_is_valid,
+            "safetyApproved": self.safety_approved,
             "proposedDate": self.proposed_date.isoformat() if self.proposed_date else None,
             "proposedTime": proposed_time,
             "expectedAttendance": self.expected_attendance,

@@ -14,7 +14,7 @@ const props = defineProps({
 // Event colours mirror the Coordinator dashboard exactly.
 const TONES = {
   event: {
-    approved: "mint", confirmed: "mint", completed: "mint",
+    approved: "mint", safety_approved: "mint", confirmed: "mint", completed: "mint",
     rejected: "rose", cancelled: "rose",
     under_review: "butter", submitted: "butter",
     planning: "sky",

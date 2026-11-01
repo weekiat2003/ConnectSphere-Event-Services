@@ -114,7 +114,7 @@ def test_approval_api_records_name_and_time_and_rejects_repeat_decision(
     )
 
     assert response.status_code == 200, response.get_json()
-    assert response.get_json()["status"] == "safety_check"  # still pending Coordinator confirmation
+    assert response.get_json()["status"] == "safety_approved"  # out of Safety Check; Coordinator confirms next
     response_review = response.get_json()["safetyReviews"][0]
     assert response_review["safetyOfficerName"] == "Officer Riya"
     assert response_review["createdAt"]
@@ -180,7 +180,7 @@ def test_coordinator_confirm_endpoint_moves_approved_event_to_confirmed(
         json=_approval_payload(),
     )
     assert approve_response.status_code == 200, approve_response.get_json()
-    assert approve_response.get_json()["status"] == "safety_check"
+    assert approve_response.get_json()["status"] == "safety_approved"
 
     confirm_response = client.post(
         f"/api/events/{event_id}/confirm",
