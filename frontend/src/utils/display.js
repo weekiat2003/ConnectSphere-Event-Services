@@ -24,6 +24,16 @@ export function formatTimestamp(iso) {
   return new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(text) ? text : `${text}Z`).toLocaleString();
 }
 
+export function formatReservationDateTime(value) {
+  return new Date(value).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
+
+export function formatReservationTime(value) {
+  return new Date(value).toLocaleTimeString([], {
+    timeStyle: "short",
+  });
+}
+
 // Event dates are calendar dates (no timezone); show them as written.
 export function formatEventDate(date, time) {
   if (!date) return NOT_SPECIFIED;

@@ -22,19 +22,71 @@
         <div
           v-for="cell in cells"
           :key="cell.key"
-          :class="['cell', { outside: !cell.inMonth, today: cell.isToday }]"
+          :class="['cell', {
+            outside: !cell.inMonth,
+            today: cell.isToday,
+            'has-items': cell.items.length,
+            'popup-open': activePopupKey === cell.key,
+          }]"
+          :tabindex="cell.items.length ? 0 : -1"
+          role="group"
+          :aria-label="cellAriaLabel(cell)"
+          :aria-expanded="activePopupKey === cell.key"
+          :aria-haspopup="cell.items.length ? 'dialog' : undefined"
+          :aria-controls="cell.items.length ? `day-popup-${cell.key}` : undefined"
+          @mouseenter="cell.items.length && showPopup(cell, $event)"
+          @focusin="cell.items.length && showPopup(cell, $event)"
+          @click="cell.items.length && showPopup(cell, $event)"
+          @keydown.enter.space.prevent="cell.items.length && showPopup(cell, $event)"
+          @keydown.esc.stop.prevent="closePopup(true)"
+          @mouseleave="schedulePopupClose"
         >
-          <span class="day-num">{{ cell.day }}</span>
+          <span class="day-num">
+            {{ cell.day }}
+            <span v-if="cell.items.length > 2" class="more-count">
+              +{{ cell.items.length - 2 }} more
+            </span>
+          </span>
           <router-link
-            v-for="r in cell.items"
+            v-for="r in cell.items.slice(0, 2)"
             :key="`${cell.key}-${r.key}`"
             :to="{ path: '/technical-review', query: { event: r.eventId } }"
             class="chip"
-            :title="`${r.quantity} × ${r.type} for ${r.eventName}`"
+            :title="`${formatReservationTime(r.start)}–${formatReservationTime(r.end)} · ${r.quantity} × ${r.type} · ${r.eventName}`"
+            @click.stop
           >
-            {{ r.quantity }} × {{ r.type }}
+            <span class="chip-main">
+              {{ formatReservationTime(r.start) }}–{{ formatReservationTime(r.end) }} · {{ r.quantity }} × {{ r.type }}
+            </span>
             <small>{{ r.eventName }}</small>
           </router-link>
+
+          <div
+            v-if="activePopupKey === cell.key"
+            :ref="setPopupElement"
+            class="day-popup"
+            :id="`day-popup-${cell.key}`"
+            role="dialog"
+            :aria-label="`Reservations for ${cellDateLabel(cell)}`"
+            :style="popupPosition"
+            @click.stop
+            @mouseenter="cancelPopupClose"
+            @mouseleave="schedulePopupClose"
+            @keydown.esc.stop.prevent="closePopup(true)"
+          >
+            <strong class="popup-title">{{ cellDateLabel(cell) }}</strong>
+            <ul class="popup-list">
+              <li v-for="r in cell.items" :key="`${cell.key}-popup-${r.key}`">
+                <router-link
+                  :to="{ path: '/technical-review', query: { event: r.eventId } }"
+                  class="popup-link"
+                >
+                  <span>{{ formatReservationTime(r.start) }}–{{ formatReservationTime(r.end) }} · {{ r.quantity }} × {{ r.type }}</span>
+                  <small>{{ r.eventName }}</small>
+                </router-link>
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
       <p v-if="!reservations.length" class="muted note">No equipment has been reserved yet.</p>
@@ -43,9 +95,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import eventsApi from "../api/events";
 import equipmentApi from "../api/equipment";
+import { formatReservationTime } from "../utils/display";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const HIDDEN_EVENT_STATUSES = ["draft", "cancelled", "rejected", "completed"];
@@ -54,6 +107,11 @@ const reservations = ref([]);
 const loading = ref(true);
 const error = ref("");
 const warning = ref("");
+const activePopupKey = ref(null);
+const popupPosition = ref({ left: "0px", top: "0px" });
+const popupRef = ref(null);
+const activeCellElement = ref(null);
+let popupCloseTimer;
 
 function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function dayKey(d) { return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
@@ -68,19 +126,109 @@ function shift(n) {
 }
 function goToday() { month.value = startOfMonth(new Date()); }
 
+function cellDateLabel(cell) {
+  const [year, monthNumber, day] = cell.key.split("-").map(Number);
+  return new Date(year, monthNumber - 1, day).toLocaleDateString([], {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function cellAriaLabel(cell) {
+  const count = cell.items.length;
+  return count
+    ? `${cellDateLabel(cell)}, ${count} reservation${count === 1 ? "" : "s"}`
+    : cellDateLabel(cell);
+}
+
+function setPopupElement(element) { popupRef.value = element; }
+
+function positionPopup() {
+  const cell = activeCellElement.value;
+  const popup = popupRef.value;
+  if (!cell || !popup) return;
+
+  const bounds = cell.getBoundingClientRect();
+  const popupBounds = popup.getBoundingClientRect();
+  const margin = 12;
+  let left = bounds.left;
+  if (left + popupBounds.width > window.innerWidth - margin) {
+    left = bounds.right - popupBounds.width;
+  }
+  left = Math.max(margin, Math.min(left, window.innerWidth - popupBounds.width - margin));
+
+  let top = bounds.bottom + margin / 2;
+  if (top + popupBounds.height > window.innerHeight - margin) {
+    top = bounds.top - popupBounds.height - margin / 2;
+  }
+  top = Math.max(margin, Math.min(top, window.innerHeight - popupBounds.height - margin));
+  popupPosition.value = { left: `${left}px`, top: `${top}px` };
+}
+
+async function showPopup(cell, event) {
+  cancelPopupClose();
+  activePopupKey.value = cell.key;
+  activeCellElement.value = event.currentTarget;
+  await nextTick();
+  positionPopup();
+}
+
+function closePopup(returnFocus = false) {
+  cancelPopupClose();
+  const cell = activeCellElement.value;
+  activePopupKey.value = null;
+  activeCellElement.value = null;
+  if (returnFocus) cell?.focus();
+}
+
+function schedulePopupClose() {
+  cancelPopupClose();
+  popupCloseTimer = window.setTimeout(() => closePopup(), 180);
+}
+
+function cancelPopupClose() {
+  if (popupCloseTimer) window.clearTimeout(popupCloseTimer);
+  popupCloseTimer = undefined;
+}
+
+function handleOutsidePointerDown(event) {
+  if (!activePopupKey.value) return;
+  if (activeCellElement.value?.contains(event.target) || popupRef.value?.contains(event.target)) return;
+  closePopup();
+}
+
+function handleEscape(event) {
+  if (event.key === "Escape" && activePopupKey.value) {
+    event.preventDefault();
+    closePopup(true);
+  }
+}
+
 // A reservation appears on every day it covers.
 const byDay = computed(() => {
   const map = new Map();
   for (const r of reservations.value) {
+    if (Number.isNaN(r.start.getTime()) || Number.isNaN(r.end.getTime()) || r.end <= r.start) continue;
     const day = new Date(r.start.getFullYear(), r.start.getMonth(), r.start.getDate());
     const last = new Date(r.end.getFullYear(), r.end.getMonth(), r.end.getDate());
-    for (let n = 0; day <= last && n < 62; n += 1) {
+    if (
+      r.end.getHours() === 0
+      && r.end.getMinutes() === 0
+      && r.end.getSeconds() === 0
+      && r.end.getMilliseconds() === 0
+    ) {
+      last.setDate(last.getDate() - 1);
+    }
+    while (day <= last) {
       const key = dayKey(day);
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(r);
       day.setDate(day.getDate() + 1);
     }
   }
+  for (const items of map.values()) items.sort((a, b) => a.start - b.start);
   return map;
 });
 
@@ -147,7 +295,21 @@ async function load() {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  document.addEventListener("pointerdown", handleOutsidePointerDown);
+  document.addEventListener("keydown", handleEscape);
+  window.addEventListener("resize", positionPopup);
+  document.addEventListener("scroll", positionPopup, true);
+  load();
+});
+
+onBeforeUnmount(() => {
+  cancelPopupClose();
+  document.removeEventListener("pointerdown", handleOutsidePointerDown);
+  document.removeEventListener("keydown", handleEscape);
+  window.removeEventListener("resize", positionPopup);
+  document.removeEventListener("scroll", positionPopup, true);
+});
 </script>
 
 <style scoped>
@@ -161,13 +323,28 @@ onMounted(load);
   color: var(--lilac-text, #4b3fa0); font: inherit; font-weight: 500; cursor: pointer; }
 .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
 .weekdays span { padding: 0.35rem; text-align: center; font-size: 0.8rem; font-weight: 600; color: var(--text-muted, #6b6890); }
-.cell { min-height: 5.5rem; padding: 0.3rem; border: 1px solid var(--border, #e4defa); border-radius: 8px; background: #fff; overflow: hidden; }
+.cell { position: relative; min-height: 5.5rem; padding: 0.3rem; border: 1px solid var(--border, #e4defa); border-radius: 8px; background: #fff; }
+.cell.has-items { cursor: pointer; }
+.cell.popup-open { z-index: 20; opacity: 1; }
+.cell.has-items:focus-visible { outline: 2px solid var(--primary, #6d5bd0); outline-offset: 2px; z-index: 21; }
 .cell.outside { background: #faf9ff; opacity: 0.6; }
 .cell.today { border-color: var(--primary, #6d5bd0); box-shadow: 0 0 0 1px var(--primary, #6d5bd0); }
-.day-num { display: block; font-size: 0.75rem; color: var(--text-muted, #6b6890); margin-bottom: 0.2rem; }
-.chip { display: block; margin-bottom: 0.2rem; padding: 0.15rem 0.4rem; border-radius: 6px; font-size: 0.75rem; font-weight: 500;
+.day-num { display: flex; align-items: center; justify-content: space-between; gap: 0.2rem; font-size: 0.75rem; color: var(--text-muted, #6b6890); margin-bottom: 0.2rem; }
+.more-count { color: var(--primary, #6d5bd0); font-weight: 600; white-space: nowrap; }
+.chip { display: block; margin-bottom: 0.2rem; padding: 0.15rem 0.4rem; border-radius: 6px; font-size: 0.72rem; font-weight: 500;
   background: var(--sky-bg, #d6ecff); color: var(--sky-text, #1f5f99); text-decoration: none; }
-.chip small { display: block; font-weight: 400; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip-main, .chip small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip small { font-weight: 400; opacity: 0.85; }
+.day-popup { position: fixed; z-index: 30; width: min(340px, calc(100vw - 24px)); max-height: min(440px, calc(100vh - 24px));
+  overflow: auto; padding: 0.75rem; border: 1px solid var(--border, #e4defa); border-radius: 10px;
+  background: var(--surface, #fff); box-shadow: 0 8px 24px rgba(45, 42, 74, 0.2); cursor: default; }
+.popup-title { display: block; margin-bottom: 0.4rem; font-size: 0.9rem; color: var(--text, #2d2a4a); }
+.popup-list { display: grid; gap: 0.25rem; margin: 0; padding: 0; list-style: none; }
+.popup-link { display: block; padding: 0.45rem 0.5rem; border-radius: 6px; color: var(--sky-text, #1f5f99);
+  text-decoration: none; }
+.popup-link:hover, .popup-link:focus-visible { background: var(--sky-bg, #d6ecff); outline: none; }
+.popup-link span, .popup-link small { display: block; }
+.popup-link small { margin-top: 0.1rem; color: var(--text-muted, #6b6890); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .muted { color: var(--text-muted, #6b6890); font-size: 0.9rem; }
 .note { margin: 0.75rem 0 0; }
 .error { margin: 0 0 1rem; padding: 0.6rem 0.9rem; border-radius: 10px; background: var(--rose-bg, #ffdce3);
