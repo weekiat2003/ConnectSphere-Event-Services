@@ -1,7 +1,6 @@
 """Operational safety check: the Safety Officer's review list, the facts they
 assess, their per-factor assessment, and their final decision."""
 from app.common.text_validation import validate_descriptive_text
-from app.events.services.status import change_status
 from app.extensions import db
 from app.models.event import Event, EventSafetyAssessment, EventSafetyReview
 from app.models.user import User
@@ -87,6 +86,8 @@ def _review_list_entry(event: Event) -> dict:
 def build_safety_review(event: Event) -> dict:
     """Everything a Safety Officer needs to assess the event. Missing values
     are returned as None / empty lists; the UI shows them as "Not specified"."""
+    current = status_service.current_safety_review(event)
+
     venues = []
     for booking in _booked_venue_bookings(event):
         venue = booking.venue
@@ -106,6 +107,7 @@ def build_safety_review(event: Event) -> dict:
                 "accessibilityFeatures": list(venue.accessibility_features) if venue else [],
                 "startDatetime": booking.start_datetime.isoformat() if booking.start_datetime else None,
                 "endDatetime": booking.end_datetime.isoformat() if booking.end_datetime else None,
+                "currentSafetyReview": current.to_dict() if current else None,
             }
         )
 
@@ -134,8 +136,12 @@ def build_safety_review(event: Event) -> dict:
         ],
         "venues": venues,
         "factors": [{"key": key, "label": label} for key, label in SAFETY_FACTOR_DEFINITIONS],
-        "canAssess": event.status == "safety_check" and status_service.approved_safety_review_for_current_check(event) is None,
+        "canAssess": (
+        event.status == "safety_check"
+        and status_service.approved_safety_review_for_current_check(event) is None
+        ),
         "assessment": event.safety_assessment.to_dict() if event.safety_assessment else None,
+        "currentSafetyReview": current.to_dict() if current else None,
         "safetyReviews": [review.to_dict() for review in event.safety_reviews],
     }
 
@@ -274,22 +280,36 @@ def review_safety_check(
         factor_notes=factor_notes,
     )
     db.session.add(review)
+
     # The decision now holds the assessment; the next safety check starts fresh.
     if event.safety_assessment is not None:
         db.session.delete(event.safety_assessment)
+
     if decision != "approved":
         reason = f"Safety check {decision.replace('_', ' ')}"
         reason = f"{reason}: {comments}"
-        change_status(event, "planning", changed_by_id=safety_officer.id, reason=reason, notify=False)
+
+        status_service.change_status(
+            event,
+            "planning",
+            changed_by_id=safety_officer.id,
+            reason=reason,
+            notify=False,
+        )
         notifications.notify_organiser_of_safety_decision(event, review)
+
     else:
-        # Approval moves the event out of Safety Check to Safety approved; the
-        # Coordinator then confirms it (Clarification Session 3), so tell them
-        # it is their turn.
-        change_status(event, "safety_approved", changed_by_id=safety_officer.id,
-                      reason="Safety check approved", notify=False)
+        # Safety Officer approves the safety check.
+        # The event moves to safety_approved, awaiting Coordinator confirmation.
+        status_service.change_status(
+            event,
+            "safety_approved",
+            changed_by_id=safety_officer.id,
+            reason="Safety check approved",
+            notify=False,
+        )
         notifications.notify_coordinator_of_safety_approval(event, review)
-    # Add an explicit commit at the end of review_safety_check, so both approved and non-approved branches persist consistently instead of relying on change_status to do it only for one of them:
+
     db.session.commit()
 
     return event

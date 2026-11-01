@@ -53,4 +53,7 @@ export default {
     apiClient.post(`/events/${id}/reassignment-request/decline`, { note }),
   listReassignmentRequests: () => apiClient.get("/events/reassignment-requests"),
   assignmentHistory: (id) => apiClient.get(`/events/${id}/assignment-history`),
+
+  proceedToPlanning: (id) => apiClient.post(`/events/${id}/status`, { status: "planning", reason: "Approved event moved into planning by the Coordinator" }),
+  sendForSafetyCheck: (id) => apiClient.post(`/events/${id}/status`, { status: "safety_check", reason: "Sent for safety check by the Coordinator" }), 
 };
