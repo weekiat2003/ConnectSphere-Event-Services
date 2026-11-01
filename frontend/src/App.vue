@@ -2,16 +2,15 @@
   <div id="layout">
     <nav v-if="auth.isAuthenticated">
       <div class="nav-inner">
-        <router-link :to="dashboardPath">{{ dashboardPath === "/safety-reviews" ? "Safety Reviews" : "Dashboard" }}</router-link>
+        <router-link v-if="!auth.hasRole('venue_staff')" to="/">Dashboard</router-link>
         <router-link v-if="auth.hasRole('event_organiser')" to="/events/new">New Request</router-link>
         <router-link v-if="auth.hasRole('event_organiser')" to="/drafts">My Drafts</router-link>
         <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/assignments">Assignment Queue</router-link>
-        <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/lead/calendar">Calendar</router-link>
         <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/supervision">Supervision</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/review">Review Queue</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/change-requests">Change Requests</router-link>
-        <router-link v-if="auth.hasRole('safety_officer') && dashboardPath !== '/safety-reviews'" to="/safety-reviews">Safety Reviews</router-link>
-        <router-link v-if="auth.hasRole('event_coordinator')" to="/planning">Planning View</router-link>
+        <router-link v-if="auth.hasRole('safety_officer')" to="/safety-reviews">Safety Reviews</router-link>
+        <router-link v-if="auth.hasRole('event_coordinator') || auth.hasRole('safety_officer')" to="/planning">Planning View</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/calendar">My Calendar</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/venues/request">Venue Booking</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/equipment/request">Equipment Booking</router-link>
@@ -39,7 +38,6 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "./stores/auth";
 import ConfirmDialog from './components/ConfirmDialog.vue';
@@ -47,16 +45,6 @@ import NotificationBell from './components/NotificationBell.vue';
 
 const auth = useAuthStore();
 const router = useRouter();
-
-// Leads have their own dashboard; everyone else uses the shared one.
-// Single-role Leads and Safety Officers get their own landing pages; the
-// generic dashboard lists every event, which is not what either of them works on.
-const dashboardPath = computed(() => {
-  if (auth.roles.length !== 1) return "/";
-  if (auth.hasRole("event_coordinator_lead")) return "/lead";
-  if (auth.hasRole("safety_officer")) return "/safety-reviews";
-  return "/";
-});
 
 async function handleLogout() {
   try {

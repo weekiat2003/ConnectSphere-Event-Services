@@ -279,7 +279,7 @@
 
           <button
             type="button"
-            class="btn-primary"
+            class="btn-primary approve-confirm-btn"
             :disabled="approvingId !== null || rejectingId !== null"
             @click="confirmApproval"
           >
@@ -648,6 +648,15 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.approve-btn, .approve-confirm-btn {
+  background: #d3f5e3 !important;
+  color: #1e6b47 !important;
+  border-color: #a7e5c4 !important;
+}
+.approve-btn:hover:not(:disabled), .approve-confirm-btn:hover:not(:disabled) {
+  background: #b9ecd0 !important;
+}
+
 .card.booking.highlight {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--primary-tint);
