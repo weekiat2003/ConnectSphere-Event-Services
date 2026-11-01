@@ -292,7 +292,6 @@ def review_safety_check(
 
     return event
 
-
 def _validate_values(
     values: list[str] | None, allowed_values: set[str], label: str
 ) -> list[str]:
