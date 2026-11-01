@@ -324,7 +324,7 @@ def test_safety_officer_approval_leaves_event_awaiting_coordinator_confirmation(
             assessed_factors=sorted(safety.SAFETY_FACTORS),
         )
 
-        assert event.status == "safety_check"
+        assert event.status == "safety_approved"
         review_record = EventSafetyReview.query.filter_by(event_id=event_id).one()
         assert review_record.decision == "approved"
         assert review_record.safety_officer_id == officer_id

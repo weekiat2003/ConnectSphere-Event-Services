@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 
 REQUIRED_FOR_SUBMISSION = ["name", "purpose", "description", "proposed_date", "expected_attendance"]
 REVIEWABLE_STATUSES = ("submitted", "under_review")
-CANCELLABLE_STATUSES = ("approved", "planning", "confirmed", "safety_check")
+CANCELLABLE_STATUSES = ("approved", "planning", "confirmed", "safety_check", "safety_approved")
 
 # Once an event reaches any of these, the Organiser can no longer respond
 # to an outstanding clarification (the event is no longer actively "in

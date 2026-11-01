@@ -140,7 +140,7 @@
         <fieldset v-for="f in review.factors" :key="f.key" class="factor" :class="form[f.key].outcome">
           <legend class="sr-only">{{ f.label }}</legend>
           <div class="factor-top">
-            <div>
+            <div class="factor-text">
               <div class="factor-label">{{ f.label }}</div>
               <div v-if="factorHint(f.key)" class="factor-hint">{{ factorHint(f.key) }}</div>
             </div>
@@ -213,6 +213,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import eventsApi from "../api/events";
+import { useConfirm } from "../composables/useConfirm";
 import {
   formatEventDate,
   formatTimestamp,
@@ -222,6 +223,17 @@ import {
 
 const route = useRoute();
 const router = useRouter();
+const { confirm } = useConfirm();
+
+// Each decision changes the event's path, so the officer confirms it first.
+const DECISION_PROMPTS = {
+  approved: (name) =>
+    `Approve the safety check for "${name}"? The Coordinator will be asked to confirm the event so it can proceed to preparation. This decision cannot be undone.`,
+  rejected: (name) =>
+    `Reject the safety arrangement for "${name}"? The event will return to planning and the affected arrangements will need to be reviewed again.`,
+  changes_requested: (name) =>
+    `Request changes for "${name}"? The event will return to planning so the affected arrangements can be reworked.`,
+};
 
 const review = ref(null);
 const loading = ref(true);
@@ -327,6 +339,9 @@ async function decide(decision) {
     if (decisionErrors.value.length) return;
   }
 
+  const ok = await confirm(DECISION_PROMPTS[decision](review.value.event.name || "this event"));
+  if (!ok) return;
+
   deciding.value = true;
   try {
     await eventsApi.reviewSafety(route.params.id, {
@@ -390,6 +405,9 @@ function outcomeLabel(outcome) {
 }
 
 function decisionHeading(decision) {
+  if (decision === "approved" && review.value?.event.safetyApproved) {
+    return "Safety approved: waiting for the Coordinator to confirm the event";
+  }
   if (decision === "approved") return "Safety approved: cleared for preparation";
   if (decision === "rejected") return "Safety arrangement rejected: returned to planning";
   return "Safety changes requested: returned to planning";
@@ -539,7 +557,21 @@ th {
   justify-content: space-between;
   align-items: flex-start;
   gap: 1rem;
-  flex-wrap: wrap;
+}
+/* The text takes the remaining width and wraps, so a long hint (e.g. known
+   venue restrictions) no longer pushes the Satisfactory/Concern buttons down. */
+.factor-text {
+  flex: 1;
+  min-width: 0;
+}
+@media (max-width: 560px) {
+  .factor-top {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .factor-text {
+    flex-basis: 100%;
+  }
 }
 .factor-label {
   font-weight: 600;
@@ -691,6 +723,7 @@ textarea {
   background: var(--butter-bg, #fff1c2);
   color: var(--butter-text, #8a5a00);
 }
+.badge.safety_approved,
 .badge.confirmed {
   background: var(--mint-bg, #d3f5e3);
   color: var(--mint-text, #1e6b47);

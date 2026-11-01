@@ -168,7 +168,7 @@ import { formatEventDate, formatTimestamp } from "../utils/display";
 
 // "submitted" is included so an older request that already has a Coordinator
 // (assigned before the Lead queue existed) still shows up somewhere.
-const IN_PROGRESS = ["submitted", "under_review", "approved", "planning", "safety_check", "confirmed"];
+const IN_PROGRESS = ["submitted", "under_review", "approved", "planning", "safety_check", "safety_approved", "confirmed"];
 
 const route = useRoute();
 const { confirm } = useConfirm();

@@ -37,7 +37,7 @@
         <span class="badge" :class="event.status">{{ event.statusLabel || "Unknown status" }}</span>
         <button v-if="canEditEvent && !showEditForm" class="btn btn-grey btn-small" @click="openEditForm">Edit</button>
         <button
-          v-if="isAssignedCoordinator && ['approved', 'planning', 'safety_check', 'confirmed'].includes(event.status) && !showCancelForm"
+          v-if="isAssignedCoordinator && ['approved', 'planning', 'safety_check', 'safety_approved', 'confirmed'].includes(event.status) && !showCancelForm"
           class="btn btn-rose btn-small" @click="openCancelForm">Cancel Event
         </button>
       </div>
@@ -79,6 +79,18 @@
         <p v-if="latestSafetyReview.affectedArrangements?.length" class="decision-reason">
           <strong>Affected arrangements:</strong> {{ formatArrangements(latestSafetyReview.affectedArrangements) }}
         </p>
+        <template v-if="event.safetyApproved">
+          <p v-if="isAssignedCoordinator" class="decision-reason">
+            All approvals are in. Confirm the event so it can proceed to preparation.
+          </p>
+          <p v-else class="decision-reason">Waiting for the assigned Coordinator to confirm the event.</p>
+          <p v-if="confirmError" class="field-error">{{ confirmError }}</p>
+          <div v-if="isAssignedCoordinator" class="actions">
+            <button class="btn btn-primary" :disabled="confirming" @click="confirmAfterSafety">
+              {{ confirming ? "Confirming..." : "Confirm event" }}
+            </button>
+          </div>
+        </template>
       </div>
       <p class="description">{{ event.description }}</p>
       <div class="details">
@@ -645,7 +657,7 @@ const event = ref(null);
 const comment = ref("");
 const responseNotes = ref("");
 // Coordinator Assignment: statuses in which an event can still change hands.
-const REASSIGNABLE_STATUSES = ["under_review", "approved", "planning", "safety_check", "confirmed"];
+const REASSIGNABLE_STATUSES = ["under_review", "approved", "planning", "safety_check", "safety_approved", "confirmed"];
 const reassignmentRequest = ref(null);
 const reassignReason = ref("");
 const reassignError = ref("");
@@ -657,6 +669,27 @@ const reviewHistory = ref([]);
 const confirmState = ref(null); // { message, onConfirm, onCancel }
 const actionError = ref("");
 const { confirm } = useConfirm();
+
+// After the Safety Officer approves (status Safety approved), the assigned
+// Coordinator confirms the event (Clarification Session 3), which moves it to Confirmed.
+const confirming = ref(false);
+const confirmError = ref("");
+async function confirmAfterSafety() {
+  confirmError.value = "";
+  const ok = await confirm(
+    `Confirm "${event.value.name}"? It will move from Safety approved to Confirmed and proceed to preparation.`
+  );
+  if (!ok) return;
+  confirming.value = true;
+  try {
+    await eventsApi.confirmEvent(event.value.id);
+    await load();
+  } catch (e) {
+    confirmError.value = e.response?.data?.error || "Could not confirm the event.";
+  } finally {
+    confirming.value = false;
+  }
+}
 
 const safetyFactors = [
   { key: "expected_attendance", label: "Expected attendance" },
@@ -673,6 +706,7 @@ const SAFETY_FACTOR_LABELS = Object.fromEntries(safetyFactors.map((f) => [f.key,
 const latestSafetyReview = computed(() => event.value?.safetyReviews?.at(-1) || null);
 
 function safetyDecisionHeading(decision) {
+  if (decision === "approved" && event.value?.safetyApproved) return "Safety approved: waiting for Coordinator confirmation";
   if (decision === "approved") return "Safety approved: cleared for preparation";
   if (decision === "rejected") return "Safety arrangement rejected: returned to planning";
   return "Safety changes requested: returned to planning";
@@ -1739,6 +1773,7 @@ onMounted(async () => {
 }
 
 .badge.approved,
+.badge.safety_approved,
 .badge.confirmed,
 .badge.completed {
   background: var(--mint-bg, #d3f5e3);

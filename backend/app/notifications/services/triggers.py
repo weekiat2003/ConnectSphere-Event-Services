@@ -160,7 +160,7 @@ def on_event_status_changed(event, old_status: str, new_status: str,
         if event.equipment_requirements:
             created += notify_tech_support_of_equipment(event, kind="new")
 
-    elif new_status == "planning" and old_status in ("safety_check", "confirmed"):
+    elif new_status == "planning" and old_status in ("safety_check", "safety_approved", "confirmed"):
         created += _organiser(event, "returned_to_planning", "Event returned to planning",
                               f'"{_name(event)}" has returned to planning. Reason: {_sentence(reason)}',
                               {"reason": reason})
@@ -274,7 +274,7 @@ def notify_event_details_changed(event, before: dict) -> list:
             {"previous": old_text, "new": new_text},
         )
     if before["equipment"] != _equipment_signature(event) and event.status in (
-        "approved", "planning", "safety_check", "confirmed"
+        "approved", "planning", "safety_check", "safety_approved", "confirmed"
     ):
         created += notify_tech_support_of_equipment(event, kind="updated")
     return created
@@ -406,42 +406,17 @@ def notify_coordinator_of_booking_update(booking, change: str, reason: str = Non
     event = booking.event or db.session.get(Event, booking.event_id)
     venue = db.session.get(Venue, booking.venue_id)
     venue_name = venue.name if venue else f"Venue #{booking.venue_id}"
-
-    if change == "rejected":
-        message = (
-            f'Your venue booking for "{_name(event)}" at {venue_name} '
-            "has been rejected because the venue is unavailable. "
-            "Please resubmit your venue booking request."
-        )
-
-        if reason:
-            message += f" Reason: {_sentence(reason)}"
-    else:
-        message = (
-            f'{BOOKING_UPDATE_TITLES[change]}: {venue_name} for "{_name(event)}" '
-            f"({_timestamp(booking.start_datetime).replace(' UTC', '')})."
-        )
-
-        if reason:
-            message += f" Reason: {_sentence(reason)}"
-
-    # Send the notification to the event coordinator.
+    message = (
+        f'{BOOKING_UPDATE_TITLES[change]}: {venue_name} for "{_name(event)}" '
+        f"({_timestamp(booking.start_datetime).replace(' UTC', '')})."
+    )
+    if reason:
+        message += f" Reason: {_sentence(reason)}"
     current = event.coordinator_id if event else None
     recipients = [current] if current else [booking.requested_by]
-
-    return notify_users(
-        recipients,
-        TYPE_VENUE_BOOKING_UPDATE,
-        BOOKING_UPDATE_TITLES[change],
-        message,
-        event_id=booking.event_id,
-        link=_event_link(event) if event else None,
-        data={
-            "bookingId": booking.id,
-            "change": change,
-            "venueName": venue_name,
-        },
-    )
+    return notify_users(recipients, TYPE_VENUE_BOOKING_UPDATE, BOOKING_UPDATE_TITLES[change], message,
+                        event_id=booking.event_id, link=_event_link(event) if event else None,
+                        data={"bookingId": booking.id, "change": change, "venueName": venue_name})
 
 
 # ===========================================================================
@@ -531,6 +506,22 @@ def notify_safety_officers_of_safety_check(event) -> list:
         event_id=event.id, link=f"/safety-reviews/{event.id}",
         data={"recheck": recheck, "venues": venues, "expectedAttendance": event.expected_attendance},
     )
+
+
+@_never_blocks
+def notify_coordinator_of_safety_approval(event, review: EventSafetyReview) -> list:
+    """The event stays in Safety Check until its Coordinator confirms it, so the
+    Coordinator is told the approval is in and the next step is theirs."""
+    if not event.coordinator_id:
+        return []
+    officer = review.safety_officer.name if review.safety_officer else "The Safety Officer"
+    return [notify(
+        event.coordinator_id, TYPE_SAFETY_CHECK, "Safety check approved: confirm the event",
+        f'{officer} approved the safety check for "{_name(event)}". '
+        "Open the event and select Confirm event so it can proceed to preparation.",
+        event_id=event.id, link=_event_link(event),
+        data={"decision": "approved"},
+    )]
 
 
 # ===========================================================================

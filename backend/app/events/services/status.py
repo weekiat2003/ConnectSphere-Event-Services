@@ -25,7 +25,9 @@ ALLOWED_TRANSITIONS = {
     "under_review": {"approved", "rejected", "cancelled"},
     "approved": {"planning", "cancelled"},
     "planning": {"safety_check", "cancelled"},
-    "safety_check": {"planning", "cancelled"},
+    "safety_check": {"safety_approved", "planning", "cancelled"},
+    # Safety Officer approved; the Coordinator confirms (Clarification Session 3).
+    "safety_approved": {"confirmed", "planning", "cancelled"},
     "confirmed": {"planning", "completed", "cancelled"},
     "completed": set(),
     "cancelled": set(),
@@ -33,7 +35,7 @@ ALLOWED_TRANSITIONS = {
 }
 
 CLOSED_STATUSES = ("cancelled", "rejected", "completed")
-CANCELLABLE_STATUSES = ("approved", "planning", "confirmed", "safety_check")
+CANCELLABLE_STATUSES = ("approved", "planning", "confirmed", "safety_check", "safety_approved")
 CANCEL_STATUS_MESSAGE = "An event can only be cancelled while it is approved, planning or in safety check"
 
 
@@ -60,8 +62,8 @@ def change_status(event: Event, new_status: str, changed_by_id: int, reason: str
 
 # Coordinator confirms an event after a safety officer has approved it.
 def confirm_after_safety_approval(event: Event, review: EventSafetyReview, changed_by_id: int) -> Event:
-    if event.status != "safety_check":
-        raise InvalidTransitionError("Only an event awaiting safety check can be confirmed")
+    if event.status != "safety_approved":
+        raise InvalidTransitionError("Only an event whose safety check has been approved can be confirmed")
     if review.decision != "approved":
         raise InvalidTransitionError("Safety check must be approved before the event can be confirmed")
     if not review.safety_officer.has_role("safety_officer"):
@@ -71,36 +73,17 @@ def confirm_after_safety_approval(event: Event, review: EventSafetyReview, chang
 # Takes the latest review, and if it is an approval made after the most recent entry into Safety Check, it counts. 
 # If it was made before, it is a leftover from an earlier check and is ignored.
 def approved_safety_review_for_current_check(event: Event):
-    """Return the approval for the current safety check, or None if undecided."""
-
-    # Count how many times this event entered the safety-check stage.
-    safety_check_entries = (
-        EventStatusHistory.query
-        .filter_by(event_id=event.id, new_status="safety_check")
-        .count()
-    )
-
-    # Count how many safety reviews have been submitted.
-    safety_reviews = (
-        EventSafetyReview.query
-        .filter_by(event_id=event.id)
-        .count()
-    )
-
-    # Fewer reviews than entries means the latest check has no decision yet.
-    if safety_reviews < safety_check_entries:
-        return None
-
-    latest = (
-        EventSafetyReview.query
-        .filter_by(event_id=event.id)
-        .order_by(EventSafetyReview.id.desc())
-        .first()
-    )
-
+    """The approval made during the event's CURRENT stay in safety_check, else None.Every entry into safety_check gets at most one decision, so if there are fewer
+    reviews than entries, the current check is still undecided."""
+    latest = (EventSafetyReview.query.filter_by(event_id=event.id)
+              .order_by(EventSafetyReview.id.desc()).first())
     if latest is None or latest.decision != "approved":
         return None
-
+    entered = (EventStatusHistory.query
+               .filter_by(event_id=event.id, new_status="safety_check")
+               .order_by(EventStatusHistory.id.desc()).first())
+    if entered and entered.changed_at and latest.created_at and latest.created_at < entered.changed_at:
+        return None  # that approval belongs to an earlier check
     return latest
 
 
@@ -179,7 +162,7 @@ def arrangements_are_complete(event: Event) -> bool:
 
 def reconsider_event_after_arrangement_loss(event: Event, changed_by_id: int, reason: str) -> Event:
     """Return an event to planning if a required arrangement is lost."""
-    if event.status in ("safety_check", "confirmed") and not arrangements_are_complete(event):
+    if event.status in ("safety_check", "safety_approved", "confirmed") and not arrangements_are_complete(event):
         return change_status(event, "planning", changed_by_id, reason=reason)
     return event
 
