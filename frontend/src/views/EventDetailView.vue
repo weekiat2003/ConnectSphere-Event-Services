@@ -403,7 +403,7 @@
         </div>
       </div>
 
-      <div v-if="event.status === 'safety_check'" class="action-block">
+      <div v-if="event.status === 'safety_approved'" class="action-block">
         <p class="notice-inline">
           {{ event.awaitingConfirmation ? "The Safety Officer has approved this event. Confirm it to complete planning."
             :
@@ -809,6 +809,15 @@ const EVENT_EDIT_FIELD_OPTIONS = [
 ];
 
 const EVENT_EDIT_FIELD_LABELS = Object.fromEntries(EVENT_EDIT_FIELD_OPTIONS.map((f) => [f.key, f.label]));
+
+const REASSIGNABLE_STATUSES = [
+  "under_review",
+  "approved",
+  "planning",
+  "safety_check",
+  "safety_approved",
+  "confirmed",
+];
 
 function formatHistoryValue(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -1347,6 +1356,11 @@ async function revertToPlanning() {
   comment.value = "";
   await load();
 }
+
+const reassignmentRequest = ref(null);
+const reassignReason = ref("");
+const reassignError = ref("");
+const reassignBusy = ref(false);
 
 async function reassign() {
   if (!newCoordinatorId.value) return;
