@@ -1,23 +1,26 @@
 <template>
   <div class="planning-view">
-    <h2>Planning View</h2>
+    <h2 class="page-title">Planning View</h2>
     <p class="hint">
       All events, for planning visibility. Event Coordinator Leads assign
       Unassigned requests — there's no claim or self-assign action here.
     </p>
 
     <div class="controls">
-      <div class="tabs">
+      <div class="tabs" role="tablist" aria-label="Filter events">
         <button
           v-for="tab in tabs"
           :key="tab.key"
-          :class="{ active: activeTab === tab.key }"
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === tab.key"
+          :class="['tab', { active: activeTab === tab.key }]"
           @click="activeTab = tab.key"
         >
-          {{ tab.label }} ({{ counts[tab.key] }})
+          {{ tab.label }} <span class="tab-count">{{ counts[tab.key] }}</span>
         </button>
       </div>
-      <label>
+      <label class="sort">
         Sort by date
         <select v-model="sortDirection">
           <option value="asc">Soonest first</option>
@@ -27,34 +30,38 @@
     </div>
 
     <p v-if="loading">Loading...</p>
-    <p v-else-if="filteredEvents.length === 0" class="empty-state">No events in this view.</p>
+    <div v-else-if="filteredEvents.length === 0" class="card empty">No events in this view.</div>
 
-    <table v-else>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Status</th>
-          <th>Proposed Date/Time</th>
-          <th>Expected Attendance</th>
-          <th>Coordinator</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="e in filteredEvents" :key="e.id">
-          <td>{{ e.name || "(untitled)" }}</td>
-          <td><span class="badge" :class="e.status">{{ e.status.replaceAll("_", " ") }}</span></td>
-          <td>{{ e.proposedDate || "—" }} {{ e.proposedTime || "" }}</td>
-          <td>{{ e.expectedAttendance ?? "—" }}</td>
-          <td>
-            <span v-if="!e.coordinatorId" class="badge unassigned">Unassigned</span>
-            <span v-else-if="e.coordinatorId === auth.user?.id">Me</span>
-            <span v-else>{{ e.coordinatorName || "—" }}</span>
-          </td>
-          <td><router-link :to="`/events/${e.id}`">View</router-link></td>
-        </tr>
-      </tbody>
-    </table>
+    <div v-else class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Status</th>
+              <th>Proposed Date/Time</th>
+              <th>Expected Attendance</th>
+              <th>Coordinator</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="e in filteredEvents" :key="e.id">
+              <td class="name">{{ e.name || "(untitled)" }}</td>
+              <td><StatusBadge :status="e.status" :label="e.statusLabel" /></td>
+              <td class="muted">{{ e.proposedDate || "—" }} {{ e.proposedTime || "" }}</td>
+              <td>{{ e.expectedAttendance ?? "—" }}</td>
+              <td>
+                <span v-if="!e.coordinatorId" class="unassigned">Unassigned</span>
+                <span v-else-if="e.coordinatorId === auth.user?.id">Me</span>
+                <span v-else>{{ e.coordinatorName || "—" }}</span>
+              </td>
+              <td class="action"><router-link :to="`/events/${e.id}`" class="view-link">View</router-link></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -62,26 +69,25 @@
 import { ref, computed, onMounted } from "vue";
 import { useAuthStore } from "../stores/auth";
 import eventsApi from "../api/events";
+import StatusBadge from "../components/StatusBadge.vue";
 
 const auth = useAuthStore();
 const events = ref([]);
 const loading = ref(true);
-const activeTab = ref("unassigned");
+const activeTab = ref("all");
 const sortDirection = ref("asc");
 
 const tabs = [
-  { key: "unassigned", label: "Unassigned" },
+  { key: "all", label: "All" },
   { key: "mine", label: "Assigned to me" },
   { key: "others", label: "Assigned to others" },
-  { key: "all", label: "All" },
+  { key: "unassigned", label: "Unassigned" },
 ];
 
 async function load() {
   loading.value = true;
   // Source of truth is the same "all events" visibility every Coordinator
-  // already has (GET /events, unchanged) — unassigned/mine/others are just
-  // client-side categorizations of that one list, so this single view can
-  // filter between them instead of being a separate unassigned-only page.
+  // already has (GET /events) — the tabs are client-side filters of that list.
   const { data } = await eventsApi.allEvents();
   events.value = data;
   loading.value = false;
@@ -100,58 +106,138 @@ const counts = computed(() => {
 
 const filteredEvents = computed(() => {
   const base = activeTab.value === "all" ? events.value : events.value.filter((e) => categoryOf(e) === activeTab.value);
-  const sorted = [...base].sort((a, b) => {
+  return [...base].sort((a, b) => {
     const da = a.proposedDate ? new Date(a.proposedDate) : new Date(8640000000000000);
     const db = b.proposedDate ? new Date(b.proposedDate) : new Date(8640000000000000);
     return sortDirection.value === "asc" ? da - db : db - da;
   });
-  return sorted;
 });
 
 onMounted(load);
 </script>
 
 <style scoped>
+.page-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text, #2d2a4a);
+}
 .hint {
-  color: #666;
+  margin: 0 0 1rem;
+  color: var(--text-muted, #6b6890);
   font-size: 0.9rem;
 }
 .controls {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin: 1rem 0;
+  margin-bottom: 1rem;
   flex-wrap: wrap;
   gap: 0.75rem;
 }
 .tabs {
   display: flex;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
-.tabs button {
-  padding: 0.4rem 0.75rem;
-  border: 1px solid #ccc;
+.tab {
+  padding: 0.4rem 0.9rem;
+  border: none;
   border-radius: 999px;
-  background: #fff;
+  background: var(--lilac-bg, #e9e5fb);
+  color: var(--lilac-text, #4b3fa0);
+  font: inherit;
+  font-weight: 500;
   cursor: pointer;
 }
-.tabs button.active {
-  background: #2b2d42;
+.tab.active {
+  background: var(--primary, #6d5bd0);
   color: #fff;
-  border-color: #2b2d42;
 }
-.badge {
-  padding: 0.15rem 0.5rem;
+.tab-count {
+  margin-left: 0.2rem;
+  opacity: 0.8;
+}
+.sort {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--text-muted, #6b6890);
+}
+.sort select {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border, #e4defa);
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+}
+/* Same card + table look as the Dashboard */
+.card {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e4defa);
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(109, 91, 208, 0.08);
+  overflow: hidden;
+}
+.card.empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--text-muted, #6b6890);
+}
+.table-wrap {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+th {
+  padding: 0.75rem 1rem;
+  background: #ddd6fb;
+  border-bottom: 1px solid var(--border, #e4defa);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--lilac-text, #4b3fa0);
+  white-space: nowrap;
+}
+td {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border, #e4defa);
+  color: var(--text, #2d2a4a);
+}
+tbody tr:last-child td {
+  border-bottom: none;
+}
+tbody tr:hover {
+  background: #faf9ff;
+}
+.name {
+  font-weight: 500;
+}
+.muted {
+  color: var(--text-muted, #6b6890);
+}
+.unassigned {
+  padding: 0.1rem 0.55rem;
+  border: 1.5px dashed #d97706;
   border-radius: 999px;
-  background: #eee;
+  background: #fff7e6;
+  color: #8a4b00;
   font-size: 0.8rem;
-  text-transform: capitalize;
+  white-space: nowrap;
 }
-.badge.approved, .badge.confirmed, .badge.completed { background: #d7f5dd; }
-.badge.rejected, .badge.cancelled { background: #fbdcdc; }
-.badge.under_review, .badge.submitted, .badge.planning, .badge.safety_check { background: #fff3cd; }
-.badge.unassigned { background: #ffe0b2; }
-.empty-state {
-  color: #666;
+.action {
+  text-align: right;
+}
+.view-link {
+  color: var(--primary, #6d5bd0);
+  font-weight: 500;
+  text-decoration: none;
+}
+.view-link:hover {
+  text-decoration: underline;
 }
 </style>

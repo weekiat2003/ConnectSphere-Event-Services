@@ -112,7 +112,9 @@
       </div>
     </div>
 
-  <EquipmentRequirementsPanel v-if="event.equipmentRequirements?.length" :requirements="event.equipmentRequirements" />
+    <div v-if="event.equipmentRequirements?.length" class="equipment-requirements-spacing">
+      <EquipmentRequirementsPanel :requirements="event.equipmentRequirements" />
+    </div>
     <div v-if="(isAssignedCoordinator || isOwningOrganiser) && event.fieldEditLogs?.length" class="card history">
       <h3 class="section-title">Edit History</h3>
       <ul class="edit-history-list">
@@ -1326,6 +1328,8 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.equipment-requirements-spacing { margin-top: 1.25rem; margin-bottom: 1.25rem; }
+
 .page-title {
   margin: 0;
   font-size: 1.5rem;

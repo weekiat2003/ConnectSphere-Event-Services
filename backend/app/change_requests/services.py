@@ -13,8 +13,8 @@ from app.notifications.services import triggers as notifications
 
 REVIEWABLE_STATUSES = ("pending", "re_review")
 RECONSIDERATION_REASON = "Needs reconsideration"
-CHANGEABLE_STATUSES = ("approved", "planning", "confirmed")
-STATUS_MESSAGE = "Changes can only be requested for an event that is approved, planning or confirmed"
+CHANGEABLE_STATUSES = ("submitted", "under_review", "approved", "planning", "confirmed")
+STATUS_MESSAGE = "Changes can only be requested for an event that is submitted, under review, approved, planning or confirmed"
 DECIDED_STATUSES = ("processed", "rejected")
 
 # Changing these can affect arrangements already made, so the request is

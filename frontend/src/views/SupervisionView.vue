@@ -27,7 +27,7 @@
             <td>{{ e.organiserName || "—" }}</td>
             <td>{{ formatEventDate(e.proposedDate, e.proposedTime) }}</td>
             <td>{{ e.expectedAttendance ?? "—" }}</td>
-            <td>{{ e.statusLabel }}</td>
+            <td><StatusBadge :status="e.status" :label="e.statusLabel" /></td>
           </tr>
         </tbody>
       </table>
@@ -38,6 +38,7 @@
 <script setup>
 import { onMounted, ref } from "vue";
 import eventsApi from "../api/events";
+import StatusBadge from "../components/StatusBadge.vue";
 import { formatEventDate } from "../utils/display";
 
 const coordinators = ref([]);

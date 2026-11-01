@@ -31,6 +31,7 @@ from app.models.notification import (
     TYPE_NEW_EVENT_SUBMISSION,
     TYPE_NEW_VENUE_BOOKING_REQUEST,
     TYPE_ORGANISER_UPDATE,
+    TYPE_REASSIGNMENT_REQUEST,
     TYPE_REGISTRATION_CHANGE,
     TYPE_SAFETY_CHECK,
     TYPE_VENUE_BOOKING_UPDATE,
@@ -161,7 +162,7 @@ def on_event_status_changed(event, old_status: str, new_status: str,
         if event.equipment_requirements:
             created += notify_tech_support_of_equipment(event, kind="new")
 
-    elif new_status == "planning" and old_status in ("safety_check", "confirmed"):
+    elif new_status == "planning" and old_status in ("safety_check", "safety_approved", "confirmed"):
         created += _organiser(event, "returned_to_planning", "Event returned to planning",
                               f'"{_name(event)}" has returned to planning. Reason: {_sentence(reason)}',
                               {"reason": reason})
@@ -202,12 +203,10 @@ def _organiser(event, kind: str, title: str, message: str, extra: dict = None) -
 
 
 @_never_blocks
-def notify_organiser_of_clarification(event, comments: str, editable_fields: list) -> list:
-    fields = [_humanise(f) for f in (editable_fields or [])]
+def notify_organiser_of_clarification(event, comments):
     message = f'Your Coordinator needs clarification on "{_name(event)}": {_sentence(comments)}'
-    message += f" You may edit: {', '.join(fields)}." if fields else " No fields are open for editing."
     return _organiser(event, "clarification_requested", "Clarification needed", message,
-                      {"comments": comments, "editableFields": list(editable_fields or [])})
+                      {"comments": comments})
 
 
 @_never_blocks
@@ -277,7 +276,7 @@ def notify_event_details_changed(event, before: dict) -> list:
             {"previous": old_text, "new": new_text},
         )
     if before["equipment"] != _equipment_signature(event) and event.status in (
-        "approved", "planning", "safety_check", "confirmed"
+        "approved", "planning", "safety_check", "safety_approved", "confirmed"
     ):
         created += notify_tech_support_of_equipment(event, kind="updated")
     return created
@@ -354,6 +353,43 @@ def notify_coordinator_assignment(event, coordinator, previous_coordinator_id: i
     clear_notifications(TYPE_NEW_EVENT_SUBMISSION, event.id,
                         {"assignedTo": coordinator.name, "assignedToId": coordinator.id})
     return created
+
+
+@_never_blocks
+def notify_leads_of_reassignment_request(event, reassignment_request) -> list:
+    """A Coordinator asked to be taken off an event: every Lead is told,
+    with the reason, and the link opens that event in the Assignment Queue."""
+    coordinator = reassignment_request.requester.name if reassignment_request.requester else "A Coordinator"
+    return notify_role(
+        COORDINATOR_LEAD_ROLE, TYPE_REASSIGNMENT_REQUEST, "Reassignment requested",
+        f'{coordinator} asked to be reassigned from request #{event.id} "{_name(event)}" '
+        f"(event date: {_event_when(event)}). Reason: {_sentence(reassignment_request.reason)}",
+        event_id=event.id, link=f"/assignments?event={event.id}",
+        data={"requestId": event.id, "reassignmentRequestId": reassignment_request.id,
+              "coordinatorName": coordinator, "reason": reassignment_request.reason},
+    )
+
+
+@_never_blocks
+def notify_coordinator_of_reassignment_decision(event, reassignment_request) -> list:
+    """Only a decline needs its own message: when a Lead reassigns the event,
+    the Coordinator already gets "Event reassigned away from you"."""
+    lead = reassignment_request.decider.name if reassignment_request.decider else "A Coordinator Lead"
+    note = f" Note: {_sentence(reassignment_request.decision_note)}" if reassignment_request.decision_note else ""
+    # Other Leads no longer need to act on the request (cleared before the
+    # Coordinator's own notice is created, so that one stays unread).
+    clear_reassignment_request_notices(event, {"outcome": "declined", "decidedBy": lead})
+    return [notify(
+        reassignment_request.requested_by, TYPE_REASSIGNMENT_REQUEST, "Reassignment request declined",
+        f'{lead} kept you as the Coordinator for request #{event.id} "{_name(event)}".{note}',
+        event_id=event.id, link=_event_link(event),
+        data={"requestId": event.id, "reassignmentRequestId": reassignment_request.id, "outcome": "declined"},
+    )]
+
+
+def clear_reassignment_request_notices(event, extra_data: dict = None) -> int:
+    """The Leads' "Reassignment requested" notices need no more action."""
+    return clear_notifications(TYPE_REASSIGNMENT_REQUEST, event.id, extra_data)
 
 
 BOOKING_UPDATE_TITLES = {
@@ -537,6 +573,22 @@ def notify_safety_officers_of_safety_check(event) -> list:
         event_id=event.id, link=f"/safety-reviews/{event.id}",
         data={"recheck": recheck, "venues": venues, "expectedAttendance": event.expected_attendance},
     )
+
+
+@_never_blocks
+def notify_coordinator_of_safety_approval(event, review: EventSafetyReview) -> list:
+    """The event stays in Safety Check until its Coordinator confirms it, so the
+    Coordinator is told the approval is in and the next step is theirs."""
+    if not event.coordinator_id:
+        return []
+    officer = review.safety_officer.name if review.safety_officer else "The Safety Officer"
+    return [notify(
+        event.coordinator_id, TYPE_SAFETY_CHECK, "Safety check approved: confirm the event",
+        f'{officer} approved the safety check for "{_name(event)}". '
+        "Open the event and select Confirm event so it can proceed to preparation.",
+        event_id=event.id, link=_event_link(event),
+        data={"decision": "approved"},
+    )]
 
 
 # ===========================================================================

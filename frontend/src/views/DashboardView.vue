@@ -281,6 +281,7 @@ tbody tr:hover {
 
 
 .badge.approved,
+.badge.safety_approved,
 .badge.confirmed,
 .badge.completed {
   background: var(--mint-bg, #d3f5e3);

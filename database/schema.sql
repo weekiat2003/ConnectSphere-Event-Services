@@ -76,7 +76,7 @@ CREATE TABLE events (
 
     status ENUM(
         'draft','submitted','under_review','approved',
-        'planning','safety_check','confirmed','completed','cancelled','rejected'
+        'planning','safety_check','safety_approved','confirmed','completed','cancelled','rejected'
     ) NOT NULL DEFAULT 'draft',
 
     proposed_date           DATE NULL,
@@ -634,3 +634,30 @@ ALTER TABLE event_coordinator_history
 ALTER TABLE event_coordinator_history
     ADD COLUMN assigned_by BIGINT UNSIGNED NULL AFTER assignment_type,
     ADD CONSTRAINT fk_ech_assigned_by FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL;
+
+-- Coordinator Assignment: Coordinators no longer reassign events themselves.
+-- They ask the Event Coordinator Leads to reassign, with a reason.
+CREATE TABLE IF NOT EXISTS coordinator_reassignment_requests (
+    id             BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    event_id       BIGINT UNSIGNED NOT NULL,
+    requested_by   BIGINT UNSIGNED NOT NULL,
+    reason         TEXT NOT NULL,
+    status         VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | completed | declined | withdrawn | closed
+    decided_by     BIGINT UNSIGNED NULL,
+    decision_note  TEXT NULL,
+    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    decided_at     DATETIME NULL,
+    CONSTRAINT fk_crr_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+    CONSTRAINT fk_crr_requested_by FOREIGN KEY (requested_by) REFERENCES users(id),
+    CONSTRAINT fk_crr_decided_by FOREIGN KEY (decided_by) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_crr_event_status (event_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Operational Feasibility Check: approving a safety check moves the event out
+-- of Safety Check to 'safety_approved'; the Coordinator then confirms it.
+-- (Already part of the CREATE TABLE above; this line updates older databases.)
+ALTER TABLE events
+    MODIFY status ENUM(
+        'draft','submitted','under_review','approved',
+        'planning','safety_check','safety_approved','confirmed','completed','cancelled','rejected'
+    ) NOT NULL DEFAULT 'draft';

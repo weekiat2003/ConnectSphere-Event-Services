@@ -111,14 +111,12 @@ class TestISP102Organiser:
         assert by_kind["approved"].event_id == approved.id
         assert "The venue is unavailable that week." in by_kind["rejected"].message
 
-    def test_ac3_clarification_includes_comments_and_editable_fields(self, app, organiser, coordinator, staff):
+    def test_ac3_clarification_includes_comments(self, app, organiser, coordinator, staff):
         event = submitted_and_assigned(organiser, coordinator)
         review.request_clarification(event, coordinator, "Please confirm the guest list size.",
-                                     ["expected_attendance"])
+                                     )
         [n] = [n for n in inbox(organiser, TYPE_ORGANISER_UPDATE) if n.data["kind"] == "clarification_requested"]
         assert "Please confirm the guest list size." in n.message
-        assert "Expected attendance" in n.message
-        assert n.data["editableFields"] == ["expected_attendance"]
 
     def test_ac4_and_ac5_safety_stage_and_decisions(self, app, organiser, coordinator, staff):
         event = ready_event(organiser, coordinator, staff["venue1"])

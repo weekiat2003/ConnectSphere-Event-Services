@@ -8,7 +8,7 @@ from app.notifications.services import triggers as notifications
 RESERVED = "reserved"
 RELEASED = "released"
 ACTIVE = "active"
-RESERVABLE_EVENT_STATUSES = ("approved", "planning", "safety_check", "confirmed")
+RESERVABLE_EVENT_STATUSES = ("approved", "planning", "safety_check", "safety_approved", "confirmed")
 _USE_REQUIREMENT_QUANTITY = object()
 
 

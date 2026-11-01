@@ -58,7 +58,8 @@ def _booked_venue_bookings(event: Event):
 
 
 def list_awaiting_safety_check() -> list[dict]:
-    """Only events awaiting a safety check, soonest first."""
+    """Only events in Safety Check, soonest first. Approved events have moved
+    on to Safety approved, so they no longer appear."""
     events = (
         Event.query.filter_by(status="safety_check")
         .order_by(Event.proposed_date.is_(None), Event.proposed_date, Event.proposed_time, Event.id)
@@ -114,6 +115,7 @@ def build_safety_review(event: Event) -> dict:
             "name": event.name,
             "status": event.status,
             "statusLabel": event.status_label,
+            "safetyApproved": event.safety_approved,
             "proposedDate": event.proposed_date.isoformat() if event.proposed_date else None,
             "proposedTime": event.proposed_time.strftime("%H:%M") if event.proposed_time else None,
             "coordinatorName": event.coordinator.name if event.coordinator else None,
@@ -280,7 +282,13 @@ def review_safety_check(
         reason = f"{reason}: {comments}"
         change_status(event, "planning", changed_by_id=safety_officer.id, reason=reason, notify=False)
         notifications.notify_organiser_of_safety_decision(event, review)
-    # On approval, the event stays in "safety_check" — the assigned Coordinator must explicitly mark it Confirmed (Clarification Session 3: "The co-ordinator need to mark the event as confirmed once he sees all approvals are done").
+    else:
+        # Approval moves the event out of Safety Check to Safety approved; the
+        # Coordinator then confirms it (Clarification Session 3), so tell them
+        # it is their turn.
+        change_status(event, "safety_approved", changed_by_id=safety_officer.id,
+                      reason="Safety check approved", notify=False)
+        notifications.notify_coordinator_of_safety_approval(event, review)
     # Add an explicit commit at the end of review_safety_check, so both approved and non-approved branches persist consistently instead of relying on change_status to do it only for one of them:
     db.session.commit()
 
