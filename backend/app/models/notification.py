@@ -11,6 +11,7 @@ TYPE_NEW_VENUE_BOOKING_REQUEST = "new_venue_booking_request"  # ISP-104
 TYPE_COORDINATOR_ASSIGNMENT = "coordinator_assignment"        # ISP-105
 TYPE_VENUE_BOOKING_UPDATE = "venue_booking_update"            # ISP-105 (story narrative)
 TYPE_NEW_EQUIPMENT_REQUEST = "new_equipment_request"          # ISP-106
+TYPE_EQUIPMENT_RESERVATION_UPDATE = "equipment_reservation_update"
 TYPE_REGISTRATION_CHANGE = "registration_change"              # ISP-108
 TYPE_SAFETY_CHECK = "safety_check"                            # ISP-130
 TYPE_REASSIGNMENT_REQUEST = "reassignment_request"            # Coordinator Assignment
@@ -22,6 +23,7 @@ NOTIFICATION_TYPES = (
     TYPE_COORDINATOR_ASSIGNMENT,
     TYPE_VENUE_BOOKING_UPDATE,
     TYPE_NEW_EQUIPMENT_REQUEST,
+    TYPE_EQUIPMENT_RESERVATION_UPDATE,
     TYPE_REGISTRATION_CHANGE,
     TYPE_SAFETY_CHECK,
     TYPE_REASSIGNMENT_REQUEST,

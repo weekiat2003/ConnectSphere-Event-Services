@@ -163,7 +163,7 @@ class TestUpdateEventFields:
             assert "equipment_requirements" in exc_info.value.field_errors
             assert Event.query.get(event_id).name == "Original"
 
-    def test_equipment_requirement_flagged_on_significant_change(self, app, coordinator, make_event):
+    def test_unrelated_significant_change_does_not_flag_equipment(self, app, coordinator, make_event):
         with app.app_context():
             from app.models.user import User
             from app.models.event import EventEquipmentRequirement
@@ -177,7 +177,7 @@ class TestUpdateEventFields:
 
             update_event_fields(event, user, {"capacity_needed": 65}, offline_review_confirmed=True)
 
-            assert EventEquipmentRequirement.query.get(req.id).needs_recheck is True
+            assert EventEquipmentRequirement.query.get(req.id).needs_recheck is False
 
     def test_non_assigned_coordinator_rejected(self, app, coordinator, make_user, make_event):
         with app.app_context():

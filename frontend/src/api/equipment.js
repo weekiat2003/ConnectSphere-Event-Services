@@ -12,4 +12,7 @@ export default {
   // Technical review: an event's requirements with reservation details
   eventRequirements: (eventId) =>
     apiClient.get(`/equipment/events/${eventId}/requirements`),
+  reserve: (payload) => apiClient.post("/equipment/reservations", payload),
+  release: (reservationId) =>
+    apiClient.post(`/equipment/reservations/${reservationId}/release`),
 };
