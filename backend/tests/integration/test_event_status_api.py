@@ -202,11 +202,8 @@ class TestAC4RefreshOverHTTP:
         client.post(f"/api/events/{event_id}/approve", headers=coord, json={"confirmed": True})
         assert _status(client, org, event_id) == "planning"  # refresh #1
 
-        client.post(
-            f"/api/events/{event_id}/status",
-            headers=coord,
-            json={"status": "cancelled", "reason": "Client withdrew"},
-        )
+        client.post(f"/api/events/{event_id}/cancel", headers=coord,
+                json={"reason": "Client withdrew the request before planning started", "confirmed": True})
         assert _status(client, org, event_id) == "cancelled"  # refresh #2
 
 

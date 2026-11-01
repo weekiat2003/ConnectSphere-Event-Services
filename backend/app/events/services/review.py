@@ -48,9 +48,6 @@ def submit_event(event: Event, organiser_id: int) -> Event:
     change_status(event, "submitted", changed_by_id=organiser_id)
     return event
 
-    change_status(event, "under_review", changed_by_id=event.coordinator_id)
-    return event
-
 
 def request_clarification(event, coordinator_id, comments):
     if event.coordinator_id != coordinator_id:
@@ -171,7 +168,7 @@ def approve_event(event: Event, coordinator_id: int, comments: str = None) -> Ev
     db.session.add(
         EventReview(event_id=event.id, coordinator_id=coordinator_id, action="approved", comments=comments)
     )
-    change_status(event, "approved", changed_by_id=coordinator_id, reason=comments)
+    change_status(event, "approved", changed_by_id=coordinator_id, reason=comments, commit=False)
     change_status(event, "planning", changed_by_id=coordinator_id, reason="Approval recorded; planning may begin")
     return event
 
@@ -192,24 +189,6 @@ def reject_event(event: Event, coordinator_id: int, reason: str) -> Event:
     )
     change_status(event, "rejected", changed_by_id=coordinator_id, reason=reason)
     return event
-
-def cancel_event(event: Event, coordinator_id: int, reason: str) -> Event:
-    if event.coordinator_id != coordinator_id:
-        raise PermissionError("Only the assigned Coordinator can cancel this request")
-    if event.status not in CANCELLABLE_STATUSES:
-        raise ValueError("This request cannot be cancelled")
-    validate_descriptive_text(reason, "cancellation reason")
-
-    event.review_outcome = "cancelled"
-    event.review_reason = reason
-    event.review_timestamp = utcnow()
-    event.review_coordinator_id = coordinator_id
-    db.session.add(
-        EventReview(event_id=event.id, coordinator_id=coordinator_id, action="cancelled", comments=reason)
-    )
-    change_status(event, "cancelled", changed_by_id=coordinator_id, reason=reason)
-    return event
-
 
 def resubmit_rejected_event(original: Event, organiser_id: int, data: dict) -> Event:
     if original.organiser_id != organiser_id:

@@ -165,13 +165,29 @@ def test_cancelling_via_status_endpoint_also_releases(client, path, tech, coord_
     event_id, (req,) = new_event([4])
     reservation = _reserve(event_id, req, item, 4)
     res = client.post(
-        path("events.change_event_status", event_id=event_id),
-        json={"status": "cancelled", "reason": REASON}, headers=coord_headers,
+        path("events.cancel_event_route", event_id=event_id),
+        json={"reason": REASON, "confirmed": True},
+        headers=coord_headers,
     )
     assert res.status_code == 200
     assert _status(reservation) == "released"
     assert _free(client, path, tech, item) == 10
+    
+def test_cancelling_via_status_endpoint_is_rejected(
+    client, path, coord_headers, new_event
+):
+    event_id, _ = new_event([])
 
+    res = client.post(
+        path("events.change_event_status", event_id=event_id),
+        json={"status": "cancelled", "reason": REASON},
+        headers=coord_headers,
+    )
+
+    assert res.status_code == 400
+    assert res.get_json()["error"] == (
+        "Use the dedicated action to move an event to that status"
+    )
 
 def test_cancelling_an_event_leaves_other_events_reservations_alone(client, path, coord_headers, item, new_event):
     event_a, (req_a,) = new_event([3])

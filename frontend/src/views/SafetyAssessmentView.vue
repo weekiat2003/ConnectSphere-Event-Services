@@ -290,8 +290,7 @@ onBeforeRouteLeave(() => {
 
 const assessedCount = computed(() => Object.values(form).filter((f) => f.outcome).length);
 const concernCount = computed(() => Object.values(form).filter((f) => f.outcome === "concern").length);
-const latestDecision = computed(() => review.value?.safetyReviews?.at(-1) || null);
-
+const latestDecision = computed(() => review.value?.currentSafetyReview || null);
 const approveBlockedReason = computed(() => {
   if (!review.value) return "";
   const remaining = review.value.factors.length - assessedCount.value;

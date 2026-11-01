@@ -114,7 +114,7 @@ const stats = computed(() => {
   return {
     total: events.value.length,
     review: count(["under_review", "submitted"]),
-    approved: count(["approved", "confirmed", "completed"]),
+    approved: count(["approved", "planning", "safety_check", "confirmed", "completed"]),
     closed: count(["rejected", "cancelled"]),
   };
 });

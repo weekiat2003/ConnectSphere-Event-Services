@@ -42,6 +42,7 @@ def _require_confirmation(event, data, action_label):
 INTERNAL_ROLES = (
     "event_coordinator", "event_coordinator_lead", "venue_staff", "technical_support_staff", "safety_officer",
 )
+MANUAL_STATUS_TARGETS = {"planning", "safety_check", "completed"}
 
 
 
@@ -195,9 +196,6 @@ def list_all_events():
     )
     return jsonify([e.to_dict() for e in events]), 200
 
-
-# to confirm whether the logs are actually visible???
-
 @events_bp.get("/<int:event_id>")
 @jwt_required()
 def get_event(event_id):
@@ -209,6 +207,12 @@ def get_event(event_id):
 
     payload = event.to_dict()
     payload["canResubmit"] = review.can_be_resubmitted(event)
+    current_review = status_service.current_safety_review(event)
+    payload["currentSafetyReview"] = current_review.to_dict() if current_review else None
+    payload["awaitingConfirmation"] = status_service.awaiting_confirmation(event)
+    payload["canSendForSafetyCheck"] = (
+    event.status == "planning" and status_service.arrangements_are_complete(event)
+)
 
     sorted_logs = sorted(event.field_edit_logs, key=lambda log: log.created_at or datetime.min)
 
@@ -750,6 +754,8 @@ def change_event_status(event_id):
     data = request.get_json() or {}
     new_status = data.get("status")
     reason = data.get("reason")
+    if new_status not in MANUAL_STATUS_TARGETS:
+        return jsonify({"error": "Use the dedicated action to move an event to that status"}), 400
 
     try:
         if new_status == "planning" and event.status == "confirmed":

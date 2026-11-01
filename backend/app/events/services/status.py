@@ -42,7 +42,7 @@ class InvalidTransitionError(Exception):
 
 
 def change_status(event: Event, new_status: str, changed_by_id: int, reason: str = None,
-                  notify: bool = True) -> Event:
+                  notify: bool = True, commit: bool = True) -> Event:
     """notify=False lets a caller that sends its own, more detailed notification
     (e.g. a safety decision) skip the generic one for this transition."""
     allowed = ALLOWED_TRANSITIONS.get(event.status, set())
@@ -56,7 +56,7 @@ def change_status(event: Event, new_status: str, changed_by_id: int, reason: str
     if new_status == "cancelled":
         release_equipment_reservations(event)
 
-    return _record_status_change(event, new_status, changed_by_id, reason, notify=notify)
+    return _record_status_change(event, new_status, changed_by_id, reason, notify=notify, commit=commit)
 
 # Coordinator confirms an event after a safety officer has approved it.
 def confirm_after_safety_approval(event: Event, review: EventSafetyReview, changed_by_id: int) -> Event:
@@ -70,23 +70,41 @@ def confirm_after_safety_approval(event: Event, review: EventSafetyReview, chang
 
 # Takes the latest review, and if it is an approval made after the most recent entry into Safety Check, it counts. 
 # If it was made before, it is a leftover from an earlier check and is ignored.
-def approved_safety_review_for_current_check(event: Event):
-    """The approval made during the event's CURRENT stay in safety_check, else None.Every entry into safety_check gets at most one decision, so if there are fewer
-    reviews than entries, the current check is still undecided."""
-    latest = (EventSafetyReview.query.filter_by(event_id=event.id)
-              .order_by(EventSafetyReview.id.desc()).first())
-    if latest is None or latest.decision != "approved":
-        return None
+def _latest_safety_review(event: Event):
+    return (EventSafetyReview.query.filter_by(event_id=event.id)
+            .order_by(EventSafetyReview.id.desc()).first())
+
+
+def _decided_before_current_check(event: Event, review: EventSafetyReview) -> bool:
+    """True if the review predates the event's latest entry into safety_check."""
     entered = (EventStatusHistory.query
                .filter_by(event_id=event.id, new_status="safety_check")
                .order_by(EventStatusHistory.id.desc()).first())
-    if entered and entered.changed_at and latest.created_at and latest.created_at < entered.changed_at:
-        return None  # that approval belongs to an earlier check
+    return bool(entered and entered.changed_at and review.created_at
+                and review.created_at < entered.changed_at)
+
+
+def approved_safety_review_for_current_check(event: Event):
+    """The approval made during the CURRENT stay in safety_check, else None."""
+    latest = _latest_safety_review(event)
+    if latest is None or latest.decision != "approved" or _decided_before_current_check(event, latest):
+        return None
     return latest
 
+def current_safety_review(event: Event):
+    """The safety decision the UI should show right now, else None."""
+    latest = _latest_safety_review(event)
+    if latest is None or _decided_before_current_check(event, latest):
+        return None
+    if latest.decision == "approved":
+        return latest if event.status in ("safety_check", "confirmed", "completed") else None
+    return latest if event.status == "planning" else None
 
-def _record_status_change(event: Event, new_status: str, changed_by_id: int, reason: str = None,
-                          notify: bool = True) -> Event:
+
+def awaiting_confirmation(event: Event) -> bool:
+    return event.status == "safety_check" and approved_safety_review_for_current_check(event) is not None
+
+def _record_status_change(event: Event, new_status: str, changed_by_id: int, reason: str = None, notify: bool = True, commit: bool = True) -> Event:
     old_status = event.status
     event.status = new_status
     db.session.add(
@@ -107,7 +125,8 @@ def _record_status_change(event: Event, new_status: str, changed_by_id: int, rea
         # Imported here: assignment imports this module.
         from app.events.services.assignment import close_reassignment_request_for_closed_event
         close_reassignment_request_for_closed_event(event)
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return event
 
 
@@ -158,10 +177,21 @@ def arrangements_are_complete(event: Event) -> bool:
     return True
 
 
+def return_to_planning(event: Event, changed_by_id: int, reason: str, commit: bool = True) -> Event:
+    """Send a safety_check/confirmed event back to planning (lost arrangement or
+    significant change). Other statuses are left alone. The unfinished safety
+    assessment is discarded because the facts it covered have changed."""
+    if event.status not in ("safety_check", "confirmed"):
+        return event
+    if event.safety_assessment is not None:
+        db.session.delete(event.safety_assessment)
+    return change_status(event, "planning", changed_by_id, reason=reason, commit=commit)
+
+
 def reconsider_event_after_arrangement_loss(event: Event, changed_by_id: int, reason: str) -> Event:
     """Return an event to planning if a required arrangement is lost."""
     if event.status in ("safety_check", "confirmed") and not arrangements_are_complete(event):
-        return change_status(event, "planning", changed_by_id, reason=reason)
+        return return_to_planning(event, changed_by_id, reason)
     return event
 
 

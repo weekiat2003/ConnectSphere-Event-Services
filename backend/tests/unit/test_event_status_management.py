@@ -1,13 +1,5 @@
 """Unit tests for Event Status Management: Stories 1-4.
 
-Story 1: Consistent status display
-Story 2: Organiser views status of all their requests (HTTP-only story --
-         every AC needs a real request, so it has no tests in this file;
-         see the integration test file)
-Story 3: Automatic transition to safety_check, then confirmed, as
-         arrangements complete and a Safety Officer reviews
-Story 4: Retain rejected and cancelled requests with final status visible
-
 Every test in this file calls a model, service function, or helper
 directly -- no `client`, no HTTP, no JWT. Anything that needs a real
 request belongs in the integration test file instead.
@@ -166,15 +158,6 @@ def test_missing_or_unknown_status_has_explicit_fallback(
 
 # =====================================================================
 # Story 3: arrangements lead to a safety check before confirmation
-#
-# Acceptance criteria:
-# 1. Coordinator approval moves the request to planning.
-# 2. Complete venue/equipment arrangements move planning to safety_check,
-#    never directly to confirmed.
-# 3. Only a Safety Officer can approve, reject, or request changes;
-#    approval confirms, while rejection/changes return to planning.
-# 4. Arrangement loss returns safety_check/confirmed events to planning,
-#    and repeated checks do not duplicate transitions.
 # =====================================================================
 
 def _create_venue_booking(
@@ -308,8 +291,6 @@ def test_last_equipment_reservation_moves_event_to_safety_check(
 
 
 def test_safety_officer_approval_leaves_event_awaiting_coordinator_confirmation(app, organiser, make_user, make_event):
-    # AC3: a Safety Officer's "approved" decision is the only way to
-    # reach "confirmed".
     with app.app_context():
         officer_id = make_user("safety@test.com", ["safety_officer"])
         officer = db.session.get(User, officer_id)
@@ -596,9 +577,6 @@ def test_confirm_after_safety_approval_rejects_when_not_in_safety_check(app, org
         with pytest.raises(status_service.InvalidTransitionError):
             status_service.confirm_after_safety_approval(planning_event, review, coordinator_id)
 
-# =====================================================================
-# Story 4: Retain rejected and cancelled requests with final status visible
-# =====================================================================
 
 def test_update_draft_rejects_edit_on_rejected_event(app, organiser, make_event):
     # AC3: a rejected event is in a terminal state, so the draft-edit
