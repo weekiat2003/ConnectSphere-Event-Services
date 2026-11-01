@@ -3,6 +3,7 @@ from app.extensions import db
 from app.equipment.services.availability import check_availability
 from app.models.equipment import EquipmentItem, EquipmentReservation
 from app.models.event import Event, EventEquipmentRequirement
+from app.notifications.services import triggers as notifications
 
 RESERVED = "reserved"
 RELEASED = "released"
@@ -80,6 +81,16 @@ def reserve(
         item, quantity, start, end, lock_reservations=True
     )
     if not result["available"]:
+        notices = notifications.notify_coordinator_of_equipment_shortage(
+            event,
+            requirement,
+            item,
+            requested_quantity=quantity,
+            available_quantity=result["freeQuantity"],
+            actor_id=user_id,
+        )
+        if notices:
+            db.session.commit()
         raise ReservationError(f"Not enough {item.name} available for the requested period")
 
     reservation = EquipmentReservation(
@@ -94,6 +105,11 @@ def reserve(
     )
     db.session.add(reservation)
     requirement.status = "confirmed"
+    requirement.needs_recheck = False
+    db.session.flush()
+    notifications.notify_coordinator_of_equipment_reservation(
+        reservation, "reserved", actor_id=user_id
+    )
     db.session.commit()
 
     from app.events.services.status import try_advance_to_safety_check
@@ -102,12 +118,21 @@ def reserve(
     return reservation
 
 
-def release(reservation: EquipmentReservation) -> EquipmentReservation:
-    """Releases equipment back to availability when an event is cancelled
-    or the requirement is removed."""
+def release(
+    reservation: EquipmentReservation, actor_id: int = None
+) -> EquipmentReservation:
+    """Manually release reserved equipment back to availability."""
     if reservation.status != RESERVED:
         raise ValueError("Only a currently reserved item can be released")
     reservation.status = RELEASED
+    requirement = db.session.get(
+        EventEquipmentRequirement, reservation.equipment_requirement_id
+    )
+    if requirement is not None:
+        requirement.status = "requested"
+    notifications.notify_coordinator_of_equipment_reservation(
+        reservation, "released", actor_id=actor_id
+    )
     db.session.commit()
 
     from app.events.services.status import reconsider_event_after_arrangement_loss

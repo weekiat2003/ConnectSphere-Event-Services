@@ -1,5 +1,5 @@
 """ISP-65: release reserved equipment (manual release, event cancellation, requirement removal)."""
-from datetime import datetime
+from datetime import datetime, time
 
 import pytest
 
@@ -94,11 +94,20 @@ def _release(client, path, headers, reservation_id):
 
 def test_tech_release_frees_the_quantity(client, path, tech, item, new_event):
     event_id, (req,) = new_event([4])
+    requirement = db.session.get(EventEquipmentRequirement, req)
+    requirement.status = "confirmed"
     reservation = _reserve(event_id, req, item, 4)
     assert _free(client, path, tech, item) == 6
     res = _release(client, path, tech, reservation)
     assert res.status_code == 200
     assert res.get_json()["status"] == "released"
+    db.session.expire_all()
+    assert db.session.get(EventEquipmentRequirement, req).status == "requested"
+    review = client.get(
+        path("equipment.technical_review_requirements", event_id=event_id),
+        headers=tech,
+    )
+    assert review.get_json()["requirements"][0]["reservation"] is None
     assert _free(client, path, tech, item) == 10
 
 
@@ -216,11 +225,11 @@ def test_removing_a_requirement_releases_only_its_reservation(client, path, tech
 
 
 @pytest.mark.parametrize(
-    "new_quantity,expected_status",
-    [(4, "released"), (5, "reserved"), (7, "reserved")],
+    "new_quantity",
+    [4, 5, 7],
 )
-def test_editing_requirement_quantity_releases_only_oversized_reservation(
-    client, path, coord_headers, item, new_event, new_quantity, expected_status
+def test_editing_requirement_quantity_releases_active_reservation(
+    client, path, coord_headers, item, new_event, new_quantity
 ):
     event_id, (requirement_id,) = new_event([6])
     requirement = db.session.get(EventEquipmentRequirement, requirement_id)
@@ -241,14 +250,163 @@ def test_editing_requirement_quantity_releases_only_oversized_reservation(
     )
 
     assert res.status_code == 200
-    assert _status(reservation_id) == expected_status
+    assert _status(reservation_id) == "released"
     db.session.expire_all()
     updated_requirement = db.session.get(EventEquipmentRequirement, requirement_id)
-    if expected_status == "released":
-        assert updated_requirement.status == "requested"
-        assert updated_requirement.needs_recheck is True
-    else:
-        assert updated_requirement.status == "confirmed"
+    assert updated_requirement.status == "requested"
+    assert updated_requirement.needs_recheck is True
+
+
+def test_increasing_quantity_releases_reservation_and_restores_stock_for_other_event(
+    client, path, coord_headers, tech, item, new_event
+):
+    event_a, (req_a,) = new_event([2])
+    event_b, (req_b,) = new_event([10])
+    requirement = db.session.get(EventEquipmentRequirement, req_a)
+    requirement.status = "confirmed"
+    reservation_id = _reserve(event_a, req_a, item, 2)
+    assert _free(client, path, tech, item) == 8
+
+    res = client.put(
+        path("events.update_event_route", event_id=event_a),
+        json={
+            "fields": {
+                "equipment_requirements": [
+                    {"id": req_a, "type": "Projector", "quantity": 50}
+                ]
+            },
+            "offlineReviewConfirmed": True,
+        },
+        headers=coord_headers,
+    )
+
+    assert res.status_code == 200
+    assert _status(reservation_id) == "released"
+    db.session.expire_all()
+    updated = db.session.get(EventEquipmentRequirement, req_a)
+    assert updated.status == "requested"
+    assert updated.needs_recheck is True
+    assert _free(client, path, tech, item) == 10
+
+    reserve_response = client.post(
+        path("equipment.reserve_equipment"),
+        json={
+            "eventId": event_b,
+            "requirementId": req_b,
+            "equipmentItemId": item,
+            "start": START.isoformat(),
+            "end": END.isoformat(),
+        },
+        headers=tech,
+    )
+    assert reserve_response.status_code == 201
+
+
+def test_type_change_releases_active_reservation(
+    client, path, coord_headers, item, new_event
+):
+    event_id, (requirement_id,) = new_event([2])
+    requirement = db.session.get(EventEquipmentRequirement, requirement_id)
+    requirement.status = "confirmed"
+    reservation_id = _reserve(event_id, requirement_id, item, 2)
+
+    res = client.put(
+        path("events.update_event_route", event_id=event_id),
+        json={
+            "fields": {
+                "equipment_requirements": [
+                    {"id": requirement_id, "type": "Speaker", "quantity": 2}
+                ]
+            },
+            "offlineReviewConfirmed": True,
+        },
+        headers=coord_headers,
+    )
+
+    assert res.status_code == 200
+    assert _status(reservation_id) == "released"
+    db.session.expire_all()
+    updated = db.session.get(EventEquipmentRequirement, requirement_id)
+    assert updated.status == "requested"
+    assert updated.needs_recheck is True
+
+
+def test_editing_one_requirement_does_not_flag_unchanged_requirements(
+    client, path, coord_headers, new_event
+):
+    event_id, (changed_id, unchanged_id) = new_event([2, 3])
+    unchanged = db.session.get(EventEquipmentRequirement, unchanged_id)
+    unchanged.needs_recheck = True
+    db.session.commit()
+
+    res = client.put(
+        path("events.update_event_route", event_id=event_id),
+        json={
+            "fields": {
+                "equipment_requirements": [
+                    {"id": changed_id, "type": "Projector", "quantity": 4},
+                    {"id": unchanged_id, "type": "Projector", "quantity": 3},
+                ]
+            },
+            "offlineReviewConfirmed": True,
+        },
+        headers=coord_headers,
+    )
+
+    assert res.status_code == 200
+    db.session.expire_all()
+    assert db.session.get(EventEquipmentRequirement, changed_id).needs_recheck is True
+    assert db.session.get(EventEquipmentRequirement, unchanged_id).needs_recheck is True
+
+
+def test_non_equipment_significant_edit_does_not_flag_or_release_equipment(
+    client, path, coord_headers, item, new_event
+):
+    event_id, (requirement_id,) = new_event([2])
+    requirement = db.session.get(EventEquipmentRequirement, requirement_id)
+    requirement.status = "confirmed"
+    reservation_id = _reserve(event_id, requirement_id, item, 2)
+
+    res = client.put(
+        path("events.update_event_route", event_id=event_id),
+        json={
+            "fields": {"expected_attendance": 75},
+            "offlineReviewConfirmed": True,
+        },
+        headers=coord_headers,
+    )
+
+    assert res.status_code == 200
+    assert _status(reservation_id) == "reserved"
+    db.session.expire_all()
+    updated = db.session.get(EventEquipmentRequirement, requirement_id)
+    assert updated.status == "confirmed"
+    assert updated.needs_recheck is False
+
+
+def test_date_edit_keeps_reservation_and_existing_equipment_recheck_behavior(
+    client, path, coord_headers, item, new_event
+):
+    event_id, (requirement_id,) = new_event([2])
+    event = db.session.get(Event, event_id)
+    event.proposed_time = time(9, 0)
+    requirement = db.session.get(EventEquipmentRequirement, requirement_id)
+    requirement.status = "confirmed"
+    reservation_id = _reserve(event_id, requirement_id, item, 2)
+
+    res = client.put(
+        path("events.update_event_route", event_id=event_id),
+        json={
+            "fields": {"proposed_date": "2026-12-02"},
+            "offlineReviewConfirmed": True,
+        },
+        headers=coord_headers,
+    )
+
+    assert res.status_code == 200
+    assert _status(reservation_id) == "reserved"
+    db.session.expire_all()
+    assert db.session.get(EventEquipmentRequirement, requirement_id).needs_recheck is True
 
 
 def test_released_units_are_free_for_another_event(client, path, tech, item, new_event):

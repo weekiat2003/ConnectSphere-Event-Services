@@ -233,7 +233,7 @@ def release_equipment(reservation_id):
     if not record:
         return jsonify({"error": "Reservation not found"}), 404
     try:
-        result = reservation.release(record)
+        result = reservation.release(record, actor_id=_current_user().id)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify(result.to_dict()), 200
