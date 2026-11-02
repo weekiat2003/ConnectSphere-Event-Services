@@ -108,7 +108,6 @@ def update_event_fields(event: Event, user, changes: dict, offline_review_confir
             setattr(event, field, value)
 
     if significant_fields:
-        _flag_arrangements_needs_reconsideration(event)
         notifications.notify_arrangements_of_significant_change(event, significant_fields)
     if changes and (significant_fields or event.status == "safety_check"):
         _flag_arrangements_needs_reconsideration(event, significant_fields)
