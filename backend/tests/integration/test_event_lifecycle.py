@@ -2,10 +2,17 @@
 Smoke test covering the core Sprint-1 path across the first six epics:
 draft -> submit -> Lead assigns -> approve, and reject -> resubmit.
 """
+from datetime import date, timedelta
+
 from app.extensions import db
 from app.events.services import assignment, drafts, review
 from app.models.event import Event
 from app.models.user import User
+
+# Relative dates: a fixed calendar date eventually falls into the past and then
+# fails the "proposed date cannot be in the past" rule.
+FUTURE = (date.today() + timedelta(days=30)).isoformat()
+LATER = (date.today() + timedelta(days=44)).isoformat()
 
 
 def test_draft_submit_and_auto_assignment_flow(app, organiser, coordinator):
@@ -16,7 +23,7 @@ def test_draft_submit_and_auto_assignment_flow(app, organiser, coordinator):
                 "name": "Annual Conference",
                 "purpose": "Networking",
                 "description": "A conference for the team",
-                "proposed_date": "2026-12-01",
+                "proposed_date": FUTURE,
                 "proposed_time": "09:00",
                 "expected_attendance": 100,
                 "capacity_needed": 120,
@@ -45,7 +52,7 @@ def test_reject_and_resubmit_creates_new_record(app, organiser, coordinator):
                 "name": "Product Launch",
                 "purpose": "Launch",
                 "description": "Launch event",
-                "proposed_date": "2026-12-01",
+                "proposed_date": FUTURE,
                 "proposed_time": "09:00",
                 "expected_attendance": 50,
                 "capacity_needed": 60,
@@ -58,7 +65,7 @@ def test_reject_and_resubmit_creates_new_record(app, organiser, coordinator):
         event = review.reject_event(event, coordinator, reason="Date conflicts with another event")
         assert event.status == "rejected"
 
-        new_event = review.resubmit_rejected_event(event, organiser, {"proposed_date": "2026-11-15"})
+        new_event = review.resubmit_rejected_event(event, organiser, {"proposed_date": LATER})
         assert new_event.id != event.id
         assert new_event.resubmitted_from_event_id == event.id
         assert new_event.status == "submitted"  # back in the Unassigned queue
