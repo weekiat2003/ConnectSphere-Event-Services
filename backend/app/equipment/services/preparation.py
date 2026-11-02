@@ -31,8 +31,4 @@ def confirm_equipment_suitability(
     )
     db.session.commit()
 
-    from app.events.services.status import try_advance_to_safety_check
-
-    event = requirement.event
-    try_advance_to_safety_check(event, user.id)
     return requirement

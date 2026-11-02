@@ -1227,6 +1227,32 @@ async function submitEdit() {
   }
 }
 
+// function requestActionWithConfirmation(callWithConfirmed) {
+//   return new Promise((resolve, reject) => {
+//     callWithConfirmed(false)
+//       .then(({ data }) => resolve(data))
+//       .catch((e) => {
+//         if (e.response?.status === 409 && e.response.data?.requiresConfirmation) {
+//           confirmState.value = {
+//             message: e.response.data.message,
+//             onConfirm: () => {
+//               confirmState.value = null;
+//               callWithConfirmed(true)
+//                 .then(({ data }) => resolve(data))
+//                 .catch(reject);
+//             },
+//             onCancel: () => {
+//               confirmState.value = null;
+//               resolve(null);
+//             },
+//           };
+//         } else {
+//           reject(e);
+//         }
+//       });
+//   });
+// }
+
 function requestActionWithConfirmation(callWithConfirmed) {
   return new Promise((resolve, reject) => {
     callWithConfirmed(false)
@@ -1235,12 +1261,22 @@ function requestActionWithConfirmation(callWithConfirmed) {
         if (e.response?.status === 409 && e.response.data?.requiresConfirmation) {
           confirmState.value = {
             message: e.response.data.message,
-            onConfirm: () => {
+
+            onConfirm: async () => {
+              console.log("Confirm button clicked");
               confirmState.value = null;
-              callWithConfirmed(true)
-                .then(({ data }) => resolve(data))
-                .catch(reject);
+
+              try {
+                console.log("Sending confirmed request...");
+                const response = await callWithConfirmed(true);
+                console.log("Confirmed response:", response);
+                resolve(response.data);
+              } catch (error) {
+                console.error("Confirmed request failed:", error);
+                reject(error);
+              }
             },
+
             onCancel: () => {
               confirmState.value = null;
               resolve(null);

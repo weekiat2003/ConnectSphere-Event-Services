@@ -378,15 +378,6 @@ def approve_booking(booking: VenueBooking, decided_by: int) -> VenueBooking:
             )
 
         notifications.notify_coordinator_of_booking_update(current, "approved")
-        event = db.session.get(Event, current.event_id)
-
-        if event is not None:
-            from app.events.services.status import try_advance_to_safety_check
-
-            try_advance_to_safety_check(
-                event,
-                changed_by_id=decided_by
-            )
 
         db.session.commit()
         db.session.refresh(current)

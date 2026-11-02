@@ -48,10 +48,10 @@ class TestAC1StatusShownOverHTTP:
 
     def test_status_reflects_real_submit_and_approve_actions(
         self, client, auth_header, organiser, coordinator, make_event, make_user
-    ):
-        # Full lifecycle through the real endpoints: draft -> under_review
-        # -> planning (approval now chains straight to planning, per
-        # Story 3 AC1, not "approved").
+            ):
+        # Full lifecycle through the real endpoints:
+        # draft -> submitted -> under_review -> approved -> planning.
+        # Approval and proceeding to planning are separate Coordinator actions.
         org, coord = auth_header(ORG), auth_header(COORD)
         event_id = make_event(
             organiser,
@@ -81,6 +81,16 @@ class TestAC1StatusShownOverHTTP:
             f"/api/events/{event_id}/approve",
             headers=coord,
             json={"comments": "ok", "confirmed": True},
+        )
+        assert res.status_code == 200, res.get_json()
+        # Approval leaves the event in approved.
+        assert _status(client, org, event_id) == "approved"
+
+        # Coordinator explicitly proceeds to planning.
+        res = client.post(
+            f"/api/events/{event_id}/status",
+            headers=coord,
+            json={"status": "planning", "reason": "Proceeding with event planning"},
         )
         assert res.status_code == 200, res.get_json()
         assert _status(client, org, event_id) == "planning"
@@ -119,9 +129,32 @@ class TestAC2ListIntegrityOverHTTP:
     ):
         a = make_event(organiser, "under_review", coordinator_id=coordinator, name="A")
         b = make_event(organiser, "under_review", coordinator_id=coordinator, name="B")
-        client.post(
-            f"/api/events/{a}/approve", headers=auth_header(COORD), json={"confirmed": True}
+    
+        coord_headers = auth_header(COORD)
+
+        # Approving A should move it to approved, not planning.
+        res = client.post(
+            f"/api/events/{a}/approve",
+            headers=coord_headers,
+            json={"confirmed": True},
         )
+        assert res.status_code == 200, res.get_json()
+
+        rows = {
+            r["id"]: r["status"]
+            for r in client.get("/api/events/mine", headers=auth_header(ORG)).get_json()
+        }
+        assert rows[a] == "approved"
+        assert rows[b] == "under_review"
+
+        # Proceeding with A should not affect B.
+        res = client.post(
+            f"/api/events/{a}/status",
+            headers=coord_headers,
+            json={"status": "planning", "reason": "Proceeding with planning"},
+        )
+        assert res.status_code == 200, res.get_json()
+
         rows = {
             r["id"]: r["status"]
             for r in client.get("/api/events/mine", headers=auth_header(ORG)).get_json()
@@ -199,13 +232,35 @@ class TestAC4RefreshOverHTTP:
         event_id = make_event(organiser, "under_review", coordinator_id=coordinator)
         assert _status(client, org, event_id) == "under_review"  # page loaded here
 
-        client.post(f"/api/events/{event_id}/approve", headers=coord, json={"confirmed": True})
-        assert _status(client, org, event_id) == "planning"  # refresh #1
+        # Approval changes the status to approved.
+        res = client.post(
+            f"/api/events/{event_id}/approve",
+            headers=coord,
+            json={"confirmed": True},
+        )
+        assert res.status_code == 200, res.get_json()
+        assert _status(client, org, event_id) == "approved"  # refresh #1
 
-        client.post(f"/api/events/{event_id}/cancel", headers=coord,
-                json={"reason": "Client withdrew the request before planning started", "confirmed": True})
-        assert _status(client, org, event_id) == "cancelled"  # refresh #2
+        # Coordinator explicitly proceeds to planning.
+        res = client.post(
+            f"/api/events/{event_id}/status",
+            headers=coord,
+            json={"status": "planning", "reason": "Proceeding with planning"},
+        )
+        assert res.status_code == 200, res.get_json()
+        assert _status(client, org, event_id) == "planning"  # refresh #2
 
+        # Coordinator cancels the event.
+        res = client.post(
+            f"/api/events/{event_id}/cancel",
+            headers=coord,
+            json={
+                "reason": "Client withdrew the request before planning started",
+                "confirmed": True,
+            },
+        )
+        assert res.status_code == 200, res.get_json()
+        assert _status(client, org, event_id) == "cancelled"  # refresh #3
 
 class TestAC5DraftDefaultOverHTTP:
     """AC5: a newly created draft event shows status 'draft' by default,
@@ -417,9 +472,8 @@ class TestAC4RemainsUsableWithManyRequests:
 
 
 # =====================================================================
-# Story 3: Arrangements complete -> safety_check -> confirmed
-# (HTTP-level ACs only; service-level ACs are in the unit test file)
-# =====================================================================
+# Story 3: Arrangements complete -> safety_check -> safety_approved
+# -> confirmed (Coordinator explicitly confirms after Safety Officer approval).# =====================================================================
 
 class TestStory3SafetyReviewOverHTTP:
     def test_safety_review_api_leaves_event_pending_coordinator_confirmation(

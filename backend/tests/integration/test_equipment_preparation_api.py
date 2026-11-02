@@ -102,7 +102,8 @@ def test_flagged_reserved_requirement_blocks_safety_check(
     add_reserved_requirement(event, "Projector", needs_recheck=True)
     add_reserved_requirement(event, "Speaker")
 
-    status_service.try_advance_to_safety_check(event, coordinator)
+    with pytest.raises(status_service.InvalidTransitionError):
+        status_service.change_status(event, "safety_check", coordinator)
 
     db.session.expire_all()
     assert db.session.get(Event, event.id).status == "planning"
@@ -116,7 +117,8 @@ def test_requirement_without_reserved_status_blocks_safety_check(
     requirement.status = "requested"
     db.session.commit()
 
-    status_service.try_advance_to_safety_check(event, coordinator)
+    with pytest.raises(status_service.InvalidTransitionError):
+        status_service.change_status(event, "safety_check", coordinator)
 
     db.session.expire_all()
     assert db.session.get(Event, event.id).status == "planning"
@@ -134,7 +136,7 @@ def test_unflagged_reserved_requirements_advance_without_preparation_statuses(
     assert all(requirement.status == "confirmed" for requirement in requirements)
     assert all(not requirement.needs_recheck for requirement in requirements)
 
-    status_service.try_advance_to_safety_check(event, coordinator)
+    status_service.change_status(event, "safety_check", coordinator)
 
     db.session.expire_all()
     assert db.session.get(Event, event.id).status == "safety_check"
@@ -152,8 +154,16 @@ def test_confirming_last_flagged_requirement_advances_to_safety_check(
     )
 
     assert response.status_code == 200
+
     db.session.expire_all()
-    assert db.session.get(Event, event.id).status == "safety_check"
+    saved_event = db.session.get(Event, event.id)
+
+    saved_requirement = db.session.get(
+        EventEquipmentRequirement, requirement.id
+    )
+
+    assert saved_requirement.needs_recheck is False
+    assert saved_event.status == "planning"
 
 
 def test_reserving_flagged_requested_requirement_advances_to_safety_check(
@@ -183,10 +193,14 @@ def test_reserving_flagged_requested_requirement_advances_to_safety_check(
     )
 
     assert response.status_code == 201
+
     db.session.expire_all()
+
     saved = db.session.get(EventEquipmentRequirement, requirement.id)
+    saved_event = db.session.get(Event, event.id)
+
     assert saved.needs_recheck is False
-    assert db.session.get(Event, event.id).status == "safety_check"
+    assert saved_event.status == "planning"
 
 
 def test_event_without_equipment_rows_is_not_blocked_by_recheck_gate(
@@ -195,7 +209,7 @@ def test_event_without_equipment_rows_is_not_blocked_by_recheck_gate(
     event_id = make_event(organiser, status="planning", coordinator_id=coordinator)
     event = db.session.get(Event, event_id)
 
-    status_service.try_advance_to_safety_check(event, coordinator)
+    status_service.change_status(event, "safety_check", coordinator)
 
     assert event.status == "safety_check"
 

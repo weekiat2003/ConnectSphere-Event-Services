@@ -244,7 +244,7 @@ def test_approval_does_not_flag_equipment(app, organiser, make_user, make_event)
         assert all(not requirement.needs_recheck for requirement in requirements)
 
 
-def test_equipment_rechecks_advance_to_safety_check_only_after_last_confirmation(
+def test_equipment_rechecks_wait_for_coordinator_to_send_safety_check(
     app, organiser, make_user, make_event
 ):
     with app.app_context():
@@ -264,7 +264,7 @@ def test_equipment_rechecks_advance_to_safety_check_only_after_last_confirmation
             affected_arrangements=["equipment"],
         )
         tech = db.session.get(User, tech_id)
-
+            
         confirm_equipment_suitability(requirements[0], tech)
         assert requirements[0].needs_recheck is False
         assert requirements[1].needs_recheck is True
@@ -272,6 +272,16 @@ def test_equipment_rechecks_advance_to_safety_check_only_after_last_confirmation
 
         confirm_equipment_suitability(requirements[1], tech)
         assert requirements[1].needs_recheck is False
+
+        # Technical Support has finished the rechecks.
+        # The event remains in planning until the Coordinator initiates the safety check.
+        assert event.status == "planning"
+
+        # The Coordinator explicitly sends the event for safety review.
+        from app.events.services import status as status_service
+
+        status_service.change_status(event, "safety_check", event.coordinator_id)
+
         assert event.status == "safety_check"
 
 

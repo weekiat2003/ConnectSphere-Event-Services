@@ -5,7 +5,7 @@ draft -> submit -> Lead assigns -> approve, and reject -> resubmit.
 from datetime import date, timedelta
 
 from app.extensions import db
-from app.events.services import assignment, drafts, review
+from app.events.services import assignment, drafts, review, status
 from app.models.event import Event
 from app.models.user import User
 
@@ -40,8 +40,12 @@ def test_draft_submit_and_auto_assignment_flow(app, organiser, coordinator):
         assert event.coordinator_id == coordinator
 
         event = review.approve_event(event, coordinator, comments="Looks good")
-        assert event.status == "planning"
+        assert event.status == "approved"
         assert event.review_outcome == "approved"
+
+        # Coordinator explicitly proceeds to planning.
+        event = status.change_status(event, "planning", coordinator)
+        assert event.status == "planning"
 
 
 def test_reject_and_resubmit_creates_new_record(app, organiser, coordinator):
