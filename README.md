@@ -88,7 +88,7 @@ python scripts/seed_users.py
 ```
 
 This creates one user per role (`organiser@example.com`,
-`coordinator1@example.com`, `coordinator2@example.com`, `lead@example.com`, `venue@example.com`,
+`coordinator1@example.com`, `coordinator2@example.com`, `lead@example.com`, `venue@example.com`, `venue2@example.com`,
 `techsupport@example.com`, `safety@example.com`, `attendee@example.com`), all
 with the password
 `Password123!`.
