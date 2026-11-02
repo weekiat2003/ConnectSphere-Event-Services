@@ -8,7 +8,10 @@ from werkzeug.security import generate_password_hash
 
 from app.change_requests.services import (
     ChangeRequestError,
+    get_review_detail,
+    list_review_queue,
     process_routine_change,
+    request_withdrawal,
     submit_change_request,
 )
 from app.events.services import review
@@ -18,6 +21,7 @@ from app.extensions import db
 from app.models.equipment import EquipmentItem, EquipmentReservation
 from app.models.event import Event
 from app.models.user import Role, User
+from app.models.change_request import ChangeRequest
 from app.models.venue import (
     BOOKING_APPROVED, BOOKING_PENDING, BOOKING_REJECTED, BOOKING_RELEASED, VenueBooking,
 )
@@ -295,3 +299,100 @@ def test_cancelled_event_cannot_be_reopened(app, target):
             status_service.change_status(event, target, coordinator, "Reopen")
 
         assert db.session.get(Event, event.id).status == "cancelled"
+
+# ---------------------------------------------------------------------
+# 8. Cancelling resolves a pending withdrawal request
+# ---------------------------------------------------------------------
+
+def test_cancelling_resolves_the_pending_withdrawal_request(app):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _event(organiser, coordinator)
+        withdrawal = request_withdrawal(event, organiser, "The client no longer needs it.")
+
+        status_service.cancel_event(event.id, coordinator, REASON)
+
+        db.session.refresh(withdrawal)
+        assert withdrawal.status == "processed"
+        assert withdrawal.coordinator_id == coordinator
+        assert withdrawal.decided_at is not None
+        assert withdrawal.decision_reason == REASON
+
+
+def test_resolved_withdrawal_leaves_the_queue_and_shows_its_decision(app):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _event(organiser, coordinator)
+        withdrawal = request_withdrawal(event, organiser, "The client no longer needs it.")
+
+        status_service.cancel_event(event.id, coordinator, REASON)
+
+        assert list_review_queue(coordinator) == []
+        detail = get_review_detail(withdrawal.id, coordinator)
+        assert detail["availableActions"] == []
+        assert detail["decision"]["status"] == "processed"
+        assert detail["decision"]["decidedBy"] == "Carlos Coordinator"
+        assert detail["event"]["status"] == "cancelled"
+
+
+def test_dry_run_does_not_resolve_the_withdrawal(app):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _event(organiser, coordinator)
+        withdrawal = request_withdrawal(event, organiser, "The client no longer needs it.")
+
+        status_service.cancel_event(event.id, coordinator, REASON, dry_run=True)
+
+        db.session.refresh(withdrawal)
+        assert withdrawal.status == "pending"
+
+
+def test_failed_cancellation_leaves_the_withdrawal_pending(app):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _event(organiser, coordinator)
+        withdrawal = request_withdrawal(event, organiser, "The client no longer needs it.")
+
+        with pytest.raises(EventActionError):
+            status_service.cancel_event(event.id, coordinator, "!!!")
+
+        db.session.refresh(withdrawal)
+        assert withdrawal.status == "pending"
+
+
+def test_only_pending_withdrawals_of_this_event_are_touched(app):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _event(organiser, coordinator)
+        other_event = _event(organiser, coordinator)
+
+        earlier = request_withdrawal(event, organiser, "Asked earlier and was refused.")
+        earlier.status = "rejected"
+        earlier.decision_reason = "Deposit already paid."
+        db.session.commit()
+        other = request_withdrawal(other_event, organiser, "A different event entirely.")
+        change = submit_change_request(event, organiser, {"name": "Annual Summit"}, REASON)
+
+        status_service.cancel_event(event.id, coordinator, REASON)
+
+        db.session.refresh(earlier)
+        db.session.refresh(other)
+        db.session.refresh(change)
+        assert (earlier.status, earlier.decision_reason) == ("rejected", "Deposit already paid.")
+        assert other.status == "pending"
+        assert change.status == "pending"  # other change requests are not auto-resolved
+
+
+def test_cancelling_over_http_resolves_the_withdrawal(app):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event_id = _event(organiser, coordinator).id
+        withdrawal_id = request_withdrawal(
+            db.session.get(Event, event_id), organiser, "The client no longer needs it."
+        ).id
+
+    response = _post(app, coordinator, event_id, {"reason": REASON, "confirmed": True})
+
+    assert response.status_code == 200
+    with app.app_context():
+        assert db.session.get(ChangeRequest, withdrawal_id).status == "processed"

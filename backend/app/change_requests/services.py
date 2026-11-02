@@ -414,6 +414,19 @@ def get_review_detail(request_id: int, coordinator_id: int) -> dict:
         "reReview": _re_review_record(change_request, event),
     }
 
+def resolve_withdrawals_for_cancelled_event(event: Event, coordinator_id: int, reason: str) -> list:
+    """A cancelled event fulfils any pending withdrawal request. Does not commit."""
+    pending = ChangeRequest.query.filter_by(
+        event_id=event.id, request_type="withdrawal", status="pending"
+    ).all()
+    now = utcnow()
+    for cr in pending:
+        cr.status = "processed"
+        cr.coordinator_id = coordinator_id
+        cr.decided_at = now
+        cr.decision_reason = reason
+    return pending
+
 # ---------------------------------------------------------------------
 # Coordinator processes a routine change
 # ---------------------------------------------------------------------
