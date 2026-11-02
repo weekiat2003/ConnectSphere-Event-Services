@@ -10,8 +10,16 @@ from app.extensions import db
 from app.models.event import Event, EventEquipmentRequirement
 from datetime import date, time, datetime
 
+from app.models import event
+
 CORE_FIELDS = ["name", "purpose", "description", "category"]
-SCHEDULE_FIELDS = ["proposed_date", "proposed_time", "expected_attendance"]
+SCHEDULE_FIELDS = [
+    "proposed_date",
+    "proposed_time",
+    "proposed_end_date",
+    "proposed_end_time",
+    "expected_attendance",
+]
 VENUE_FIELDS = ["capacity_needed", "required_layout", "accessibility_needs", "required_facilities"]
 REGISTRATION_FIELDS = ["registration_required", "intended_capacity"]
 
@@ -22,7 +30,7 @@ EDITABLE_FIELDS = CORE_FIELDS + SCHEDULE_FIELDS + VENUE_FIELDS + REGISTRATION_FI
 CLARIFICATION_EDITABLE_FIELD_CHOICES = EDITABLE_FIELDS + ["equipment_requirements"]
 
 def _parse_date(value):
-    if value is None:
+    if value in (None, ""):
         return None
 
     if isinstance(value, date):
@@ -31,7 +39,7 @@ def _parse_date(value):
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 def _parse_time(value):
-    if value is None:
+    if value in (None, ""):
         return None
 
     if isinstance(value, time):
@@ -43,11 +51,18 @@ def _apply_fields(event: Event, data: dict):
     for field in EDITABLE_FIELDS:
         if field in data:
             value = data[field]
-            if field == "proposed_date":
+
+            if field in ("proposed_date", "proposed_end_date"):
                 value = _parse_date(value)
-            elif field == "proposed_time":
+
+            elif field in ("proposed_time", "proposed_end_time"):
                 value = _parse_time(value)
+
             setattr(event, field, value)
+
+    # Default end date to start date if no end date is provided.
+    if not event.proposed_end_date and event.proposed_date:
+        event.proposed_end_date = event.proposed_date
 
     if "equipment_requirements" in data:
         event.equipment_requirements = []

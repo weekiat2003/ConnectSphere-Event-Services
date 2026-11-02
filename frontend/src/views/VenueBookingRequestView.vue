@@ -382,15 +382,30 @@ const selectedEvent = computed(() =>
 // not provide a reliable booking end time, so leave that field editable.
 watch(selectedEvent, (event) => {
   if (!event || resubmittingFromId.value !== null) return;
-  const proposedDate = event.proposedDate || event.proposed_date || "";
-  const proposedTime = event.proposedTime || event.proposed_time || "";
-  const date = String(proposedDate).slice(0, 10);
-  const time = String(proposedTime).slice(0, 5);
+
+  const startDate = String(
+    event.proposedDate || event.proposed_date || ""
+  ).slice(0, 10);
+
+  const startTime = String(
+    event.proposedTime || event.proposed_time || ""
+  ).slice(0, 5);
+
+  const endDate = String(
+    event.proposedEndDate ||
+    event.proposed_end_date ||
+    startDate
+  ).slice(0, 10);
+
+  const endTime = String(
+    event.proposedEndTime || event.proposed_end_time || ""
+  ).slice(0, 5);
+
   venueRequests.value.forEach((request) => {
-    request.date = date;
-    request.startTime = time;
-    request.endDate = "";
-    request.endTime = "";
+    request.date = startDate;
+    request.startTime = startTime;
+    request.endDate = endDate;
+    request.endTime = endTime;
   });
 });
 
@@ -507,12 +522,27 @@ function availableVenues(currentIndex) {
 }
 
 function addVenue() {
-  const request = emptyVenue();
   if (selectedEvent.value) {
-    request.date = String(selectedEvent.value.proposedDate || selectedEvent.value.proposed_date || "").slice(0, 10);
-    request.startTime = String(selectedEvent.value.proposedTime || selectedEvent.value.proposed_time || "").slice(0, 5);
+    const event = selectedEvent.value;
+
+    request.date = String(
+      event.proposedDate || event.proposed_date || ""
+    ).slice(0, 10);
+
+    request.startTime = String(
+      event.proposedTime || event.proposed_time || ""
+    ).slice(0, 5);
+
+    request.endDate = String(
+      event.proposedEndDate ||
+      event.proposed_end_date ||
+      request.date
+    ).slice(0, 10);
+
+    request.endTime = String(
+      event.proposedEndTime || event.proposed_end_time || ""
+    ).slice(0, 5);
   }
-  venueRequests.value.push(request);
 }
 
 function removeVenue(index) {

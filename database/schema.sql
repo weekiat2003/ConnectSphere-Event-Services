@@ -661,3 +661,7 @@ ALTER TABLE events
         'draft','submitted','under_review','approved',
         'planning','safety_check','safety_approved','confirmed','completed','cancelled','rejected'
     ) NOT NULL DEFAULT 'draft';
+
+ALTER TABLE events
+ADD COLUMN proposed_end_date DATE NULL,
+ADD COLUMN proposed_end_time TIME NULL;
