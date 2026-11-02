@@ -122,7 +122,7 @@ def process_change(request_id):
         if data.get("confirmed") is not True:
             return jsonify({
                 "requiresConfirmation": True,
-                "message": "Apply these changes to the event? Its status, venue bookings and equipment stay as they are.",
+                "message": "Approve these changes? The event is not updated automatically. Edit it yourself after the offline discussion.",
             }), 409
         processed = process_routine_change(request_id, user.id)
     except LookupError:
@@ -196,7 +196,7 @@ def start_re_review(request_id):
                 "requiresConfirmation": True,
                 "message": (
                     "Send this significant change for re-review? The event will "
-                    "return to planning if it is confirmed, and affected "
+                    "return to planning if it is in safety check, and affected "
                     "arrangements will be flagged for reconsideration."
                 ),
             }), 409
@@ -228,8 +228,9 @@ def complete_re_review(request_id):
             return jsonify({
                 "requiresConfirmation": True,
                 "message": (
-                    "Record that this change is going ahead? The event details "
-                    "will be updated and the reconsideration flags will be cleared."
+                    "Record that this change is going ahead? The event details are not "
+                    "updated automatically. Edit them yourself, and the "
+                    "reconsideration flags will be cleared."
                 ),
             }), 409
 

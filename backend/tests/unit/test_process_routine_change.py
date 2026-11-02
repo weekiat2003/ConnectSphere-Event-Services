@@ -15,7 +15,7 @@ from app.change_requests.services import (
 )
 from app.extensions import db
 from app.models.change_request import ChangeRequest, EventChangeHistory
-from app.models.event import Event, EventEquipmentRequirement
+from app.models.event import Event, EventEquipmentRequirement, EventFieldEditLog
 from app.models.user import Role, User
 from app.models.venue import BOOKING_APPROVED, VenueBooking
 
@@ -48,7 +48,7 @@ def _people():
     )
 
 
-def _event(organiser_id, coordinator_id, status="confirmed"):
+def _event(organiser_id, coordinator_id, status="planning"):
     event = Event(
         organiser_id=organiser_id,
         coordinator_id=coordinator_id,
@@ -97,14 +97,13 @@ def _booking(event):
 # 2. Applied
 # ---------------------------------------------------------------------
 
-def test_processing_applies_every_proposed_value_and_marks_the_request_processed(app):
+def test_processing_marks_the_request_processed_without_changing_the_event(app):
     with app.app_context():
         organiser, coordinator, _ = _people()
         event = _event(organiser, coordinator)
         change = _request(event, {
             "name": "Annual Summit",
             "description": "A bigger event",
-            "accessibility_needs": "Hearing loop",
             "registration_required": True,
             "intended_capacity": 50,
         })
@@ -112,25 +111,13 @@ def test_processing_applies_every_proposed_value_and_marks_the_request_processed
         processed = process_routine_change(change.id, coordinator)
 
         db.session.refresh(event)
-        assert (event.name, event.description, event.accessibility_needs) == (
-            "Annual Summit", "A bigger event", "Hearing loop",
-        )
-        assert (event.registration_required, event.intended_capacity) == (True, 50)
+        # Not applied automatically: the Coordinator edits the event after the offline discussion.
+        assert (event.name, event.description) == ("Annual Conference", "A conference for the team")
+        assert not event.registration_required
+        assert event.intended_capacity is None
         assert processed.status == "processed"
         assert processed.coordinator_id == coordinator
         assert processed.decided_at is not None
-
-
-def test_an_optional_value_can_be_cleared(app):
-    with app.app_context():
-        organiser, coordinator, _ = _people()
-        event = _event(organiser, coordinator)
-        change = _request(event, {"accessibility_needs": ""})
-
-        process_routine_change(change.id, coordinator)
-
-        db.session.refresh(event)
-        assert event.accessibility_needs is None
 
 
 def test_a_dry_run_checks_everything_but_writes_nothing(app):
@@ -186,12 +173,39 @@ def test_a_withdrawal_request_is_not_a_routine_change(app):
         db.session.refresh(withdrawal)
         assert withdrawal.status == "pending"
 
+@pytest.mark.parametrize("status", ["confirmed", "safety_approved"])
+def test_processing_is_refused_for_confirmed_and_safety_approved_events(app, status):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _event(organiser, coordinator)
+        change = _request(event, {"name": "Annual Summit"})
+        event.status = status
+        db.session.commit()
+
+        with pytest.raises(ChangeRequestError, match="planning or in safety check"):
+            process_routine_change(change.id, coordinator)
+
+        db.session.refresh(change)
+        assert change.status == "pending"
+
+
+def test_processing_writes_no_history_or_edit_logs(app):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _event(organiser, coordinator)
+        change = _request(event, {"name": "Annual Summit"})
+
+        process_routine_change(change.id, coordinator)
+
+        assert EventChangeHistory.query.count() == 0
+        assert EventFieldEditLog.query.count() == 0
+
 
 # ---------------------------------------------------------------------
 # 4. Status and arrangements untouched
 # ---------------------------------------------------------------------
 
-@pytest.mark.parametrize("status", ["approved", "planning", "confirmed"])
+@pytest.mark.parametrize("status", ["submitted", "under_review", "approved", "planning", "safety_check"])
 def test_status_bookings_and_equipment_stay_as_they_were(app, status):
     with app.app_context():
         organiser, coordinator, _ = _people()
@@ -260,7 +274,7 @@ def test_the_decision_shows_who_processed_it_and_when(app):
         assert detail["availableActions"] == []
 
 
-def test_history_records_old_and_new_value_for_each_changed_field(app):
+def test_processing_records_no_change_history(app):
     with app.app_context():
         organiser, coordinator, _ = _people()
         event = _event(organiser, coordinator)
@@ -268,30 +282,9 @@ def test_history_records_old_and_new_value_for_each_changed_field(app):
 
         process_routine_change(change.id, coordinator)
 
-        rows = (
-            EventChangeHistory.query.filter_by(change_request_id=change.id)
-            .order_by(EventChangeHistory.field)
-            .all()
-        )
-        assert [(r.field, r.old_value, r.new_value) for r in rows] == [
-            ("description", "A conference for the team", "A bigger event"),
-            ("name", "Annual Conference", "Annual Summit"),
-        ]
-        assert all(r.event_id == event.id and r.changed_by == coordinator and r.changed_at for r in rows)
-
-
-def test_history_records_the_value_that_was_actually_replaced(app):
-    with app.app_context():
-        organiser, coordinator, _ = _people()
-        event = _event(organiser, coordinator)
-        change = _request(event, {"name": "Annual Summit"})
-        event.name = "Annual Conference 2026"  # edited after the request was made
-        db.session.commit()
-
-        process_routine_change(change.id, coordinator)
-
-        row = EventChangeHistory.query.filter_by(change_request_id=change.id).one()
-        assert (row.old_value, row.new_value) == ("Annual Conference 2026", "Annual Summit")
+        db.session.refresh(event)
+        assert EventChangeHistory.query.filter_by(change_request_id=change.id).count() == 0
+        assert (event.name, event.description) == ("Annual Conference", "A conference for the team")
 
 
 # ---------------------------------------------------------------------
@@ -338,26 +331,12 @@ def test_a_request_on_an_event_that_is_no_longer_changeable_is_refused(app):
         event.status = "cancelled"
         db.session.commit()
 
-        with pytest.raises(ChangeRequestError, match="approved, planning or confirmed"):
+        with pytest.raises(ChangeRequestError, match="planning or in safety check"):
             process_routine_change(change.id, coordinator)
 
         db.session.refresh(event)
         db.session.refresh(change)
         assert (event.name, change.status) == ("Annual Conference", "pending")
-
-
-def test_a_field_that_already_has_the_proposed_value_leaves_no_history_row(app):
-    with app.app_context():
-        organiser, coordinator, _ = _people()
-        event = _event(organiser, coordinator)
-        change = _request(event, {"name": "Annual Summit", "description": "A bigger event"})
-        event.name = "Annual Summit"  # already edited to the proposed value
-        db.session.commit()
-
-        process_routine_change(change.id, coordinator)
-
-        rows = EventChangeHistory.query.filter_by(change_request_id=change.id).all()
-        assert [r.field for r in rows] == ["description"]
         
 # ---------------------------------------------------------------------
 # Access
@@ -451,14 +430,14 @@ def test_only_a_literal_true_counts_as_confirmation(app, confirmed):
     assert _event_name(app, scene["event"]) == "Annual Conference"
 
 
-def test_confirming_applies_the_change(app):
+def test_confirming_marks_the_request_processed_without_changing_the_event(app):
     scene = _scene(app)
 
     response = _post(app, scene["coordinator"], body={"confirmed": True}, request_id=scene["routine"])
 
     assert response.status_code == 200
     assert response.get_json()["status"] == "processed"
-    assert _event_name(app, scene["event"]) == "Annual Summit"
+    assert _event_name(app, scene["event"]) == "Annual Conference"
 
 
 def test_a_significant_request_is_refused_without_asking_for_confirmation(app):

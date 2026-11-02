@@ -153,16 +153,10 @@
           <div class="thread-message request">
             <span class="thread-meta">Coordinator · {{ formatDate(item.request.createdAt) }}</span>
             <p>{{ item.request.comments }}</p>
-            <p v-if="item.request.editableFields?.length" class="thread-fields">
-              Fields opened for editing: {{ formatFieldNames(item.request.editableFields) }}
-            </p>
           </div>
           <div v-if="item.response" class="thread-message response">
             <span class="thread-meta">Organiser · {{ formatDate(item.response.createdAt) }}</span>
             <p>{{ item.response.comments }}</p>
-            <p v-if="Object.keys(item.response.updatedFields || {}).length" class="thread-fields">
-              Updated: {{ formatFieldNames(Object.keys(item.response.updatedFields)) }}
-            </p>
           </div>
           <div v-else-if="item.withdrawn" class="thread-withdrawn">Withdrawn by coordinator</div>
           <div v-else class="thread-pending">
@@ -232,10 +226,10 @@
     </div>
 
     <!-- Coordinator Actions: Event Review and Approval + Coordinator Assignment + Event Status Management -->
-    <section v-if="isAssignedCoordinator">
+    <section v-if="isAssignedCoordinator && hasCoordinatorActions">
       <h3 class="section-title">Coordinator Actions</h3>
 
-      <div v-if="showCancelForm" class="action-block">
+      <div v-if="showCancelForm" id="cancel-form" class="action-block">
         <h3 class="block-title">Cancel Event</h3>
         <textarea v-model="cancelReason" placeholder="Reason for cancelling (required)"></textarea>
         <p v-if="cancelError" class="field-error">{{ cancelError }}</p>
@@ -248,21 +242,8 @@
       <div v-if="event.status === 'under_review'" class="action-block">
         <textarea v-model="comment" placeholder="Comments / reason"></textarea>
 
-        <div class="field-select">
-          <span class="detail-label">Allow organiser to edit:</span>
-          <div class="checkbox-grid">
-            <label v-for="opt in EDITABLE_FIELD_OPTIONS" :key="opt.key" class="checkbox-option">
-              <input type="checkbox" :value="opt.key" v-model="editableFields" />
-              {{ opt.label }}
-            </label>
-          </div>
-        </div>
-
         <div v-if="event.clarificationFlag" class="notice">
           <strong>Clarification requested:</strong> {{ event.clarificationComments }}
-          <div v-if="event.clarificationEditableFields?.length" class="editable-fields-note">
-            Organiser can edit: {{ formatFieldNames(event.clarificationEditableFields) }}
-          </div>
         </div>
 
         <p v-if="clarificationError" class="field-error">{{ clarificationError }}</p>
@@ -496,25 +477,6 @@
             </div>
           </label>
 
-          <template v-if="item.request.editableFields?.length">
-            <div v-for="field in EDITABLE_FIELD_OPTIONS.filter((o) => item.request.editableFields.includes(o.key))"
-              :key="field.key" class="field-row">
-              <label>
-                {{ field.label }}
-                <input v-if="field.type === 'checkbox'" type="checkbox"
-                  v-model="openResponseForms[item.reviewId].fields[field.key]" />
-                <textarea v-else-if="field.type === 'textarea'"
-                  v-model="openResponseForms[item.reviewId].fields[field.key]"></textarea>
-                <input v-else-if="field.type === 'number'" type="number"
-                  v-model.number="openResponseForms[item.reviewId].fields[field.key]" />
-                <input v-else :type="field.type" v-model="openResponseForms[item.reviewId].fields[field.key]" />
-              </label>
-            </div>
-          </template>
-          <p v-else class="notice-inline">
-            The coordinator hasn't opened any fields for editing on this request. You can still respond in words.
-          </p>
-
           <p v-if="respondErrors[item.reviewId]" class="field-error">{{ respondErrors[item.reviewId] }}</p>
           <div class="actions">
             <button class="btn btn-primary" @click="respondToItem(item.reviewId)">Send Response</button>
@@ -703,7 +665,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import eventsApi from "../api/events";
@@ -720,7 +682,6 @@ const auth = useAuthStore();
 
 const event = ref(null);
 const comment = ref("");
-const responseNotes = ref("");
 const newCoordinatorId = ref(null);
 const coordinators = ref([]);
 
@@ -837,10 +798,20 @@ const canEditEvent = computed(() =>
   isAssignedCoordinator.value && EDITABLE_EVENT_STATUSES.includes(event.value.status)
 );
 
-const editableFields = ref([]);       // coordinator's selection when requesting clarification
-
 const isAssignedCoordinator = computed(
   () => auth.hasRole("event_coordinator") && event.value?.coordinatorId === auth.user?.id
+);
+// Every block in "Coordinator Actions" belongs to an active status (Under Review
+// to Confirmed), plus the cancel/edit forms and the confirm prompt. Show the
+// section only when one of them applies, so it is never an empty heading
+// (e.g. Submitted, Completed, Cancelled or Rejected events).
+const hasCoordinatorActions = computed(() =>
+  isAssignedCoordinator.value && (
+    REASSIGNABLE_STATUSES.includes(event.value?.status)
+    || showCancelForm.value
+    || (showEditForm.value && canEditEvent.value)
+    || !!confirmState.value
+  )
 );
 const isOwningOrganiser = computed(
   () => auth.hasRole("event_organiser") && event.value?.organiserId === auth.user?.id
@@ -931,6 +902,9 @@ const currentEquipmentLabel = computed(() =>
     (event.value?.equipmentRequirements || []).map((e) => ({ type: e.type, quantity: e.quantity }))
   )
 );
+
+const statusLabel = (value) =>
+  String(value || "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 
 async function ensureCatalogue() {
   if (venues.value.length || equipmentCatalogue.value.length) return;
@@ -1062,9 +1036,6 @@ async function submitWithdrawalRequest() {
   }
 }
 
-const formatFieldNames = (keys) =>
-  (keys || []).map((k) => EDITABLE_FIELD_OPTIONS.find((o) => o.key === k)?.label || k).join(", ");
-
 // The API sends naive UTC timestamps (see backend app/common/time.py); mark
 // them as UTC so the browser shows the viewer's local time, not UTC as local.
 const formatDate = (iso) => {
@@ -1101,9 +1072,8 @@ async function loadCoordinators() {
 async function clarify() {
   clarificationError.value = "";
   try {
-    await eventsApi.requestClarification(event.value.id, comment.value, editableFields.value);
+    await eventsApi.requestClarification(event.value.id, comment.value);
     comment.value = "";
-    editableFields.value = [];
     await load();
   } catch (e) {
     clarificationError.value = e.response?.data?.error || "Could not request clarification.";
@@ -1125,7 +1095,7 @@ function ensureResponseForm(item) {
     registration_required: event.value.registrationRequired,
   };
   const fields = {};
-  (item.request.editableFields || []).forEach((key) => {
+  ([]).forEach((key) => {
     fields[key] = source[key] ?? (key === "registration_required" ? false : "");
   });
   openResponseForms[item.reviewId] = { comments: "", fields };
@@ -1392,6 +1362,24 @@ const cancelReason = ref("");
 const cancelError = ref("");
 const cancelSubmitting = ref(false);
 
+const CANCELLABLE_STATUSES = ["approved", "planning", "safety_check", "confirmed"];
+let returnToRequestId = null;
+
+async function openCancelFromWithdrawal() {
+  if (route.query.cancel !== "1") return;
+  returnToRequestId = Number(route.query.fromRequest) || null;
+  router.replace({ query: {} }); // so a refresh doesn't reopen the form
+  if (!isAssignedCoordinator.value || !CANCELLABLE_STATUSES.includes(event.value.status)) return;
+
+  openCancelForm();
+  const withdrawal = changeRequests.value.find(
+    (r) => r.requestType === "withdrawal" && r.status === "pending"
+  );
+  if (withdrawal) cancelReason.value = `Organiser requested withdrawal: ${withdrawal.reason}`;
+  await nextTick();
+  document.getElementById("cancel-form")?.scrollIntoView({ block: "center" });
+}
+
 function openCancelForm() {
   cancelReason.value = "";
   cancelError.value = "";
@@ -1409,6 +1397,9 @@ async function cancelEvent() {
       showCancelForm.value = false;
       cancelReason.value = "";
       await load();
+      if (returnToRequestId) {
+        router.push({ name: "change-request-review", query: { id: returnToRequestId } });
+      }
     }
   } catch (e) {
     const data = e.response?.data;
@@ -1425,6 +1416,7 @@ onMounted(async () => {
   if (auth.hasRole("event_coordinator")) {
     await loadCoordinators();
   }
+  await openCancelFromWithdrawal();
 });
 </script>
 

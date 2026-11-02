@@ -35,6 +35,7 @@ from app.models.notification import (
     TYPE_REGISTRATION_CHANGE,
     TYPE_SAFETY_CHECK,
     TYPE_VENUE_BOOKING_UPDATE,
+    TYPE_ARRANGEMENT_REVIEW,
 )
 from app.models.registration import (
     ACTIVE_STATUSES,
@@ -50,6 +51,7 @@ from app.notifications.services.core import (
     notify_role,
     notify_users,
 )
+from app.models.venue import ACTIVE_BOOKING_STATUSES
 
 COORDINATOR_LEAD_ROLE = "event_coordinator_lead"
 
@@ -224,8 +226,8 @@ def notify_organiser_of_safety_decision(event, review: EventSafetyReview) -> lis
 
 
 CHANGE_REQUEST_OUTCOMES = {
-    "processed": ("Change request applied", "Your change request for \"{name}\" was applied."),
-    "applied": ("Change request approved", "Your change request for \"{name}\" is going ahead and has been applied."),
+    "processed": ("Change request approved", "Your change request for \"{name}\" was approved. Your Coordinator will update the event details."),
+    "applied": ("Change request approved", "Your change request for \"{name}\" is going ahead. Your Coordinator will update the event details."),
     "re_review": ("Change sent for re-review",
                   "Your change request for \"{name}\" is a significant change and has been sent for re-review."
                   " Affected arrangements will be reconsidered."),
@@ -480,6 +482,36 @@ def notify_tech_support_of_equipment(event, kind: str = "new") -> list:
         data={"kind": kind, "summary": summary, "venues": venues, "requesterName": requester},
     )
 
+@_never_blocks
+def notify_arrangements_of_significant_change(event, fields) -> list:
+    """Venue Staff and Technical Support are told to discuss a significant
+    change with the Coordinator before proceeding with their arrangements."""
+    created = []
+    changed = ", ".join(_humanise(f) for f in sorted(fields))
+    venue_staff_ids = set(active_user_ids_with_role("venue_staff"))
+    for booking in event.venue_bookings:
+        if booking.status not in ACTIVE_BOOKING_STATUSES:
+            continue
+        venue = db.session.get(Venue, booking.venue_id)
+        venue_name = venue.name if venue else f"Venue #{booking.venue_id}"
+        manager_id = venue.created_by if venue else None
+        recipients = [manager_id] if manager_id in venue_staff_ids else list(venue_staff_ids)
+        created += notify_users(
+            recipients, TYPE_ARRANGEMENT_REVIEW, "Significant change to booked event",
+            f'"{_name(event)}" has a significant change ({changed}). '
+            f"Please discuss with the Coordinator before proceeding with {venue_name}.",
+            event_id=event.id, link=f"/venues/approval?booking={booking.id}",
+            data={"bookingId": booking.id, "venueName": venue_name, "fields": sorted(fields)},
+        )
+    if event.equipment_requirements:
+        created += notify_role(
+            "technical_support_staff", TYPE_ARRANGEMENT_REVIEW, "Significant change to event equipment",
+            f'"{_name(event)}" has a significant change ({changed}). '
+            "Please discuss with the Coordinator before proceeding with the equipment.",
+            event_id=event.id, link=f"/technical-review?event={event.id}",
+            data={"fields": sorted(fields)},
+        )
+    return created
 
 @_never_blocks
 def notify_coordinator_of_equipment_reservation(

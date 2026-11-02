@@ -194,7 +194,7 @@ def test_a_new_request_is_allowed_once_the_earlier_one_was_rejected(app):
 
 def test_a_pending_change_request_does_not_block_a_withdrawal(app):
     with app.app_context():
-        event = _event("confirmed")
+        event = _event("planning")
         submit_change_request(event, ORGANISER_ID, {"expected_attendance": 120}, REASON)
 
         withdrawal = _withdraw(event)
@@ -230,7 +230,7 @@ def test_organiser_sees_the_withdrawal_request_with_its_details(app):
 
 def test_withdrawals_and_changes_are_listed_together_newest_first(app):
     with app.app_context():
-        event = _event("confirmed")
+        event = _event("planning")
         change = submit_change_request(event, ORGANISER_ID, {"expected_attendance": 120}, REASON)
         withdrawal = _withdraw(event)
 
@@ -260,7 +260,7 @@ def test_the_coordinators_decision_reason_is_shown(app):
 
 def test_the_coordinator_can_tell_withdrawals_from_changes(app):
     with app.app_context():
-        event = _event("confirmed")
+        event = _event("planning")
         submit_change_request(event, ORGANISER_ID, {"expected_attendance": 120}, REASON)
         _withdraw(event)
 

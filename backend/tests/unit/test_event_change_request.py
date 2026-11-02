@@ -31,15 +31,15 @@ STAFF_ID = 900
 BASE_DAY = date.today() + timedelta(days=60)
 NEW_DAY = BASE_DAY + timedelta(days=7)
 REASON = "The client moved their launch to a later week."
-ALLOWED_STATUSES = ("submitted", "under_review", "approved", "planning", "confirmed")
-OTHER_STATUSES = ("draft", "rejected", "completed", "cancelled")
+ALLOWED_STATUSES = ("submitted", "under_review", "approved", "planning", "safety_check")
+OTHER_STATUSES = ("draft", "rejected", "completed", "cancelled", "confirmed", "safety_approved")
 
 
 # ---------------------------------------------------------------------
 # Helpers (call inside `with app.app_context():`)
 # ---------------------------------------------------------------------
 
-def _event(status="confirmed", **overrides):
+def _event(status="planning", **overrides):
     values = dict(
         organiser_id=ORGANISER_ID,
         coordinator_id=COORDINATOR_ID,
@@ -138,7 +138,7 @@ def test_option_is_not_offered_to_another_organiser(app):
 def test_request_is_refused_for_any_other_status(app, status):
     with app.app_context():
         event = _event(status)
-        with pytest.raises(ChangeRequestError, match="approved, planning or confirmed"):
+        with pytest.raises(ChangeRequestError, match="planning or in safety check"):
             _submit(event, {"expected_attendance": 120})
         assert ChangeRequest.query.count() == 0
 
@@ -294,7 +294,7 @@ def test_event_and_bookings_are_untouched_until_the_coordinator_decides(app):
 
         db.session.refresh(event)
         db.session.refresh(booking)
-        assert (event.proposed_date, event.expected_attendance, event.status) == (BASE_DAY, 80, "confirmed")
+        assert (event.proposed_date, event.expected_attendance, event.status) == (BASE_DAY, 80, "planning")
         assert (booking.status, booking.start_datetime, booking.end_datetime) == (BOOKING_APPROVED, start, end)
 
 
@@ -319,6 +319,7 @@ def test_organiser_cannot_edit_the_event_directly_while_a_request_is_pending(app
         ("proposed_time", time(14, 0)),
         ("expected_attendance", 120),
         ("equipment_requirements", [{"type": "Projector", "quantity": 2}]),
+        ("accessibility_needs", "Hearing loop"),
     ],
 )
 def test_changes_to_date_time_attendance_or_equipment_are_significant(app, field, new_value):
@@ -333,7 +334,7 @@ def test_a_venue_change_is_significant(app):
 
 @pytest.mark.parametrize(
     "field, new_value",
-    [("name", "Annual Summit"), ("description", "A bigger event"), ("accessibility_needs", "Hearing loop")],
+    [("name", "Annual Summit"), ("description", "A bigger event")],
 )
 def test_changes_to_other_details_are_routine(app, field, new_value):
     with app.app_context():
@@ -403,6 +404,19 @@ def test_another_organiser_cannot_list_the_requests(app):
         with pytest.raises(PermissionError):
             list_change_requests_for_event(event, OTHER_ORGANISER_ID)
 
+@pytest.mark.parametrize("status", ["confirmed", "safety_approved"])
+def test_confirmed_and_safety_approved_events_cannot_take_change_requests(app, status):
+    with app.app_context():
+        event = _event(status)
+        with pytest.raises(ChangeRequestError, match="planning or in safety check"):
+            _submit(event, {"expected_attendance": 120})
+        assert ChangeRequest.query.count() == 0
+
+
+def test_accessibility_needs_alone_makes_the_request_significant(app):
+    with app.app_context():
+        assert _submit(_event(), {"accessibility_needs": "Hearing loop"}).is_significant is True
+        
 # ---------------------------------------------------------------------
 # Catalogue endpoint for organisers: GET /api/change-requests/catalogue
 # ---------------------------------------------------------------------

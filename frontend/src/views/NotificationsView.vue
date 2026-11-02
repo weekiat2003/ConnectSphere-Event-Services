@@ -53,6 +53,7 @@ const TYPE_LABELS = {
   equipment_reservation_update: "Equipment",
   registration_change: "Registration",
   safety_check: "Safety check",
+  arrangement_review: "Review needed",
 };
 const NOTIFICATION_KIND_LABELS = {
   preparation_updated: "Equipment preparation",

@@ -51,7 +51,7 @@ def _people():
     )
 
 
-def _event(organiser_id, coordinator_id, name="Annual Conference", status="confirmed"):
+def _event(organiser_id, coordinator_id, name="Annual Conference", status="planning"):
     event = Event(
         organiser_id=organiser_id,
         coordinator_id=coordinator_id,
@@ -365,6 +365,19 @@ def test_unassigned_coordinator_cannot_reject(app):
         db.session.refresh(change)
         assert change.status == "pending"
 
+def test_accessibility_request_is_significant_in_the_queue_and_offers_re_review(app):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _event(organiser, coordinator)
+        _booking(event)
+        change = submit_change_request(event, organiser, {"accessibility_needs": "Hearing loop"}, REASON)
+
+        row = list_review_queue(coordinator)[0]
+        detail = get_review_detail(change.id, coordinator)
+
+        assert row["isSignificant"] is True
+        assert detail["availableActions"] == ["trigger_re_review", "reject_change"]
+        assert [a["kind"] for a in detail["affectedArrangements"]] == ["venue_booking"]
 
 # ---------------------------------------------------------------------
 # 6. Access
