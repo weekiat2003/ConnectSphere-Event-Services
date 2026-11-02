@@ -10,6 +10,7 @@ from app.events.services import update as update_service
 
 from app.models.event import Event
 from app.models.user import User
+from app.extensions import db
 
 
 events_bp = Blueprint("events", __name__)
@@ -446,8 +447,10 @@ def delete_clarification_request_route(event_id, review_id):
 def approve_event_route(event_id):
     user = _current_user()
     event = Event.query.get(event_id)
+
     if not event:
         return jsonify({"error": "Event not found"}), 404
+
     data = request.get_json() or {}
 
     confirmation = _require_confirmation(event, data, "approve")
@@ -455,9 +458,19 @@ def approve_event_route(event_id):
         return confirmation
 
     try:
-        event = review.approve_event(event, user.id, data.get("comments"))
+        event = review.approve_event(
+            event, user.id, data.get("comments")
+        )
+        db.session.commit()
+
     except (ValueError, PermissionError) as e:
+        db.session.rollback()
         return jsonify({"error": str(e)}), 400
+
+    except Exception:
+        db.session.rollback()
+        raise
+
     return jsonify(event.to_dict()), 200
 
 

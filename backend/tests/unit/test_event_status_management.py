@@ -29,6 +29,7 @@ from app.models.event import (
 from app.models.user import User
 from app.models.venue import Venue, VenueBooking
 from app.venues.services import booking as venue_booking
+from app.events.services import update as update_service
 
 ORG = "organiser@test.com"
 COORD = "coordinator@test.com"
@@ -187,49 +188,89 @@ def _create_venue_booking(
     return booking
 
 
-def test_approval_moves_event_to_planning(app, organiser, coordinator, make_event):
-    # AC1: approve_event() chains straight through to "planning".
+def test_approval_leaves_event_in_approved_until_coordinator_proceeds(
+    app, organiser, coordinator, make_event
+):
+    # Manual workflow: approval and proceeding to planning are two
+    # separate Coordinator actions.
     with app.app_context():
-        event_id = make_event(organiser, status="under_review", coordinator_id=coordinator)
+        event_id = make_event(
+            organiser, status="under_review", coordinator_id=coordinator
+        )
         event = db.session.get(Event, event_id)
 
         review.approve_event(event, coordinator)
 
-        assert event.status == "planning"
-        assert [entry.new_status for entry in event.status_history] == ["approved", "planning"]
+        assert event.status == "approved"
+        assert [entry.new_status for entry in event.status_history] == ["approved"]
 
-
-def test_pending_venue_keeps_event_in_planning(app, organiser, make_event):
-    # AC2: an unapproved venue booking is not a complete arrangement.
-    with app.app_context():
-        event_id = make_event(organiser, status="planning", capacity_needed=100)
-        event = db.session.get(Event, event_id)
-        _create_venue_booking(event, organiser)
-
-        status_service.try_advance_to_safety_check(event, changed_by_id=organiser)
+        # The Coordinator's separate action moves it into planning.
+        change_status(
+            event,
+            "planning",
+            changed_by_id=coordinator,
+            reason="Coordinator proceeded to planning",
+        )
 
         assert event.status == "planning"
+        assert [entry.new_status for entry in event.status_history] == [
+            "approved",
+            "planning",
+        ]
 
 
-def test_venue_approval_moves_event_to_safety_check_without_equipment(
-    app, organiser, make_user, make_event
+def test_pending_venue_prevents_manual_safety_check(
+    app, organiser, make_event
 ):
-    # AC2: with no equipment requested, an approved venue alone is enough
-    # to complete arrangements and move to safety_check (never confirmed).
+    # Negative case: an unapproved venue must block the Coordinator
+    # from manually sending the event for safety assessment.
+    with app.app_context():
+        event_id = make_event(
+            organiser, status="planning", capacity_needed=100
+        )
+        event = db.session.get(Event, event_id)
+        _create_venue_booking(event, organiser, status="pending")
+
+        assert status_service.arrangements_are_complete(event) is False
+
+        with pytest.raises(status_service.InvalidTransitionError):
+            change_status(
+                event, "safety_check", changed_by_id=organiser
+            )
+
+        assert event.status == "planning"
+
+
+def test_venue_approval_does_not_automatically_start_safety_check(
+    app, organiser, coordinator, make_user, make_event
+):
+    # Venue approval completes the arrangement, but only the
+    # Coordinator's explicit action can start the safety check.
     with app.app_context():
         venue_staff_id = make_user(
-            "status-venue-staff@test.com",
-            ["venue_staff"],
+            "status-venue-staff@test.com", ["venue_staff"]
         )
-        event_id = make_event(organiser, status="planning", capacity_needed=100)
+        event_id = make_event(
+            organiser, status="planning", capacity_needed=100
+        )
         event = db.session.get(Event, event_id)
         booking = _create_venue_booking(
-            event,
-            organiser,
-            venue_owner_id=venue_staff_id,
+            event, organiser, venue_owner_id=venue_staff_id
         )
 
-        venue_booking.approve_booking(booking, decided_by=venue_staff_id)
+        venue_booking.approve_booking(
+            booking, decided_by=venue_staff_id
+        )
+
+        assert status_service.arrangements_are_complete(event) is True
+        assert event.status == "planning"
+
+        change_status(
+            event,
+            "safety_check",
+            changed_by_id=coordinator,
+            reason="Coordinator sent event for safety assessment",
+        )
 
         assert event.status == "safety_check"
         assert EventStatusHistory.query.filter_by(
@@ -238,7 +279,7 @@ def test_venue_approval_moves_event_to_safety_check_without_equipment(
 
 
 def test_pending_equipment_prevents_safety_check_after_venue_approval(
-    app, organiser, make_user, make_event
+    app, organiser, coordinator, make_user, make_event, 
 ):
     # AC2: venue alone isn't enough once equipment is also requested --
     # arrangements aren't complete until equipment is reserved too.
@@ -261,13 +302,23 @@ def test_pending_equipment_prevents_safety_check_after_venue_approval(
         venue_booking.approve_booking(booking, decided_by=venue_staff_id)
 
         assert event.status == "planning"
+        assert status_service.arrangements_are_complete(event) is False
 
+        with pytest.raises(status_service.InvalidTransitionError):
+            change_status(
+                event,
+                "safety_check",
+                changed_by_id=coordinator,
+            )
+
+        assert event.status == "planning"
 
 def test_last_equipment_reservation_moves_event_to_safety_check(
     app, organiser, coordinator, make_event
 ):
-    # AC2: reserving the last outstanding equipment requirement is what
-    # finally completes arrangements and triggers the move.
+    # Completing the last equipment reservation makes arrangements ready.
+    # The event remains in planning until the Coordinator manually sends it
+    # for safety assessment.
     with app.app_context():
         event_id = make_event(organiser, status="planning", capacity_needed=100)
         event = db.session.get(Event, event_id)
@@ -287,9 +338,23 @@ def test_last_equipment_reservation_moves_event_to_safety_check(
             organiser,
         )
 
+        assert status_service.arrangements_are_complete(event) is True
+        assert event.status == "planning"
+
+        change_status(
+            event,
+            "safety_check",
+            changed_by_id=coordinator,
+            reason="Coordinator sent event for safety assessment",
+        )
+        assert EventStatusHistory.query.filter_by(
+        event_id=event_id,
+        new_status="safety_check",
+        ).count() == 1
+
         assert event.status == "safety_check"
 
-
+# Safety approval doesn't automatically confirm the event.
 def test_safety_officer_approval_leaves_event_awaiting_coordinator_confirmation(app, organiser, make_user, make_event):
     with app.app_context():
         officer_id = make_user("safety@test.com", ["safety_officer"])
@@ -311,8 +376,8 @@ def test_safety_officer_approval_leaves_event_awaiting_coordinator_confirmation(
         assert review_record.safety_officer_id == officer_id
         assert event.to_dict()["safetyReviews"][0]["comments"] == "Egress and access reviewed"
 
-
 @pytest.mark.parametrize("decision", ["rejected", "changes_requested"])
+# Rejection and change requests return the event to planning.
 def test_safety_rejection_or_change_request_returns_event_to_planning(
     app, organiser, make_user, make_event, decision
 ):
@@ -408,21 +473,63 @@ def test_pending_venue_booking_cannot_be_cancelled(app, organiser, coordinator, 
         assert booking.decision_reason is None
 
 
-def test_rechecking_ready_event_does_not_duplicate_safety_transition_history(
-    app, organiser, make_event
+# Verifies manual transition and prevents duplicate history.
+def test_manual_safety_transition_creates_only_one_history_record(
+    app, organiser, coordinator, make_event, monkeypatch
 ):
-    # AC4: calling the "try advance" check twice on an already-advanced
-    # event must not create a second safety_check history row.
     with app.app_context():
-        event_id = make_event(organiser, status="planning")
+        event_id = make_event(
+            organiser,
+            status="planning",
+            coordinator_id=coordinator,
+        )
         event = db.session.get(Event, event_id)
 
-        status_service.try_advance_to_safety_check(event, changed_by_id=organiser)
-        status_service.try_advance_to_safety_check(event, changed_by_id=organiser)
+        # make_event inserts directly into the database, so no safety
+        # transition should have been recorded yet.
+        assert event.status == "planning"
+        assert EventStatusHistory.query.filter_by(
+            event_id=event_id,
+            new_status="safety_check",
+        ).count() == 0
+
+        # Simulate completed venue and equipment arrangements.
+        monkeypatch.setattr(
+            status_service,
+            "arrangements_are_complete",
+            lambda event: True,
+        )
+
+        # The assigned Coordinator manually sends the event for safety check.
+        status_service.change_status(
+            event,
+            "safety_check",
+            changed_by_id=coordinator,
+        )
+
+        db.session.refresh(event)
 
         assert event.status == "safety_check"
         assert EventStatusHistory.query.filter_by(
-            event_id=event_id, new_status="safety_check"
+            event_id=event_id,
+            new_status="safety_check",
+        ).count() == 1
+
+        # Trying the same transition again must be rejected.
+        with pytest.raises(status_service.InvalidTransitionError):
+            status_service.change_status(
+                event,
+                "safety_check",
+                changed_by_id=coordinator,
+            )
+
+        db.session.refresh(event)
+
+        # The failed second attempt must not create another history record.
+        assert event.status == "safety_check"
+        assert EventStatusHistory.query.filter_by(
+            event_id=event_id,
+            new_status="safety_check",
         ).count() == 1
 
 
@@ -450,8 +557,6 @@ def test_released_equipment_is_not_counted_as_reserved(app, organiser, make_even
         db.session.add(record)
         db.session.commit()
 
-        status_service.try_advance_to_safety_check(event, changed_by_id=organiser)
-
         assert event.status == "planning"
 
 
@@ -472,7 +577,7 @@ def test_rejected_booking_for_other_venue_does_not_block_confirmation(
         approved = _create_venue_booking(event, organiser, venue_owner_id=venue_staff_id)
         venue_booking.approve_booking(approved, decided_by=venue_staff_id)
 
-        assert event.status == "safety_check"
+        assert event.status == "planning"
 
 
 def test_releasing_equipment_reservation_reverts_confirmed_event_to_planning(
@@ -528,7 +633,13 @@ def test_coordinator_confirm_moves_approved_event_to_confirmed(app, organiser, m
             .first()
         )
 
+        # The test currently confirms that the service function changes the status, now verify that the event is awaiting confirmation first.
+        assert event.status == "safety_approved"
+        assert status_service.awaiting_confirmation(event) is True
+
         event = status_service.confirm_after_safety_approval(event, review, coordinator_id)
+
+       
 
         assert event.status == "confirmed"
         latest_history = (
@@ -568,7 +679,8 @@ def test_confirm_after_safety_approval_rejects_when_not_in_safety_check(app, org
         with pytest.raises(status_service.InvalidTransitionError):
             status_service.confirm_after_safety_approval(confirmed_event, review, coordinator_id)
 
-        # Case 2: event still in planning — never reached an approved safety review.
+        # Case 2: a different event in planning cannot use another event's
+        # approved safety review to become confirmed.        
         planning_event_id = make_event(organiser, status="planning")
         planning_event = db.session.get(Event, planning_event_id)
         planning_event.coordinator_id = coordinator_id
@@ -651,3 +763,71 @@ def test_cannot_be_resubmitted_a_second_time(app, organiser, coordinator, make_e
         review.resubmit_rejected_event(original, organiser, {})
 
         assert review.can_be_resubmitted(db.session.get(Event, original_id)) is False
+
+
+# Significant changes in safety_check return the event to planning.
+def test_significant_event_update_during_safety_check_reverts_to_planning(
+    app, organiser, coordinator, make_event
+):
+    with app.app_context():
+        event_id = make_event(
+            organiser,
+            status="safety_check",
+            coordinator_id=coordinator,
+            proposed_date=date(2026, 12, 1),
+            proposed_time=time(9, 0),
+        )
+        event = db.session.get(Event, event_id)
+        coordinator_user = db.session.get(User, coordinator)
+
+        update_service.update_event_fields(
+            event,
+            coordinator_user,
+            {
+                "proposed_date": date(2027, 1, 15),
+                "proposed_time": time(10, 0),
+            },
+            offline_review_confirmed=True,
+        )
+
+        assert event.proposed_date == date(2027, 1, 15)
+        assert event.status == "planning"
+
+        assert EventStatusHistory.query.filter_by(
+            event_id=event_id,
+            new_status="planning",
+        ).count() == 1
+
+# Significant changes in confirmed return the event to planning
+def test_significant_event_update_on_confirmed_event_is_locked(
+    app, organiser, coordinator, make_event
+):
+    with app.app_context():
+        event_id = make_event(
+            organiser,
+            status="confirmed",
+            coordinator_id=coordinator,
+            proposed_date=date(2026, 12, 1),
+            proposed_time=time(9, 0),
+        )
+        event = db.session.get(Event, event_id)
+        coordinator_user = db.session.get(User, coordinator)
+
+        with pytest.raises(update_service.EventLockedError):
+            update_service.update_event_fields(
+                event,
+                coordinator_user,
+                {
+                    "proposed_date": date(2027, 1, 15),
+                    "proposed_time": time(10, 0),
+                },
+                offline_review_confirmed=True,
+            )
+
+        assert event.status == "confirmed"
+        assert event.proposed_date == date(2026, 12, 1)
+
+        assert EventStatusHistory.query.filter_by(
+            event_id=event_id,
+            new_status="planning",
+        ).count() == 0

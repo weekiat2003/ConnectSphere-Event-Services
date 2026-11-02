@@ -1,4 +1,5 @@
 from datetime import datetime
+from app.events.services import status
 
 import pytest
 
@@ -89,22 +90,47 @@ def test_only_technical_support_is_notified_once_each(app, organiser, coordinato
     both = make_user("both@test.com", ["technical_support_staff", "event_coordinator"], name="Bo Both")
     event = make_with_lines(make_event, organiser, coordinator, "under_review")
     review.approve_event(event, coordinator)
-    assert len(inbox(tech)) == 1 and len(inbox(both)) == 1
-    assert inbox(organiser) == [] and inbox(coordinator) == []
 
+    assert event.status == "approved"
 
-def test_a_failing_notification_does_not_block_approval(app, organiser, coordinator, make_event, tech, monkeypatch):
-    event = make_with_lines(make_event, organiser, coordinator, "under_review")
-    app.config["TESTING"] = False
+    # Under the new workflow, approval alone does not start planning. The tests that expect a planning-stage notification should explicitly transition the event to planning after approval.
 
+    status.change_status(event, "planning", coordinator)
+
+    assert len(inbox(tech)) == 1
+    assert len(inbox(both)) == 1
+    assert inbox(organiser) == []
+    assert inbox(coordinator) == []
+
+def test_a_failing_notification_does_not_block_approval(
+    app, organiser, coordinator, make_event, monkeypatch
+):
+    event = make_with_lines(
+        make_event,
+        organiser,
+        coordinator,
+        "under_review",
+    )
+
+    # Approval should only move the event to approved.
+    review.approve_event(event, coordinator)
+    assert event.status == "approved"
+
+    # Simulate a notification service failure.
     def boom(*args, **kwargs):
         raise RuntimeError("notification service down")
 
     monkeypatch.setattr(triggers, "notify_role", boom)
-    review.approve_event(event, coordinator)
-    db.session.expire_all()
-    assert db.session.get(Event, event.id).status == "planning"
 
+    # Notifications should not block the transition to planning.
+    app.config["TESTING"] = False
+
+    status.change_status(event, "planning", coordinator)
+
+    db.session.expire_all()
+    saved_event = db.session.get(Event, event.id)
+
+    assert saved_event.status == "planning"
 
 def reservation_notice_inbox(user_id):
     return Notification.query.filter_by(

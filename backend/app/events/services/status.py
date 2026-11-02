@@ -138,21 +138,6 @@ def _record_status_change(event: Event, new_status: str, changed_by_id: int, rea
     return event
 
 
-def try_advance_to_safety_check(event: Event, changed_by_id: int) -> Event:
-    if event.status != "planning":
-        return event
-
-    if not arrangements_are_complete(event):
-        return event
-
-    return change_status(
-        event,
-        "safety_check",
-        changed_by_id,
-        reason="All required venue and equipment arrangements are complete; safety review required",
-    )
-
-
 def arrangements_are_complete(event: Event) -> bool:
     """Check actual venue bookings and equipment reservations, not request fields."""
     venue_required = bool(

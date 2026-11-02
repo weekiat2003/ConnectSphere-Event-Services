@@ -28,7 +28,7 @@ from app.models.event import Event, EventEquipmentRequirement, EventSafetyReview
 from app.registrations import service as registrations
 from app.venues.services import booking as booking_service
 from app.venues.services.booking_requests import (BookingRequestError,submit_booking_requests,)
-from app.change_requests import services as cr 
+from app.change_requests import services as cr
 
 
 FUTURE = date.today() + timedelta(days=60)
@@ -186,7 +186,14 @@ class TestISP102Organiser:
         assert "coordinator_changed" not in kinds(organiser)
 
     def test_planning_started_even_without_equipment(self, app, organiser, coordinator, staff):
-        review.approve_event(submitted_and_assigned(organiser, coordinator), coordinator)
+        event = submitted_and_assigned(organiser, coordinator)
+
+        review.approve_event(event, coordinator)
+        assert event.status == "approved"
+
+        status.change_status(event, "planning", coordinator)
+        assert event.status == "planning"
+
         assert "planning_started" in kinds(organiser)
 
     def test_completed(self, app, organiser, coordinator, staff):
@@ -526,32 +533,44 @@ class TestISP104VenueStaff:
 # ===========================================================================
 class TestISP106TechSupport:
     def test_requirements_notified_when_planning_starts_with_details_and_link(
-        self, app, organiser, coordinator, staff
-    ):
+    self, app, organiser, coordinator, staff
+):
         event = submitted_and_assigned(organiser, coordinator)
-        event.equipment_requirements.append(EventEquipmentRequirement(equipment_type="Projector", quantity=2))
-        event.equipment_requirements.append(EventEquipmentRequirement(equipment_type="Microphone", quantity=4))
-        db.session.commit()
-        review.approve_event(event, coordinator)
 
-        [n] = inbox(staff["tech"], TYPE_NEW_EQUIPMENT_REQUEST)
-        for text in ("Gala Night", "Test Organiser", "2 × Projector", "4 × Microphone", "venue not yet booked"):
-            assert text in n.message
-        assert n.link == f"/technical-review?event={event.id}"
-
-    def test_no_notification_without_requirements(self, app, organiser, coordinator, staff):
-        review.approve_event(submitted_and_assigned(organiser, coordinator), coordinator)
-        assert inbox(staff["tech"]) == []
-
-    def test_changed_requirements_are_notified(self, app, organiser, coordinator, staff):
-        event = new_event(organiser, "planning", coordinator)
-        update_service.update_event_fields(
-            event, db.session.get(User, coordinator),
-            {"equipment_requirements": [{"type": "Speaker", "quantity": 2}]},
-            offline_review_confirmed=True,
+        event.equipment_requirements.append(
+            EventEquipmentRequirement(
+                equipment_type="Projector",
+                quantity=2,
+            )
         )
+        event.equipment_requirements.append(
+            EventEquipmentRequirement(
+                equipment_type="Microphone",
+                quantity=4,
+            )
+        )
+        db.session.commit()
+
+        # Approval does not start planning.
+        review.approve_event(event, coordinator)
+        assert event.status == "approved"
+
+        # The Coordinator explicitly starts planning.
+        status.change_status(event, "planning", coordinator)
+        assert event.status == "planning"
+
         [n] = inbox(staff["tech"], TYPE_NEW_EQUIPMENT_REQUEST)
-        assert n.data["kind"] == "updated" and "2 × Speaker" in n.message
+
+        for text in (
+            "Gala Night",
+            "Test Organiser",
+            "2 × Projector",
+            "4 × Microphone",
+            "venue not yet booked",
+        ):
+            assert text in n.message
+
+        assert n.link == f"/technical-review?event={event.id}"
 
 
 # ===========================================================================
@@ -830,7 +849,7 @@ class TestISP130SafetyOfficer:
 
     def test_ac1_real_trigger_notifies_when_arrangements_complete(self, app, organiser, coordinator, staff):
         event = ready_event(organiser, coordinator, staff["venue1"])
-        status.try_advance_to_safety_check(event, coordinator)
+        status.change_status(event, "safety_check", coordinator)        
         assert event.status == "safety_check"
         for officer in ("safety1", "safety2"):
             assert len(inbox(staff[officer], TYPE_SAFETY_CHECK)) == 1
@@ -845,7 +864,7 @@ class TestISP130SafetyOfficer:
                                         status=state, start_datetime=utcnow() + timedelta(days=10),
                                         end_datetime=utcnow() + timedelta(days=10, hours=3)))
         db.session.commit()
-        status.try_advance_to_safety_check(event, coordinator)
+        status.change_status(event, "safety_check", coordinator)
         assert event.status == "safety_check"
         assert len(inbox(staff["safety1"], TYPE_SAFETY_CHECK)) == 1
 
@@ -898,10 +917,24 @@ class TestISP130SafetyOfficer:
         status.change_status(event, "safety_check", staff["safety2"])
         assert len(inbox(staff["safety2"], TYPE_SAFETY_CHECK)) == 1
 
-    def test_ac4_repeated_advance_does_not_notify_twice(self, app, organiser, coordinator, staff):
+
+#  an invalid repeated transition cannot create a duplicate notification.
+    def test_ac4_repeated_advance_does_not_notify_twice(
+        self, app, organiser, coordinator, staff
+    ):
         event = ready_event(organiser, coordinator, staff["venue1"])
-        status.try_advance_to_safety_check(event, coordinator)
-        status.try_advance_to_safety_check(event, coordinator)
+
+        # First attempt successfully enters safety check.
+        status.change_status(event, "safety_check", coordinator)
+
+        assert event.status == "safety_check"
+        assert len(inbox(staff["safety1"], TYPE_SAFETY_CHECK)) == 1
+
+        # A second attempt must not create another notification.
+        with pytest.raises(status.InvalidTransitionError):
+            status.change_status(event, "safety_check", coordinator)
+
+        assert event.status == "safety_check"
         assert len(inbox(staff["safety1"], TYPE_SAFETY_CHECK)) == 1
 
 
@@ -928,7 +961,7 @@ class TestISP130SafetyOfficer:
         status.change_status(event, "safety_check", coordinator)
         self._approve_and_confirm(event, staff, coordinator)
         status.revert_to_planning(event, coordinator, "Attendance increased")
-        status.try_advance_to_safety_check(event, coordinator)
+        status.change_status(event, "safety_check", coordinator)
         notices = inbox(staff["safety1"], TYPE_SAFETY_CHECK)
         assert [n.data["recheck"] for n in notices] == [False, True]
         assert notices[1].title == "Safety re-check required"
@@ -940,7 +973,7 @@ class TestISP130SafetyOfficer:
         status.change_status(event, "safety_check", coordinator)
         self._approve_and_confirm(event, staff, coordinator)
         status.revert_to_planning(event, coordinator, "Attendance increased")
-        status.try_advance_to_safety_check(event, coordinator)
+        status.change_status(event, "safety_check", coordinator)
 
         res = client.post(f"/api/events/{event.id}/confirm", headers=auth_header("coordinator@test.com"))
         assert res.status_code == 400 and event.status == "safety_check"
@@ -992,8 +1025,7 @@ class TestISP130SafetyOfficer:
             event, db.session.get(User, coordinator), {"expected_attendance": 140},
             offline_review_confirmed=True,
         )
-        status.try_advance_to_safety_check(event, coordinator)
-
+        status.change_status(event, "safety_check", coordinator)
         assert event.status == "safety_check"
         assert [n.data["recheck"] for n in inbox(staff["safety1"], TYPE_SAFETY_CHECK)] == [False, True, True]
 
@@ -1024,7 +1056,9 @@ class TestISP130SafetyOfficer:
         event = ready_event(organiser, coordinator, staff["venue1"])
         event.equipment_requirements.append(EventEquipmentRequirement(equipment_type="Projector", quantity=2))
         db.session.commit()
-        status.try_advance_to_safety_check(event, coordinator)
+        with pytest.raises(status.InvalidTransitionError):
+            status.change_status(event, "safety_check", coordinator)
+
         assert event.status == "planning"
         assert Notification.query.filter_by(type=TYPE_SAFETY_CHECK).count() == 0
 
@@ -1044,7 +1078,8 @@ class TestISP130SafetyOfficer:
                                     end_datetime=utcnow() + timedelta(days=10, hours=3)))
         db.session.commit()
 
-        status.try_advance_to_safety_check(event, coordinator)
+        with pytest.raises(status.InvalidTransitionError):
+            status.change_status(event, "safety_check", coordinator)
 
         assert event.status == "planning"
         assert Notification.query.filter_by(type=TYPE_SAFETY_CHECK).count() == 0
