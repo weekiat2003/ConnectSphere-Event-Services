@@ -2,8 +2,8 @@ from datetime import datetime
 
 import pytest
 from app.extensions import db
-from app.models.event import EventEquipmentRequirement
-from app.models.event import Event
+from app.models.event import Event, EventEquipmentRequirement, EventSafetyAssessment, EventStatusHistory
+from app.models.notification import Notification
 from app.models.venue import Venue, VenueBooking, BOOKING_APPROVED, BOOKING_HELD
 from app.events.services.update import (
     update_event_fields, EventLockedError, EventNotEditableStatusError,
@@ -48,7 +48,7 @@ class TestUpdateEventFields:
             assert event.field_edit_logs[0].changed_by == coordinator
             assert event.field_edit_logs[0].created_at is not None
 
-    @pytest.mark.parametrize("status", ["under_review", "approved", "planning", "safety_check"])
+    @pytest.mark.parametrize("status", ["under_review", "approved", "planning"])
     def test_editable_statuses_allow_edits(self, app, coordinator, make_event, status):
         with app.app_context():
             from app.models.user import User
@@ -59,6 +59,23 @@ class TestUpdateEventFields:
             update_event_fields(event, user, {"description": "New description"})
 
             assert Event.query.get(event_id).description == "New description"
+            assert Event.query.get(event_id).status == status  # an ordinary edit keeps the status
+
+    def test_edit_during_safety_check_is_saved_and_reverts_to_planning(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="safety_check", coordinator_id=coordinator)
+            event = Event.query.get(event_id)
+            user = User.query.get(coordinator)
+
+            update_event_fields(event, user, {"description": "New description"})
+
+            refreshed = Event.query.get(event_id)
+            assert refreshed.description == "New description"
+            assert refreshed.status == "planning"
+            history = EventStatusHistory.query.filter_by(event_id=event_id, new_status="planning").one()
+            assert history.old_status == "safety_check"
+            assert history.reason == "Edited during safety check"
 
     def test_significant_field_requires_offline_review_confirmation(self, app, coordinator, make_event):
         with app.app_context():
@@ -582,3 +599,93 @@ class TestEquipmentPreparation:
 
             with pytest.raises(EquipmentPreparationError):
                 update_equipment_preparation(req, tss, {"testing_status": "done"})
+
+    #Testing info management change edit logic
+    def test_significant_edit_during_safety_check_reverts_once_with_the_significant_reason(
+        self, app, coordinator, make_event
+    ):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="safety_check", coordinator_id=coordinator,
+                                  expected_attendance=50, capacity_needed=60)
+            event = Event.query.get(event_id)
+
+            update_event_fields(
+                event, User.query.get(coordinator), {"expected_attendance": 55},
+                offline_review_confirmed=True,
+            )
+
+            assert Event.query.get(event_id).status == "planning"
+            rows = EventStatusHistory.query.filter_by(event_id=event_id, new_status="planning").all()
+            assert len(rows) == 1
+            assert rows[0].reason.startswith("Significant change to")
+
+    def test_accessibility_needs_edit_is_significant(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="planning", coordinator_id=coordinator)
+            event = Event.query.get(event_id)
+
+            with pytest.raises(OfflineReviewNotConfirmedError):
+                update_event_fields(event, User.query.get(coordinator), {"accessibility_needs": "Hearing loop"})
+
+            update_event_fields(
+                event, User.query.get(coordinator), {"accessibility_needs": "Hearing loop"},
+                offline_review_confirmed=True,
+            )
+            assert event.field_edit_logs[-1].was_significant is True
+
+    def test_failed_edit_during_safety_check_changes_nothing(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="safety_check", coordinator_id=coordinator, name="Original")
+            event = Event.query.get(event_id)
+
+            with pytest.raises(EventValidationError):
+                update_event_fields(event, User.query.get(coordinator), {"name": "   "})
+
+            refreshed = Event.query.get(event_id)
+            assert refreshed.status == "safety_check"
+            assert refreshed.name == "Original"
+            assert EventStatusHistory.query.filter_by(event_id=event_id).count() == 0
+
+    def test_empty_edit_during_safety_check_does_not_revert(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser_id=1, status="safety_check", coordinator_id=coordinator)
+            event = Event.query.get(event_id)
+
+            update_event_fields(event, User.query.get(coordinator), {})
+
+            assert Event.query.get(event_id).status == "safety_check"
+
+    def test_revert_from_safety_check_discards_the_in_progress_assessment(
+        self, app, coordinator, make_user, make_event
+    ):
+        with app.app_context():
+            from app.models.user import User
+            officer_id = make_user("assess-revert@test.com", ["safety_officer"])
+            event_id = make_event(organiser_id=1, status="safety_check", coordinator_id=coordinator)
+            db.session.add(EventSafetyAssessment(
+                event_id=event_id, safety_officer_id=officer_id,
+                factors={"emergency_access": {"outcome": "concern", "notes": None}},
+            ))
+            db.session.commit()
+
+            update_event_fields(Event.query.get(event_id), User.query.get(coordinator), {"purpose": "New purpose"})
+
+            assert EventSafetyAssessment.query.filter_by(event_id=event_id).count() == 0
+
+    def test_organiser_is_told_when_a_safety_check_edit_returns_the_event_to_planning(
+        self, app, organiser, coordinator, make_event
+    ):
+        with app.app_context():
+            from app.models.user import User
+            event_id = make_event(organiser, status="safety_check", coordinator_id=coordinator)
+
+            update_event_fields(Event.query.get(event_id), User.query.get(coordinator), {"purpose": "New purpose"})
+
+            notes = [n for n in Notification.query.filter_by(recipient_id=organiser, event_id=event_id)
+                     if n.data.get("kind") == "returned_to_planning"]
+            assert len(notes) == 1
+            assert "Edited during safety check" in notes[0].message

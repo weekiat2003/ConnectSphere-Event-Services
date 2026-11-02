@@ -109,9 +109,14 @@ def update_event_fields(event: Event, user, changes: dict, offline_review_confir
 
     if significant_fields:
         _flag_arrangements_needs_reconsideration(event)
+        notifications.notify_arrangements_of_significant_change(event, significant_fields)
+    if changes and (significant_fields or event.status == "safety_check"):
         return_to_planning(
             event, user.id,
-            reason="Significant change to " + ", ".join(sorted(significant_fields)),
+            reason=(
+                "Significant change to " + ", ".join(sorted(significant_fields))
+                if significant_fields else "Edited during safety check"
+            ),
             commit=False,
         )
 

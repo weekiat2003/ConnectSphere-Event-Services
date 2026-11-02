@@ -45,7 +45,7 @@ def test_reject_and_resubmit_creates_new_record(app, organiser, coordinator):
                 "name": "Product Launch",
                 "purpose": "Launch",
                 "description": "Launch event",
-                "proposed_date": "2026-11-01",
+                "proposed_date": "2026-12-01",
                 "proposed_time": "09:00",
                 "expected_attendance": 50,
                 "capacity_needed": 60,

@@ -326,6 +326,7 @@ class TestEventUpdateRoute:
         )
 
         assert res.status_code == 200
+        assert res.get_json()["status"] == "planning"
 
     def test_validation_error_returns_400_with_field_errors(self, client, app, coordinator, make_event, auth_header):
         with app.app_context():
@@ -412,3 +413,15 @@ class TestEventFieldEditLogsVisibility:
         assert logs[0]["newValues"]["purpose"] == "Updated"
         assert logs[0]["changedByName"] is not None
 
+    def test_edit_during_safety_check_returns_the_event_in_planning(self, client, app, coordinator, make_event, auth_header):
+        with app.app_context():
+            event_id = make_event(organiser_id=1, status="safety_check", coordinator_id=coordinator)
+
+        res = client.put(
+            f"/api/events/{event_id}/update",
+            json={"fields": {"purpose": "Edited"}, "offlineReviewConfirmed": False},
+            headers=auth_header("coordinator@test.com"),
+        )
+
+        assert res.status_code == 200
+        assert res.get_json()["status"] == "planning"
