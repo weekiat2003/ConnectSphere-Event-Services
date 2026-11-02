@@ -7,6 +7,7 @@ from app.events.services import safety
 from app.extensions import db
 from app.models.equipment import EquipmentItem, EquipmentReservation
 from app.models.event import Event, EventEquipmentRequirement, EventSafetyReview
+from app.models.notification import Notification, TYPE_ARRANGEMENT_REVIEW
 from app.models.user import User
 
 
@@ -120,6 +121,87 @@ def test_nonapproval_for_equipment_flags_all_requirements_without_releasing_rese
             reservation.status == "reserved"
             for reservation in EquipmentReservation.query.filter_by(event_id=event_id).all()
         )
+
+
+@pytest.mark.parametrize("decision", ["changes_requested", "rejected"])
+def test_safety_equipment_recheck_notifies_each_technical_support_user(
+    app, organiser, make_user, make_event, decision
+):
+    with app.app_context():
+        officer_id = make_user(f"safety-notify-{decision}@test.com", ["safety_officer"])
+        tech_ids = [
+            make_user("tech-notify-one@test.com", ["technical_support_staff"]),
+            make_user("tech-notify-two@test.com", ["technical_support_staff"]),
+        ]
+        event_id = make_event(organiser, status="safety_check")
+        event = db.session.get(Event, event_id)
+        _add_reserved_requirements(event)
+
+        safety.review_safety_check(
+            event,
+            db.session.get(User, officer_id),
+            decision,
+            "Equipment setup needs another check",
+            assessed_factors=["equipment_placement"],
+            concern_factors=["equipment_placement"],
+            affected_arrangements=["equipment"],
+        )
+
+        notifications = Notification.query.filter_by(
+            event_id=event_id, type=TYPE_ARRANGEMENT_REVIEW
+        ).all()
+        assert {notification.recipient_id for notification in notifications} == set(tech_ids)
+        assert len(notifications) == len(tech_ids)
+        for notification in notifications:
+            assert notification.title == "Safety check: equipment recheck needed"
+            action = (
+                "requested changes to the arrangements"
+                if decision == "changes_requested"
+                else "rejected the arrangements"
+            )
+            assert action in notification.message
+            assert "Please recheck the flagged equipment." in notification.message
+            assert "Equipment setup needs another check" in notification.message
+            assert notification.link == f"/technical-review?event={event_id}"
+
+
+@pytest.mark.parametrize(
+    ("decision", "affected_arrangements", "assessed_factors", "concern_factors"),
+    [
+        ("changes_requested", ["venue"], ["emergency_access"], ["emergency_access"]),
+        ("approved", [], sorted(safety.SAFETY_FACTORS), []),
+    ],
+)
+def test_safety_decisions_without_equipment_impact_do_not_notify_technical_support(
+    app,
+    organiser,
+    make_user,
+    make_event,
+    decision,
+    affected_arrangements,
+    assessed_factors,
+    concern_factors,
+):
+    with app.app_context():
+        officer_id = make_user(f"safety-no-notify-{decision}@test.com", ["safety_officer"])
+        make_user("tech-no-notify@test.com", ["technical_support_staff"])
+        event_id = make_event(organiser, status="safety_check")
+        event = db.session.get(Event, event_id)
+        _add_reserved_requirements(event)
+
+        safety.review_safety_check(
+            event,
+            db.session.get(User, officer_id),
+            decision,
+            "Review decision",
+            assessed_factors=assessed_factors,
+            concern_factors=concern_factors,
+            affected_arrangements=affected_arrangements,
+        )
+
+        assert Notification.query.filter_by(
+            event_id=event_id, type=TYPE_ARRANGEMENT_REVIEW
+        ).count() == 0
 
 
 def test_changes_requested_for_venue_does_not_flag_equipment(

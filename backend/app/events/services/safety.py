@@ -291,6 +291,9 @@ def review_safety_check(
 
         if decision in {"rejected", "changes_requested"} and "equipment" in affected_arrangements:
             _flag_equipment_for_recheck(event)
+            notifications.notify_technical_support_of_safety_recheck(
+                event, decision, comments
+            )
 
         status_service.change_status(
             event,
