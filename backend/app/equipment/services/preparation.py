@@ -1,47 +1,38 @@
-"""
-Equipment preparation-progress updates by Technical Support Staff (US-3).
-"""
+"""Equipment suitability re-checks by Technical Support Staff."""
 from app.common.time import utcnow
 from app.extensions import db
 from app.models.event import EventEquipmentRequirement
-
-PREPARATION_FIELDS = {"testing_status", "installation_status"}
-ACTIVE_REQUIREMENT_STATUSES = {"requested", "confirmed"}
-PREPARATION_STATUSES = {"pending", "in_progress", "done"}
+from app.notifications.services import triggers as notifications
 
 
 class EquipmentPreparationError(Exception):
     pass
 
 
-def update_equipment_preparation(requirement: EventEquipmentRequirement, user, changes: dict) -> EventEquipmentRequirement:
-    if not isinstance(changes, dict):
-        raise EquipmentPreparationError("Preparation changes must be an object")
-    if not changes:
-        raise EquipmentPreparationError("At least one preparation field is required")
-
+def confirm_equipment_suitability(
+    requirement: EventEquipmentRequirement, user
+) -> EventEquipmentRequirement:
     if not user.has_role("technical_support_staff"):
-        raise PermissionError("Only Technical Support Staff can update equipment preparation information.")
-
-    if requirement.status not in ACTIVE_REQUIREMENT_STATUSES:
+        raise PermissionError("Only Technical Support Staff can confirm equipment suitability.")
+    if requirement.status != "confirmed":
         raise EquipmentPreparationError(
-            "Equipment preparation can only be updated while the requirement is requested or confirmed."
+            "Suitability can only be confirmed when the equipment requirement is Reserved."
+        )
+    if not requirement.needs_recheck:
+        raise EquipmentPreparationError(
+            "This equipment requirement is not flagged for a suitability re-check."
         )
 
-    unknown_fields = set(changes) - PREPARATION_FIELDS
-    if unknown_fields:
-        raise EquipmentPreparationError(f"Cannot update fields: {', '.join(sorted(unknown_fields))}")
-
-    for field, value in changes.items():
-        if not isinstance(value, str) or value not in PREPARATION_STATUSES:
-            raise EquipmentPreparationError(
-                f"{field.replace('_', ' ').capitalize()} must be pending, in_progress, or done."
-            )
-
-    for field, value in changes.items():
-        setattr(requirement, field, value)
-
+    requirement.needs_recheck = False
     requirement.updated_at = utcnow()
     db.session.add(requirement)
+    notifications.notify_coordinator_of_equipment_recheck(
+        requirement, "suitability_confirmed"
+    )
     db.session.commit()
+
+    from app.events.services.status import try_advance_to_safety_check
+
+    event = requirement.event
+    try_advance_to_safety_check(event, user.id)
     return requirement

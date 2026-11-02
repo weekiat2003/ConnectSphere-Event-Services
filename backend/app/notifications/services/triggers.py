@@ -546,6 +546,56 @@ def notify_coordinator_of_equipment_shortage(
     )]
 
 
+@_never_blocks
+def notify_coordinator_of_equipment_preparation(
+    requirement, field: str, new_value: str
+) -> list:
+    event = db.session.get(Event, requirement.event_id)
+    if event is None or event.coordinator_id is None:
+        return []
+
+    item = requirement.equipment_type
+    field_label = field.replace("_", " ")
+    value_label = new_value.replace("_", " ")
+    return [notify(
+        event.coordinator_id,
+        TYPE_EQUIPMENT_RESERVATION_UPDATE,
+        "Equipment preparation updated",
+        f'{field_label.capitalize()} for {item} on "{_name(event)}" is now {value_label}.',
+        event_id=event.id,
+        link=_event_link(event),
+        data={
+            "kind": "preparation_updated",
+            "item": item,
+            "field": field,
+            "new_value": new_value,
+        },
+    )]
+
+
+@_never_blocks
+def notify_coordinator_of_equipment_recheck(requirement, kind: str) -> list:
+    event = db.session.get(Event, requirement.event_id)
+    if event is None or event.coordinator_id is None:
+        return []
+
+    item = requirement.equipment_type
+    return [notify(
+        event.coordinator_id,
+        TYPE_EQUIPMENT_RESERVATION_UPDATE,
+        "Equipment suitability confirmed",
+        f'Technical Support confirmed that {item} for "{_name(event)}" is still suitable.',
+        event_id=event.id,
+        link=_event_link(event),
+        data={
+            "kind": kind,
+            "item": item,
+            "field": "needs_recheck",
+            "new_value": False,
+        },
+    )]
+
+
 # ===========================================================================
 # ISP-130 — Safety Officer
 # ===========================================================================

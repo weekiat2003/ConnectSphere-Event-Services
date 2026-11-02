@@ -1,8 +1,13 @@
+from datetime import datetime
+
 import pytest
 
+from app.events.services import status as status_service
 from app.extensions import db
-from app.models.event import EventEquipmentRequirement
-from app.models.equipment import EquipmentItem
+from app.models.event import Event, EventEquipmentRequirement
+from app.models.equipment import EquipmentItem, EquipmentReservation
+from app.models.notification import TYPE_EQUIPMENT_RESERVATION_UPDATE, Notification
+from app.models.venue import Venue, VenueBooking
 
 
 @pytest.fixture
@@ -20,62 +25,215 @@ def line(organiser, coordinator, make_event):
     return row
 
 
-def url(requirement_id):
-    return f"/api/equipment/requirements/{requirement_id}/preparation"
+def make_planning_event(organiser, coordinator, make_event):
+    event_id = make_event(
+        organiser, status="planning", coordinator_id=coordinator, capacity_needed=100
+    )
+    event = db.session.get(Event, event_id)
+    venue = Venue(name=f"Ready venue {event_id}", capacity=150)
+    db.session.add(venue)
+    db.session.flush()
+    db.session.add(VenueBooking(
+        event_id=event.id,
+        venue_id=venue.id,
+        requested_by=coordinator,
+        status="approved",
+        start_datetime=datetime(2026, 12, 1, 10),
+        end_datetime=datetime(2026, 12, 1, 12),
+    ))
+    db.session.commit()
+    return event
 
 
-def stored(line_id):
+def add_reserved_requirement(event, equipment_type="Projector", quantity=2, needs_recheck=False):
+    requirement = EventEquipmentRequirement(
+        event_id=event.id,
+        equipment_type=equipment_type,
+        quantity=quantity,
+        status="confirmed",
+        needs_recheck=needs_recheck,
+    )
+    item = EquipmentItem(name=equipment_type, total_quantity=quantity)
+    db.session.add_all([requirement, item])
+    db.session.flush()
+    db.session.add(EquipmentReservation(
+        event_id=event.id,
+        equipment_requirement_id=requirement.id,
+        equipment_item_id=item.id,
+        quantity=quantity,
+        start_datetime=datetime(2026, 12, 1, 10),
+        end_datetime=datetime(2026, 12, 1, 12),
+        status="reserved",
+    ))
+    db.session.commit()
+    return requirement, item
+
+
+def test_confirm_recheck_clears_flag_and_notifies_coordinator(
+    client, tech_headers, line, coordinator
+):
+    line.status = "confirmed"
+    line.needs_recheck = True
+    db.session.commit()
+    res = client.post(
+        f"/api/equipment/requirements/{line.id}/confirm-recheck",
+        headers=tech_headers,
+    )
+    assert res.status_code == 200
+    assert res.get_json()["needsRecheck"] is False
+    assert "testingStatus" not in res.get_json()
+    assert "installationStatus" not in res.get_json()
+    notice = Notification.query.filter_by(
+        recipient_id=coordinator,
+        type=TYPE_EQUIPMENT_RESERVATION_UPDATE,
+    ).one()
+    assert notice.data == {
+        "kind": "suitability_confirmed",
+        "item": "Projector",
+        "field": "needs_recheck",
+        "new_value": False,
+    }
+
+
+def test_flagged_reserved_requirement_blocks_safety_check(
+    app, organiser, coordinator, make_event
+):
+    event = make_planning_event(organiser, coordinator, make_event)
+    add_reserved_requirement(event, "Projector", needs_recheck=True)
+    add_reserved_requirement(event, "Speaker")
+
+    status_service.try_advance_to_safety_check(event, coordinator)
+
     db.session.expire_all()
-    row = db.session.get(EventEquipmentRequirement, line_id)
-    return row.testing_status, row.installation_status
+    assert db.session.get(Event, event.id).status == "planning"
 
 
-def test_sets_testing_and_installation_and_returns_them(client, tech_headers, line):
-    res = client.put(url(line.id), json={"testing_status": "in_progress", "installation_status": "done"},
-                     headers=tech_headers)
-    assert res.status_code == 200
-    body = res.get_json()
-    assert (body["testingStatus"], body["installationStatus"]) == ("in_progress", "done")
-    assert stored(line.id) == ("in_progress", "done")
+def test_requirement_without_reserved_status_blocks_safety_check(
+    organiser, coordinator, make_event
+):
+    event = make_planning_event(organiser, coordinator, make_event)
+    requirement, _ = add_reserved_requirement(event)
+    requirement.status = "requested"
+    db.session.commit()
+
+    status_service.try_advance_to_safety_check(event, coordinator)
+
+    db.session.expire_all()
+    assert db.session.get(Event, event.id).status == "planning"
 
 
-def test_invalid_status_returns_400_and_changes_nothing(client, tech_headers, line):
-    res = client.put(url(line.id), json={"testing_status": "finished"}, headers=tech_headers)
+def test_unflagged_reserved_requirements_advance_without_preparation_statuses(
+    organiser, coordinator, make_event
+):
+    event = make_planning_event(organiser, coordinator, make_event)
+    requirements = [
+        add_reserved_requirement(event, "Projector")[0],
+        add_reserved_requirement(event, "Speaker")[0],
+    ]
+
+    assert all(requirement.status == "confirmed" for requirement in requirements)
+    assert all(not requirement.needs_recheck for requirement in requirements)
+
+    status_service.try_advance_to_safety_check(event, coordinator)
+
+    db.session.expire_all()
+    assert db.session.get(Event, event.id).status == "safety_check"
+
+
+def test_confirming_last_flagged_requirement_advances_to_safety_check(
+    client, tech_headers, organiser, coordinator, make_event
+):
+    event = make_planning_event(organiser, coordinator, make_event)
+    requirement, _ = add_reserved_requirement(event, needs_recheck=True)
+
+    response = client.post(
+        f"/api/equipment/requirements/{requirement.id}/confirm-recheck",
+        headers=tech_headers,
+    )
+
+    assert response.status_code == 200
+    db.session.expire_all()
+    assert db.session.get(Event, event.id).status == "safety_check"
+
+
+def test_reserving_flagged_requested_requirement_advances_to_safety_check(
+    client, tech_headers, organiser, coordinator, make_event
+):
+    event = make_planning_event(organiser, coordinator, make_event)
+    requirement = EventEquipmentRequirement(
+        event_id=event.id,
+        equipment_type="Projector",
+        quantity=2,
+        needs_recheck=True,
+    )
+    item = EquipmentItem(name="Projector", total_quantity=2)
+    db.session.add_all([requirement, item])
+    db.session.commit()
+
+    response = client.post(
+        "/api/equipment/reservations",
+        json={
+            "eventId": event.id,
+            "requirementId": requirement.id,
+            "equipmentItemId": item.id,
+            "start": "2026-12-01T10:00:00",
+            "end": "2026-12-01T12:00:00",
+        },
+        headers=tech_headers,
+    )
+
+    assert response.status_code == 201
+    db.session.expire_all()
+    saved = db.session.get(EventEquipmentRequirement, requirement.id)
+    assert saved.needs_recheck is False
+    assert db.session.get(Event, event.id).status == "safety_check"
+
+
+def test_event_without_equipment_rows_is_not_blocked_by_recheck_gate(
+    organiser, coordinator, make_event
+):
+    event_id = make_event(organiser, status="planning", coordinator_id=coordinator)
+    event = db.session.get(Event, event_id)
+
+    status_service.try_advance_to_safety_check(event, coordinator)
+
+    assert event.status == "safety_check"
+
+
+@pytest.mark.parametrize(
+    "status,needs_recheck,error",
+    [
+        ("confirmed", False, "not flagged"),
+        ("requested", True, "Reserved"),
+    ],
+)
+def test_confirm_recheck_refuses_invalid_state(
+    client, tech_headers, line, status, needs_recheck, error
+):
+    line.status = status
+    line.needs_recheck = needs_recheck
+    db.session.commit()
+    res = client.post(
+        f"/api/equipment/requirements/{line.id}/confirm-recheck",
+        headers=tech_headers,
+    )
     assert res.status_code == 400
-    assert stored(line.id) == ("pending", "pending")
+    assert error in res.get_json()["error"]
+    db.session.expire_all()
+    assert db.session.get(EventEquipmentRequirement, line.id).needs_recheck is needs_recheck
 
 
-@pytest.mark.parametrize("body", [{}, {"quantity": 5}])
-def test_empty_body_or_unknown_field_returns_400(client, tech_headers, line, body):
-    assert client.put(url(line.id), json=body, headers=tech_headers).status_code == 400
-
-
-@pytest.mark.parametrize("email, role", [
-    ("coordinator@test.com", None),
-    ("organiser@test.com", None),
-])
-def test_coordinator_and_organiser_get_403_and_nothing_changes(client, auth_header, line, email, role):
-    res = client.put(url(line.id), json={"testing_status": "done"}, headers=auth_header(email))
+def test_confirm_recheck_is_technical_support_only(client, auth_header, line):
+    line.status = "confirmed"
+    line.needs_recheck = True
+    db.session.commit()
+    res = client.post(
+        f"/api/equipment/requirements/{line.id}/confirm-recheck",
+        headers=auth_header("coordinator@test.com"),
+    )
     assert res.status_code == 403
-    assert stored(line.id) == ("pending", "pending")
+    assert db.session.get(EventEquipmentRequirement, line.id).needs_recheck is True
 
-
-def test_unauthenticated_gets_401(client, line):
-    assert client.put(url(line.id), json={"testing_status": "done"}).status_code == 401
-    assert stored(line.id) == ("pending", "pending")
-
-
-def test_unknown_requirement_returns_404(client, tech_headers):
-    res = client.put(url(99999), json={"testing_status": "done"}, headers=tech_headers)
-    assert res.status_code == 404
-    assert res.get_json()["error"] == "Equipment requirement not found"
-
-
-def test_coordinator_sees_the_latest_preparation_status(client, tech_headers, auth_header, line):
-    client.put(url(line.id), json={"testing_status": "done"}, headers=tech_headers)
-    res = client.get(f"/api/events/{line.event_id}", headers=auth_header("coordinator@test.com"))
-    assert res.status_code == 200
-    assert res.get_json()["equipmentRequirements"][0]["testingStatus"] == "done"
 
 def test_item_can_be_reserved_again_after_being_marked_active(client, tech_headers, line):
     item = EquipmentItem(name="Projector", total_quantity=10)

@@ -57,12 +57,11 @@ def test_lists_every_requirement_in_order_with_its_details(event_id):
     assert rows[0]["status"] == "requested"
 
 
-def test_includes_testing_installation_and_recheck_flag(event_id):
-    add_requirement(event_id, testing_status="done", installation_status="in_progress",
-                    needs_recheck=True)
+def test_omits_testing_and_installation_and_includes_recheck_flag(event_id):
+    add_requirement(event_id, needs_recheck=True)
     row = get_event_requirements(event_id)["requirements"][0]
-    assert row["testingStatus"] == "done"
-    assert row["installationStatus"] == "in_progress"
+    assert "testingStatus" not in row
+    assert "installationStatus" not in row
     assert row["needsRecheck"] is True
 
 

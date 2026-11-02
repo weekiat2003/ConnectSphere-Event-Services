@@ -289,12 +289,16 @@ def review_safety_check(
         reason = f"Safety check {decision.replace('_', ' ')}"
         reason = f"{reason}: {comments}"
 
+        if decision in {"rejected", "changes_requested"} and "equipment" in affected_arrangements:
+            _flag_equipment_for_recheck(event)
+
         status_service.change_status(
             event,
             "planning",
             changed_by_id=safety_officer.id,
             reason=reason,
             notify=False,
+            commit=False,
         )
         notifications.notify_organiser_of_safety_decision(event, review)
 
@@ -313,6 +317,11 @@ def review_safety_check(
     db.session.commit()
 
     return event
+
+
+def _flag_equipment_for_recheck(event: Event) -> None:
+    for requirement in event.equipment_requirements:
+        requirement.needs_recheck = True
 
 
 def _validate_values(

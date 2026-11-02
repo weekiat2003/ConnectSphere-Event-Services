@@ -102,7 +102,8 @@ def test_tech_release_frees_the_quantity(client, path, tech, item, new_event):
     assert res.status_code == 200
     assert res.get_json()["status"] == "released"
     db.session.expire_all()
-    assert db.session.get(EventEquipmentRequirement, req).status == "requested"
+    released_requirement = db.session.get(EventEquipmentRequirement, req)
+    assert released_requirement.status == "requested"
     review = client.get(
         path("equipment.technical_review_requirements", event_id=event_id),
         headers=tech,
