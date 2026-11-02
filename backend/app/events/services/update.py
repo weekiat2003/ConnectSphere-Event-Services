@@ -24,7 +24,7 @@ ORDINARY_FIELDS = {"name", "purpose", "description", "category", "registration_r
 SIGNIFICANT_FIELDS = {
     "proposed_date", "proposed_time", "expected_attendance",
     "capacity_needed", "required_layout", "accessibility_needs", "required_facilities",
-    "equipment_requirements",
+    "equipment_requirements", "proposed_end_date", "proposed_end_time",
 }
 EDITABLE_FIELDS = ORDINARY_FIELDS | SIGNIFICANT_FIELDS
 
@@ -132,7 +132,12 @@ def update_event_fields(event: Event, user, changes: dict, offline_review_confir
 
 def _normalize_changes(changes: dict) -> dict:
     normalized = dict(changes)
-    for field, parser in (("proposed_date", date.fromisoformat), ("proposed_time", time.fromisoformat)):
+    for field, parser in (
+    ("proposed_date", date.fromisoformat),
+    ("proposed_end_date", date.fromisoformat),
+    ("proposed_time", time.fromisoformat),
+    ("proposed_end_time", time.fromisoformat),
+):
         value = normalized.get(field)
         if field not in normalized or value is None:
             continue
@@ -160,10 +165,21 @@ def _validate_changes(event: Event, changes: dict) -> dict:
                 except ValueError as exc:
                     errors[field] = str(exc)
 
-    for field, expected_type in (("proposed_date", date), ("proposed_time", time)):
+    for field, expected_type in (
+    ("proposed_date", date),
+    ("proposed_time", time),
+    ("proposed_end_date", date),
+    ("proposed_end_time", time), 
+    ):
         if field in changes:
             value = changes[field]
-            if value is None or value == "":
+
+            # End date and time are optional.
+            if field in ("proposed_end_date", "proposed_end_time"):
+                if value in (None, ""):
+                    continue
+
+            if value in (None, ""):
                 errors[field] = f"{field.replace('_', ' ').capitalize()} is required"
             elif not isinstance(value, expected_type):
                 errors[field] = f"{field.replace('_', ' ').capitalize()} must be a valid ISO value"
@@ -323,7 +339,11 @@ def _flag_arrangements_needs_reconsideration(event: Event, fields_changed: set):
         b.needs_reconsideration = True
         db.session.add(b)
 
-    if {"proposed_date", "proposed_time"} & fields_changed:
+    if {
+    "proposed_date",
+    "proposed_time",
+    "proposed_end_date",
+    "proposed_end_time", } & fields_changed:
         for requirement in event.equipment_requirements:
             requirement.needs_recheck = True
             db.session.add(requirement)
