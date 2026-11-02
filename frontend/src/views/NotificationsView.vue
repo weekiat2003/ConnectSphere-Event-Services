@@ -52,6 +52,7 @@ const TYPE_LABELS = {
   new_equipment_request: "Equipment",
   registration_change: "Registration",
   safety_check: "Safety check",
+  arrangement_review: "Review needed",
 };
 
 const items = ref([]);

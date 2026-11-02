@@ -931,6 +931,8 @@ const currentEquipmentLabel = computed(() =>
     (event.value?.equipmentRequirements || []).map((e) => ({ type: e.type, quantity: e.quantity }))
   )
 );
+const statusLabel = (value) =>
+  String(value || "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 
 async function ensureCatalogue() {
   if (venues.value.length || equipmentCatalogue.value.length) return;

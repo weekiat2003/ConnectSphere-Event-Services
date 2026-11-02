@@ -19,7 +19,7 @@ from app.change_requests.services import (
 from app.common.time import utcnow
 from app.extensions import db
 from app.models.change_request import ArrangementFlag, ChangeRequest, EventChangeHistory
-from app.models.event import Event, EventEquipmentRequirement, EventStatusHistory
+from app.models.event import Event, EventEquipmentRequirement, EventStatusHistory, EventFieldEditLog
 from app.models.user import Role, User
 from app.models.venue import (
     BOOKING_APPROVED,
@@ -63,7 +63,7 @@ def _people():
     )
 
 
-def _event(organiser_id, coordinator_id, status="confirmed", name="Annual Conference"):
+def _event(organiser_id, coordinator_id, status="planning", name="Annual Conference"):
     event = Event(
         organiser_id=organiser_id,
         coordinator_id=coordinator_id,
@@ -102,7 +102,7 @@ def _equipment(event, name="Projector", quantity=2, status="confirmed"):
     return line
 
 
-def _arranged_event(organiser_id, coordinator_id, status="confirmed"):
+def _arranged_event(organiser_id, coordinator_id, status="planning"):
     """An event with one approved venue booking and one equipment line."""
     event = _event(organiser_id, coordinator_id, status)
     venue = _venue()
@@ -149,7 +149,7 @@ def test_a_routine_request_cannot_trigger_re_review(app):
 
         db.session.refresh(change)
         db.session.refresh(event)
-        assert (change.status, event.status) == ("pending", "confirmed")
+        assert (change.status, event.status) == ("pending", "planning")
         assert ArrangementFlag.query.count() == 0
 
 
@@ -187,7 +187,7 @@ def test_a_request_on_an_event_that_is_no_longer_changeable_is_refused(app):
         event.status = "cancelled"
         db.session.commit()
 
-        with pytest.raises(ChangeRequestError, match="approved, planning or confirmed"):
+        with pytest.raises(ChangeRequestError, match="planning or in safety check"):
             trigger_re_review(change.id, coordinator)
 
         db.session.refresh(change)
@@ -225,7 +225,7 @@ def test_a_dry_run_checks_everything_but_writes_nothing(app):
         db.session.refresh(change)
         db.session.refresh(event)
         assert checked.id == change.id
-        assert (change.status, change.re_review_at, event.status) == ("pending", None, "confirmed")
+        assert (change.status, change.re_review_at, event.status) == ("pending", None, "planning")
         assert ArrangementFlag.query.count() == 0
 
 
@@ -370,10 +370,10 @@ def test_an_event_with_no_arrangements_still_goes_under_re_review(app):
 # 5. Status
 # ---------------------------------------------------------------------
 
-def test_a_confirmed_event_goes_back_to_planning(app):
+def test_a_safety_check_event_goes_back_to_planning(app):
     with app.app_context():
         organiser, coordinator, _ = _people()
-        event = _event(organiser, coordinator, status="confirmed")
+        event = _event(organiser, coordinator, status="safety_check")
         change = _significant(event)
 
         trigger_re_review(change.id, coordinator)
@@ -381,10 +381,10 @@ def test_a_confirmed_event_goes_back_to_planning(app):
         db.session.refresh(event)
         assert event.status == "planning"
         row = EventStatusHistory.query.filter_by(event_id=event.id).one()
-        assert (row.old_status, row.new_status, row.changed_by) == ("confirmed", "planning", coordinator)
+        assert (row.old_status, row.new_status, row.changed_by) == ("safety_check", "planning", coordinator)
 
 
-@pytest.mark.parametrize("status", ["approved", "planning"])
+@pytest.mark.parametrize("status", ["submitted", "under_review", "approved", "planning"])
 def test_an_approved_or_planning_event_keeps_its_status(app, status):
     with app.app_context():
         organiser, coordinator, _ = _people()
@@ -445,7 +445,7 @@ def test_a_request_under_re_review_offers_only_the_go_ahead_action(app):
 # 7. Outcome: the change is going ahead
 # ---------------------------------------------------------------------
 
-def test_going_ahead_updates_the_event_and_marks_the_request_processed(app):
+def test_going_ahead_marks_the_request_processed_without_changing_the_event(app):
     with app.app_context():
         organiser, coordinator, _ = _people()
         event = _event(organiser, coordinator)
@@ -460,8 +460,9 @@ def test_going_ahead_updates_the_event_and_marks_the_request_processed(app):
         processed = apply_re_reviewed_change(change.id, coordinator)
 
         db.session.refresh(event)
+        # Not applied automatically: the Coordinator edits the event after the offline discussion.
         assert (event.proposed_date, event.proposed_time, event.expected_attendance, event.name) == (
-            NEW_DAY, time(14, 0), 120, "Annual Summit",
+            BASE_DAY, time(9, 30), 80, "Annual Conference",
         )
         assert processed.status == "processed"
         assert processed.coordinator_id == coordinator
@@ -485,7 +486,7 @@ def test_going_ahead_clears_the_flags_but_keeps_the_record(app):
         assert all(a["needsReconsideration"] is False for a in record["flaggedArrangements"])
 
 
-def test_going_ahead_records_old_and_new_value_for_each_field(app):
+def test_going_ahead_records_no_change_history(app):
     with app.app_context():
         organiser, coordinator, _ = _people()
         event = _event(organiser, coordinator)
@@ -496,19 +497,12 @@ def test_going_ahead_records_old_and_new_value_for_each_field(app):
 
         apply_re_reviewed_change(change.id, coordinator)
 
-        rows = (
-            EventChangeHistory.query.filter_by(change_request_id=change.id)
-            .order_by(EventChangeHistory.field)
-            .all()
-        )
-        assert [(r.field, r.old_value, r.new_value) for r in rows] == [
-            ("expected_attendance", 80, 120),
-            ("proposed_date", BASE_DAY.isoformat(), NEW_DAY.isoformat()),
-        ]
-        assert all(r.changed_by == coordinator for r in rows)
+        db.session.refresh(event)
+        assert EventChangeHistory.query.filter_by(change_request_id=change.id).count() == 0
+        assert (event.proposed_date, event.expected_attendance) == (BASE_DAY, 80)
 
 
-def test_going_ahead_replaces_the_events_equipment_requirements(app):
+def test_going_ahead_leaves_the_events_equipment_requirements_unchanged(app):
     with app.app_context():
         organiser, coordinator, _ = _people()
         event = _event(organiser, coordinator)
@@ -521,7 +515,7 @@ def test_going_ahead_replaces_the_events_equipment_requirements(app):
         apply_re_reviewed_change(change.id, coordinator)
 
         db.session.refresh(event)
-        assert [(e.equipment_type, e.quantity) for e in event.equipment_requirements] == [("Microphone", 3)]
+        assert [(e.equipment_type, e.quantity) for e in event.equipment_requirements] == [("Projector", 2)]
 
 
 def test_a_venue_change_is_recorded_but_does_not_touch_the_bookings(app):
@@ -534,8 +528,8 @@ def test_a_venue_change_is_recorded_but_does_not_touch_the_bookings(app):
 
         apply_re_reviewed_change(change.id, coordinator)
 
-        row = EventChangeHistory.query.filter_by(change_request_id=change.id).one()
-        assert (row.field, row.old_value, row.new_value) == ("venue_id", venue.id, new_venue.id)
+        # row = EventChangeHistory.query.filter_by(change_request_id=change.id).one()
+        # assert (row.field, row.old_value, row.new_value) == ("venue_id", venue.id, new_venue.id)
         db.session.refresh(booking)
         assert (booking.venue_id, booking.status) == (venue.id, BOOKING_APPROVED)
 
@@ -543,7 +537,7 @@ def test_a_venue_change_is_recorded_but_does_not_touch_the_bookings(app):
 def test_going_ahead_does_not_reconfirm_the_event_or_release_anything(app):
     with app.app_context():
         organiser, coordinator, _ = _people()
-        event, _, booking, line = _arranged_event(organiser, coordinator, status="confirmed")
+        event, _, booking, line = _arranged_event(organiser, coordinator, status="safety_check")
         change = _significant(event)
         trigger_re_review(change.id, coordinator)
 
@@ -623,7 +617,7 @@ def test_going_ahead_is_refused_if_the_event_is_no_longer_changeable(app):
         event.status = "cancelled"
         db.session.commit()
 
-        with pytest.raises(ChangeRequestError, match="approved, planning or confirmed"):
+        with pytest.raises(ChangeRequestError, match="planning or in safety check"):
             apply_re_reviewed_change(change.id, coordinator)
 
         db.session.refresh(event)
@@ -661,6 +655,7 @@ def test_a_dry_run_of_the_go_ahead_writes_nothing(app):
         db.session.refresh(event)
         db.session.refresh(change)
         assert (event.expected_attendance, change.status) == (80, "re_review")
+        assert event.status == "planning"
         assert all(f.cleared_at is None for f in _flags(change.id))
         assert EventChangeHistory.query.count() == 0
 
@@ -671,10 +666,10 @@ def test_a_dry_run_of_the_go_ahead_writes_nothing(app):
 
 def _scene(app):
     """An organiser, two coordinators, and a significant then a routine request
-    on a confirmed event with one booking and one equipment line."""
+    on a event with one booking and one equipment line."""
     with app.app_context():
         organiser, coordinator, other = _people()
-        event = _arranged_event(organiser, coordinator)[0]
+        event = _arranged_event(organiser, coordinator, status="safety_check")[0]
         significant = _significant(event)
         routine = _routine(event)
         return {
@@ -728,7 +723,7 @@ def test_re_review_asks_for_confirmation_first_and_changes_nothing(app):
     assert body["requiresConfirmation"] is True
     assert body["message"]
     assert _request_status(app, scene["significant"]) == "pending"
-    assert _event_value(app, scene["event"], "status") == "confirmed"
+    assert _event_value(app, scene["event"], "status") == "safety_check"
     assert _flag_count(app, scene["significant"]) == 0
 
 
@@ -799,9 +794,10 @@ def test_the_go_ahead_asks_for_confirmation_first_and_changes_nothing(app):
     assert response.get_json()["requiresConfirmation"] is True
     assert _request_status(app, scene["significant"]) == "re_review"
     assert _event_value(app, scene["event"], "expected_attendance") == 80
+    assert _event_value(app, scene["event"], "status") == "planning"
 
 
-def test_confirming_the_go_ahead_updates_the_event_and_clears_the_flags(app):
+def test_confirming_the_go_ahead_marks_it_processed_and_clears_the_flags(app):
     scene = _scene(app)
     _trigger(app, scene["significant"], scene["coordinator"])
 
@@ -811,7 +807,8 @@ def test_confirming_the_go_ahead_updates_the_event_and_clears_the_flags(app):
 
     assert response.status_code == 200
     assert response.get_json()["status"] == "processed"
-    assert _event_value(app, scene["event"], "expected_attendance") == 120
+    assert _event_value(app, scene["event"], "expected_attendance") == 80  # not applied automatically
+    assert _event_value(app, scene["event"], "status") == "planning"
     with app.app_context():
         assert all(f.cleared_at is not None for f in _flags(scene["significant"]))
 
@@ -823,3 +820,48 @@ def test_the_go_ahead_is_refused_for_a_request_not_under_re_review(app):
 
     assert response.status_code == 400  # refused before asking anyone to confirm
     assert "re-review" in response.get_data(as_text=True)
+
+@pytest.mark.parametrize("status", ["confirmed", "safety_approved"])
+def test_going_ahead_is_refused_for_confirmed_and_safety_approved_events(app, status):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _event(organiser, coordinator)
+        change = _significant(event)
+        trigger_re_review(change.id, coordinator)
+        event.status = status
+        db.session.commit()
+
+        with pytest.raises(ChangeRequestError, match="planning or in safety check"):
+            apply_re_reviewed_change(change.id, coordinator)
+
+        db.session.refresh(change)
+        assert change.status == "re_review"
+
+
+def test_going_ahead_does_not_advance_the_event_or_write_edit_logs(app):
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _arranged_event(organiser, coordinator, status="safety_check")[0]
+        change = _significant(event)
+        trigger_re_review(change.id, coordinator)
+
+        apply_re_reviewed_change(change.id, coordinator)
+
+        db.session.refresh(event)
+        assert event.status == "planning"
+        assert EventFieldEditLog.query.count() == 0
+        assert EventChangeHistory.query.count() == 0
+
+
+def test_a_dry_run_of_the_go_ahead_leaves_the_request_under_re_review(app):
+    # Regression: the route's dry run used to mark the request processed.
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        change = _significant(_event(organiser, coordinator))
+        trigger_re_review(change.id, coordinator)
+
+        apply_re_reviewed_change(change.id, coordinator, dry_run=True)
+        apply_re_reviewed_change(change.id, coordinator, dry_run=True)
+
+        db.session.refresh(change)
+        assert change.status == "re_review"

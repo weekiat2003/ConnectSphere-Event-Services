@@ -964,23 +964,38 @@ class TestISP130SafetyOfficer:
         assert [n.data["recheck"] for n in notices] == [False, True]
         assert notices[1].title == "Safety re-check required"
 
-    def test_ac5_significant_change_on_confirmed_event_returns_to_safety_check(
+    def test_ac5_significant_change_during_safety_check_returns_to_planning_then_rechecks(
         self, app, organiser, coordinator, staff
     ):
         event = ready_event(organiser, coordinator, staff["venue1"])
         status.change_status(event, "safety_check", coordinator)
-        self._approve_and_confirm(event, staff, coordinator)
+        safety.review_safety_check(
+            event, db.session.get(User, staff["safety1"]), "changes_requested",
+            comments="The exit is blocked by staging.", assessed_factors=["emergency_access"],
+            concern_factors=["emergency_access"], affected_arrangements=["venue"])
+        status.change_status(event, "safety_check", coordinator)
 
-        request = cr.submit_change_request(event, organiser, {"expected_attendance": 200},
+        request = cr.submit_change_request(event, organiser, {"expected_attendance": 140},
                                            "More sponsors are bringing guests.")
         cr.trigger_re_review(request.id, coordinator)
         db.session.refresh(event)
         assert event.status == "planning"
-        cr.apply_re_reviewed_change(request.id, coordinator)
 
+        # Approving the change does not edit the event or re-enter the safety check.
+        cr.apply_re_reviewed_change(request.id, coordinator)
         db.session.refresh(event)
+        assert event.status == "planning"
+        assert event.expected_attendance == 120
+
+        # The Coordinator makes the edit after the offline discussion.
+        update_service.update_event_fields(
+            event, db.session.get(User, coordinator), {"expected_attendance": 140},
+            offline_review_confirmed=True,
+        )
+        status.try_advance_to_safety_check(event, coordinator)
+
         assert event.status == "safety_check"
-        assert [n.data["recheck"] for n in inbox(staff["safety1"], TYPE_SAFETY_CHECK)] == [False, True]
+        assert [n.data["recheck"] for n in inbox(staff["safety1"], TYPE_SAFETY_CHECK)] == [False, True, True]
 
 
 # ---- AC6

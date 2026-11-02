@@ -13,8 +13,8 @@ from app.notifications.services import triggers as notifications
 
 REVIEWABLE_STATUSES = ("pending", "re_review")
 RECONSIDERATION_REASON = "Needs reconsideration"
-CHANGEABLE_STATUSES = ("submitted", "under_review", "approved", "planning", "confirmed")
-STATUS_MESSAGE = "Changes can only be requested for an event that is submitted, under review, approved, planning or confirmed"
+CHANGEABLE_STATUSES = ("submitted", "under_review", "approved", "planning", "safety_check")
+STATUS_MESSAGE = "Changes can only be requested for an event that is submitted, under review, approved, planning or in safety check"
 DECIDED_STATUSES = ("processed", "rejected")
 
 # Changing these can affect arrangements already made, so the request is
@@ -22,6 +22,7 @@ DECIDED_STATUSES = ("processed", "rejected")
 SIGNIFICANT_FIELDS = {
     "proposed_date", "proposed_time", "expected_attendance",
     "capacity_needed", "required_layout", "required_facilities",
+    "accessibility_needs",
     "venue_id", "equipment_requirements",
 }
 
@@ -419,7 +420,7 @@ def get_review_detail(request_id: int, coordinator_id: int) -> dict:
 
 # For these, a stored None means "clear the value" and is allowed.
 CLEARABLE_FIELDS = {"category", "accessibility_needs"}
-PROCESS_STATUS_MESSAGE = "A change can only be processed while the event is approved, planning or confirmed"
+PROCESS_STATUS_MESSAGE = "A change can only be processed while the event is submitted, under review, approved, planning or in safety check"
 
 
 def _revalidate(requested: dict):
@@ -465,34 +466,17 @@ def process_routine_change(request_id: int, coordinator_id: int, dry_run: bool =
     if event.status not in CHANGEABLE_STATUSES:
         raise ChangeRequestError({"event": PROCESS_STATUS_MESSAGE})
 
-    cleaned, errors = _revalidate(requested)
+    _, errors = _revalidate(requested)
     if errors:
         raise ChangeRequestError(errors)  # nothing has been written
     if dry_run:
         return change_request
 
-    before = notifications.schedule_snapshot(event)
-    for field, proposed in cleaned.items():
-        current = _current_value(event, field)  # the live value being replaced
-        if _same(field, current, proposed):
-            continue
-        db.session.add(
-            EventChangeHistory(
-                event_id=event.id,
-                change_request_id=change_request.id,
-                field=field,
-                old_value=current,
-                new_value=proposed,
-                changed_by=coordinator_id,
-            )
-        )
-        setattr(event, field, proposed)
-
+    # Not applied automatically: the Coordinator edits the event after the offline discussion.
     change_request.status = "processed"
     change_request.coordinator_id = coordinator_id
     change_request.decided_at = utcnow()
     notifications.notify_organiser_of_change_request(event, change_request, "processed")
-    notifications.notify_event_details_changed(event, before)
     db.session.commit()
     return change_request
 
@@ -650,7 +634,10 @@ def trigger_re_review(
     _create_reconsideration_flags(change_request, event)
 
     notifications.notify_organiser_of_change_request(event, change_request, "re_review")
-    if event.status == "confirmed":
+    notifications.notify_arrangements_of_significant_change(
+        event, [f for f in (change_request.requested_changes or {}) if f in SIGNIFICANT_FIELDS]
+    )
+    if event.status == "safety_check":
         old_status = event.status
         event.status = "planning"
         db.session.add(
@@ -812,7 +799,8 @@ def _planned_updates(
 def apply_re_reviewed_change(
     request_id: int, coordinator_id: int, dry_run: bool = False
 ) -> ChangeRequest:
-    """Record that a significant change under re-review is going ahead."""
+    """Record that a significant change under re-review is going ahead.
+    The event is not edited here: the Coordinator edits it after the offline discussion."""
     change_request = _get_locked_request(request_id)
     event = _assert_assigned_coordinator(change_request, coordinator_id)
 
@@ -824,38 +812,10 @@ def apply_re_reviewed_change(
     if event.status not in CHANGEABLE_STATUSES:
         raise ChangeRequestError({"event": PROCESS_STATUS_MESSAGE})
 
-    planned = _planned_updates(
-        event, change_request.requested_changes or {}
-    )
+    _planned_updates(event, change_request.requested_changes or {})  # re-validate, applies nothing
 
     if dry_run:
         return change_request
-
-    before = notifications.schedule_snapshot(event)
-    for field, current, proposed in planned:
-        db.session.add(
-            EventChangeHistory(
-                event_id=event.id,
-                change_request_id=change_request.id,
-                field=field,
-                old_value=current,
-                new_value=proposed,
-                changed_by=coordinator_id,
-            )
-        )
-
-        if field == "equipment_requirements":
-            _replace_equipment_requirements(event, proposed)
-        elif field == "venue_id":
-            # The current venue is derived from the approved booking.
-            # Record the coordinator's decision without changing bookings.
-            continue
-        else:
-            setattr(event, field, _python_value(field, proposed))
-
-    # Make the event/history writes explicit before the flag update queries
-    # ArrangementFlag. This avoids an unexpected query-invoked autoflush.
-    db.session.flush()
 
     now = utcnow()
 
@@ -871,13 +831,5 @@ def apply_re_reviewed_change(
     change_request.decided_at = now
 
     notifications.notify_organiser_of_change_request(event, change_request, "applied")
-    notifications.notify_event_details_changed(event, before)
     db.session.commit()
-
-
-    # The Coordinator has recorded the decision, so flagged arrangements count as re-reviewed.
-    # A venue change is excluded: the new venue must go through its own booking approval first.
-    if event.status == "planning" and "venue_id" not in (change_request.requested_changes or {}):
-        from app.events.services.status import try_advance_to_safety_check
-        try_advance_to_safety_check(event, coordinator_id)
     return change_request

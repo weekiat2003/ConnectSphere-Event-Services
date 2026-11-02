@@ -15,6 +15,7 @@ TYPE_EQUIPMENT_RESERVATION_UPDATE = "equipment_reservation_update"
 TYPE_REGISTRATION_CHANGE = "registration_change"              # ISP-108
 TYPE_SAFETY_CHECK = "safety_check"                            # ISP-130
 TYPE_REASSIGNMENT_REQUEST = "reassignment_request"            # Coordinator Assignment
+TYPE_ARRANGEMENT_REVIEW = "arrangement_review"                # Significant change
 
 NOTIFICATION_TYPES = (
     TYPE_ORGANISER_UPDATE,
@@ -27,6 +28,7 @@ NOTIFICATION_TYPES = (
     TYPE_REGISTRATION_CHANGE,
     TYPE_SAFETY_CHECK,
     TYPE_REASSIGNMENT_REQUEST,
+    TYPE_ARRANGEMENT_REVIEW,
 )
 
 
