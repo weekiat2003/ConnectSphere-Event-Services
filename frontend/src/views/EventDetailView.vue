@@ -229,7 +229,7 @@
     <section v-if="isAssignedCoordinator">
       <h3 class="section-title">Coordinator Actions</h3>
 
-      <div v-if="showCancelForm" class="action-block">
+      <div v-if="showCancelForm" id="cancel-form" class="action-block">
         <h3 class="block-title">Cancel Event</h3>
         <textarea v-model="cancelReason" placeholder="Reason for cancelling (required)"></textarea>
         <p v-if="cancelError" class="field-error">{{ cancelError }}</p>
@@ -665,7 +665,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import eventsApi from "../api/events";
@@ -1024,9 +1024,6 @@ async function submitWithdrawalRequest() {
   }
 }
 
-const formatFieldNames = (keys) =>
-  (keys || []).map((k) => EDITABLE_FIELD_OPTIONS.find((o) => o.key === k)?.label || k).join(", ");
-
 // The API sends naive UTC timestamps (see backend app/common/time.py); mark
 // them as UTC so the browser shows the viewer's local time, not UTC as local.
 const formatDate = (iso) => {
@@ -1352,6 +1349,23 @@ const showCancelForm = ref(false);
 const cancelReason = ref("");
 const cancelError = ref("");
 const cancelSubmitting = ref(false);
+const CANCELLABLE_STATUSES = ["approved", "planning", "safety_check", "confirmed"];
+let returnToRequestId = null;
+
+async function openCancelFromWithdrawal() {
+  if (route.query.cancel !== "1") return;
+  returnToRequestId = Number(route.query.fromRequest) || null;
+  router.replace({ query: {} }); // so a refresh doesn't reopen the form
+  if (!isAssignedCoordinator.value || !CANCELLABLE_STATUSES.includes(event.value.status)) return;
+
+  openCancelForm();
+  const withdrawal = changeRequests.value.find(
+    (r) => r.requestType === "withdrawal" && r.status === "pending"
+  );
+  if (withdrawal) cancelReason.value = `Organiser requested withdrawal: ${withdrawal.reason}`;
+  await nextTick();
+  document.getElementById("cancel-form")?.scrollIntoView({ block: "center" });
+}
 
 function openCancelForm() {
   cancelReason.value = "";
@@ -1370,6 +1384,9 @@ async function cancelEvent() {
       showCancelForm.value = false;
       cancelReason.value = "";
       await load();
+      if (returnToRequestId) {
+        router.push({ name: "change-request-review", query: { id: returnToRequestId } });
+      }
     }
   } catch (e) {
     const data = e.response?.data;
@@ -1381,11 +1398,10 @@ async function cancelEvent() {
 
 onMounted(async () => {
   await load();
-  // /auth/users is coordinator-only server-side; only fetch it if this
-  // viewer actually has that role, to avoid a needless 403.
   if (auth.hasRole("event_coordinator")) {
     await loadCoordinators();
   }
+  await openCancelFromWithdrawal();
 });
 </script>
 

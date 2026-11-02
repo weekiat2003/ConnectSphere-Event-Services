@@ -286,6 +286,8 @@ def cancel_event(event_id: int, coordinator_id: int, reason, dry_run: bool = Fal
         changed_at=now,
     ))
     _release_arrangements(event, coordinator_id, reason, now)
+    from app.change_requests.services import resolve_withdrawals_for_cancelled_event
+    resolve_withdrawals_for_cancelled_event(event, coordinator_id, reason)
     notifications.on_event_status_changed(event, old_status, "cancelled", coordinator_id, reason)
     from app.events.services.assignment import close_reassignment_request_for_closed_event
     close_reassignment_request_for_closed_event(event)

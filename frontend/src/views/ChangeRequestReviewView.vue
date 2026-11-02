@@ -142,11 +142,12 @@
   
   <script setup>
   import { onMounted, ref } from "vue";
-  import { useRoute } from "vue-router";
+  import { useRoute, useRouter } from "vue-router";
   import changeRequestsApi from "../api/changeRequests";
   import { useConfirm } from "../composables/useConfirm";
   
   const route = useRoute();
+  const router = useRouter();
   const queue = ref([]);
   const detail = ref(null);
   const venues = ref([]);
@@ -281,15 +282,22 @@
   }
 
   async function runAction(action) {
-    if (action === "process_change") return processChange();
-    if (action === "trigger_re_review") return triggerReReview();
-    if (action === "apply_change") return applyReReview();
-    if (action === "reject_change") {
-      actionError.value = "";
-      actionErrors.value = {};
-      showRejectForm.value = true;
-    }
+  if (action === "process_change") return processChange();
+  if (action === "trigger_re_review") return triggerReReview();
+  if (action === "apply_change") return applyReReview();
+  if (action === "cancel_event") {
+    return router.push({
+      name: "event-detail",
+      params: { id: detail.value.event.id },
+      query: { cancel: "1", fromRequest: detail.value.request.id },
+    });
   }
+  if (action === "reject_change") {
+    actionError.value = "";
+    actionErrors.value = {};
+    showRejectForm.value = true;
+  }
+}
 
   async function rejectChange() {
   actionError.value = "";
