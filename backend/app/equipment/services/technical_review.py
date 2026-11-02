@@ -19,6 +19,8 @@ def get_event_requirements(event_id: int) -> dict:
     rows = []
     for requirement in sorted(event.equipment_requirements, key=lambda r: r.id):
         row = requirement.to_dict()
+        row.pop("testingStatus", None)
+        row.pop("installationStatus", None)
         booking = by_requirement.get(requirement.id)
         row["reservation"] = None if booking is None else {
             "id": booking.id,

@@ -16,7 +16,7 @@
     <ul v-if="items.length" class="list">
       <li v-for="n in items" :key="n.id" :class="['item', { unread: !n.isRead, cleared: n.isCleared }]">
         <div class="body">
-          <span class="tag">{{ TYPE_LABELS[n.type] || "Update" }}</span>
+          <span class="tag">{{ notificationLabel(n) }}</span>
           <strong>{{ n.title }}</strong>
           <span v-if="n.eventName" class="event-name">{{ n.eventName }}</span>
           <p>{{ n.message }}</p>
@@ -50,9 +50,14 @@ const TYPE_LABELS = {
   venue_booking_update: "Venue booking",
   new_venue_booking_request: "Booking request",
   new_equipment_request: "Equipment",
+  equipment_reservation_update: "Equipment",
   registration_change: "Registration",
   safety_check: "Safety check",
   arrangement_review: "Review needed",
+};
+const NOTIFICATION_KIND_LABELS = {
+  preparation_updated: "Equipment preparation",
+  suitability_confirmed: "Equipment suitability",
 };
 
 const items = ref([]);
@@ -62,6 +67,12 @@ const error = ref("");
 const router = useRouter();
 
 const hasUnread = computed(() => items.value.some((n) => !n.isRead));
+
+function notificationLabel(notification) {
+  return NOTIFICATION_KIND_LABELS[notification.data?.kind]
+    || TYPE_LABELS[notification.type]
+    || "Update";
+}
 
 async function load() {
   loading.value = true;

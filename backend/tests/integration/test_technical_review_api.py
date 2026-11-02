@@ -50,12 +50,11 @@ def test_event_with_no_requirements_returns_an_empty_list(client, tech_headers, 
     assert res.get_json()["requirements"] == []
 
 
-def test_shows_testing_installation_and_recheck_flag(client, tech_headers, event_id):
-    add_requirement(event_id, testing_status="done", installation_status="in_progress",
-                    needs_recheck=True)
+def test_omits_testing_and_installation_and_shows_recheck_flag(client, tech_headers, event_id):
+    add_requirement(event_id, needs_recheck=True)
     row = client.get(url(event_id), headers=tech_headers).get_json()["requirements"][0]
-    assert row["testingStatus"] == "done"
-    assert row["installationStatus"] == "in_progress"
+    assert "testingStatus" not in row
+    assert "installationStatus" not in row
     assert row["needsRecheck"] is True
 
 

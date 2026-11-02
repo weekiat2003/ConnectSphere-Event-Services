@@ -155,6 +155,8 @@ def arrangements_are_complete(event: Event) -> bool:
             return False
 
     for requirement in event.equipment_requirements:
+        if requirement.status != "confirmed" or requirement.needs_recheck:
+            return False
         reserved_quantity = (
             db.session.query(func.coalesce(func.sum(EquipmentReservation.quantity), 0))
             .filter_by(

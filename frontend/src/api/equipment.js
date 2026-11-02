@@ -15,4 +15,6 @@ export default {
   reserve: (payload) => apiClient.post("/equipment/reservations", payload),
   release: (reservationId) =>
     apiClient.post(`/equipment/reservations/${reservationId}/release`),
+  confirmRecheck: (requirementId) =>
+    apiClient.post(`/equipment/requirements/${requirementId}/confirm-recheck`),
 };

@@ -240,21 +240,24 @@ def release_equipment(reservation_id):
 
 
 
-@equipment_bp.put("/requirements/<int:requirement_id>/preparation")
+@equipment_bp.post("/requirements/<int:requirement_id>/confirm-recheck")
 @roles_required("technical_support_staff")
-def update_requirement_preparation(requirement_id):
+def confirm_requirement_recheck(requirement_id):
     requirement = EventEquipmentRequirement.query.get(requirement_id)
     if not requirement:
         return jsonify({"error": "Equipment requirement not found"}), 404
     try:
-        result = preparation.update_equipment_preparation(
-            requirement, _current_user(), request.get_json() or {}
+        result = preparation.confirm_equipment_suitability(
+            requirement, _current_user()
         )
     except PermissionError as exc:
         return jsonify({"error": str(exc)}), 403
     except preparation.EquipmentPreparationError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify(result.to_dict()), 200
+    response = result.to_dict()
+    response.pop("testingStatus", None)
+    response.pop("installationStatus", None)
+    return jsonify(response), 200
 
 
 
