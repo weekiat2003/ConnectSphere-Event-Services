@@ -7,7 +7,7 @@ from app.change_requests import services as cr
 from app.common.time import utcnow
 from app.events.services import update as update_service
 from app.extensions import db
-from app.models.event import Event, EventEquipmentRequirement
+from app.models.event import EventEquipmentRequirement
 from app.models.notification import NOTIFICATION_TYPES, TYPE_ARRANGEMENT_REVIEW, Notification
 from app.models.user import User
 from app.models.venue import Venue, VenueBooking

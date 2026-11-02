@@ -51,7 +51,7 @@ from app.notifications.services.core import (
     notify_role,
     notify_users,
 )
-from app.models.venue import ACTIVE_BOOKING_STATUSES, BOOKING_APPROVED, Venue
+from app.models.venue import ACTIVE_BOOKING_STATUSES
 
 COORDINATOR_LEAD_ROLE = "event_coordinator_lead"
 
