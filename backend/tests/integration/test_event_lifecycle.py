@@ -5,10 +5,9 @@ draft -> submit -> Lead assigns -> approve, and reject -> resubmit.
 from datetime import date, timedelta
 
 from app.extensions import db
-from app.events.services import assignment, drafts, review
+from app.events.services import assignment, drafts, review, status
 from app.models.event import Event
 from app.models.user import User
-from app.events.services import assignment, drafts, review, status
 
 # Relative dates: a fixed calendar date eventually falls into the past and then
 # fails the "proposed date cannot be in the past" rule.
