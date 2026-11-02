@@ -133,11 +133,23 @@
     </template>
 
     <div v-if="holdBooking" class="modal-backdrop" @click.self="holdBooking = null">
-      <div class="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="hold-title">
-        <h3 id="hold-title">{{ holdAction === 'place' ? 'Place tentative hold' : 'Extend tentative hold' }}</h3>
-        <p>Choose a future expiry for {{ holdBooking.venueName }}.</p>
-        <label for="hold-expiry">Expiry date and time</label>
-        <input id="hold-expiry" type="datetime-local" v-model="holdExpiry" />
+      <div class="confirmation-dialog hold-dialog" role="dialog" aria-modal="true" aria-labelledby="hold-title">
+        <div class="hold-dialog-heading">
+          <span class="hold-dialog-icon" aria-hidden="true">◷</span>
+          <h3 id="hold-title">{{ holdAction === 'place' ? 'Place tentative hold' : 'Extend tentative hold' }}</h3>
+        </div>
+        <p class="hold-dialog-description">Choose when the tentative hold for <strong>{{ holdBooking.venueName }}</strong> should expire.</p>
+        <div class="hold-expiry-fields">
+          <div class="hold-field">
+            <label for="hold-expiry-date">Expiry date</label>
+            <input id="hold-expiry-date" type="date" v-model="holdExpiryDate" :min="holdMinDate" required />
+          </div>
+          <div class="hold-field">
+            <label for="hold-expiry-time">Expiry time</label>
+            <input id="hold-expiry-time" type="time" v-model="holdExpiryTime" required />
+          </div>
+        </div>
+        <p class="hold-expiry-hint">Select a future date and time. The hold will expire automatically.</p>
         <p v-if="holdError" class="field-error" role="alert">{{ holdError }}</p>
         <div class="confirmation-actions">
           <button type="button" class="btn-primary secondary" @click="holdBooking = null">Cancel</button>
@@ -323,7 +335,9 @@ import apiClient from "../api/client";
 const bookings = ref([]);
 const holdBooking = ref(null);
 const holdAction = ref('place');
-const holdExpiry = ref('');
+const holdExpiryDate = ref('');
+const holdExpiryTime = ref('');
+const holdMinDate = ref(new Date().toLocaleDateString('en-CA'));
 const holdError = ref('');
 const holdSaving = ref(false);
 function parseUtcHoldExpiry(value) {
@@ -340,15 +354,21 @@ function formatHoldExpiry(value) {
 function openHold(booking, action) {
   holdBooking.value = booking;
   holdAction.value = action;
-  holdExpiry.value = action === 'extend' && booking.holdExpiresAt
-    ? parseUtcHoldExpiry(booking.holdExpiresAt).toLocaleString('sv-SE').replace(' ', 'T').slice(0, 16)
+  holdMinDate.value = new Date().toLocaleDateString('en-CA');
+  const existingExpiry = action === 'extend' && booking.holdExpiresAt
+    ? parseUtcHoldExpiry(booking.holdExpiresAt) : null;
+  // Use the browser's local date/time, preserving the existing API's UTC conversion.
+  const localExpiry = existingExpiry && !Number.isNaN(existingExpiry.getTime())
+    ? new Date(existingExpiry.getTime() - existingExpiry.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
     : '';
+  holdExpiryDate.value = localExpiry.slice(0, 10);
+  holdExpiryTime.value = localExpiry.slice(11, 16);
   holdError.value = '';
 }
 async function saveHold() {
   if (!holdBooking.value || holdSaving.value) return;
-  const expiry = new Date(holdExpiry.value);
-  if (!holdExpiry.value || Number.isNaN(expiry.getTime()) || expiry <= new Date()) {
+  const expiry = new Date(`${holdExpiryDate.value}T${holdExpiryTime.value}`);
+  if (!holdExpiryDate.value || !holdExpiryTime.value || Number.isNaN(expiry.getTime()) || expiry <= new Date()) {
     holdError.value = 'Enter a future expiry date and time.';
     return;
   }
@@ -910,5 +930,20 @@ onMounted(async () => {
     flex-wrap: wrap;
   }
 }
+
+/* Tentative hold modal: separate, aligned date and time fields */
+.hold-dialog { width: min(100%, 490px); box-sizing: border-box; }
+.hold-dialog-heading { display: flex; align-items: center; gap: .7rem; margin-bottom: .6rem; }
+.hold-dialog-heading h3 { margin: 0; }
+.hold-dialog-icon { display: grid; place-items: center; flex: 0 0 2.25rem; height: 2.25rem; border-radius: 11px; background: #eee9ff; color: #5b46b8; font-size: 1.6rem; }
+.hold-dialog .hold-dialog-description { margin: .5rem 0 1.2rem; color: #6b6890; font-size: .92rem; }
+.hold-dialog-description strong { color: #302b4d; }
+.hold-expiry-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+.hold-field { min-width: 0; }
+.hold-field label { display: block; margin: 0 0 .45rem; font-size: .87rem; font-weight: 650; color: #302b4d; }
+.hold-field input { box-sizing: border-box; display: block; width: 100%; min-width: 0; min-height: 44px; padding: .65rem .75rem; border: 1px solid #dcd5f7; border-radius: 10px; background: #faf9ff; color: #302b4d; font: inherit; color-scheme: light; }
+.hold-field input:focus { outline: 2px solid #7863db; outline-offset: 1px; border-color: #7863db; }
+.hold-dialog .hold-expiry-hint { margin: .8rem 0 0; font-size: .8rem; color: #716b91; }
+@media (max-width: 420px) { .hold-expiry-fields { grid-template-columns: 1fr; gap: .8rem; } }
 </style>
 
