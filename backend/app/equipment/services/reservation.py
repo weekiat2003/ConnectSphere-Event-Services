@@ -3,11 +3,21 @@ from app.extensions import db
 from app.equipment.services.availability import check_availability
 from app.models.equipment import EquipmentItem, EquipmentReservation
 from app.models.event import Event, EventEquipmentRequirement
+from app.notifications.services import triggers as notifications
 
 RESERVED = "reserved"
 RELEASED = "released"
 ACTIVE = "active"
 RESERVABLE_EVENT_STATUSES = ("approved", "planning", "safety_check", "safety_approved", "confirmed")
+_USE_REQUIREMENT_QUANTITY = object()
+
+
+class ReservationError(ValueError):
+    """A reservation validation error with its corresponding HTTP status."""
+
+    def __init__(self, message: str, status_code: int = 400):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def reserve(
@@ -17,19 +27,29 @@ def reserve(
     start,
     end,
     user_id: int,
+    quantity=_USE_REQUIREMENT_QUANTITY,
 ) -> EquipmentReservation:
     try:
         if end <= start:
-            raise ValueError("end must be after start")
+            raise ReservationError("end must be after start")
     except TypeError:
-        raise ValueError("start and end must both include, or both omit, a timezone")
+        raise ReservationError("start and end must both include, or both omit, a timezone")
 
     if requirement.event_id != event.id:
-        raise ValueError("Requirement does not belong to this event")
+        raise ReservationError("Requirement does not belong to this event")
 
     if event.status not in RESERVABLE_EVENT_STATUSES:
-        raise ValueError(
+        raise ReservationError(
             f"Equipment cannot be reserved for an event with status '{event.status}'"
+        )
+
+    if quantity is _USE_REQUIREMENT_QUANTITY:
+        quantity = requirement.quantity
+    if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
+        raise ReservationError("quantity must be a positive whole number")
+    if quantity > requirement.quantity:
+        raise ReservationError(
+            "Reservation quantity cannot exceed the requirement's requested quantity"
         )
 
     # Lock the item row so two reservations cannot both claim the last units.
@@ -41,7 +61,10 @@ def reserve(
         .one()
     )
     if item.status != ACTIVE:
-        raise ValueError(f"{item.name} is not active (status: {item.status})")
+        raise ReservationError(f"{item.name} is not active (status: {item.status})")
+
+    if item.name.strip().casefold() != requirement.equipment_type.strip().casefold():
+        raise ReservationError("This item doesn't match the requested equipment type.")
 
     # Locking reads see the latest committed rows, not an older snapshot.
     already_reserved = (
@@ -52,19 +75,29 @@ def reserve(
         .first()
     )
     if already_reserved:
-        raise ValueError("This requirement already has a reservation")
+        raise ReservationError("This requirement already has a reservation")
 
     result = check_availability(
-        item, requirement.quantity, start, end, lock_reservations=True
+        item, quantity, start, end, lock_reservations=True
     )
     if not result["available"]:
-        raise ValueError(f"Not enough {item.name} available for the requested period")
+        notices = notifications.notify_coordinator_of_equipment_shortage(
+            event,
+            requirement,
+            item,
+            requested_quantity=quantity,
+            available_quantity=result["freeQuantity"],
+            actor_id=user_id,
+        )
+        if notices:
+            db.session.commit()
+        raise ReservationError(f"Not enough {item.name} available for the requested period")
 
     reservation = EquipmentReservation(
         event_id=event.id,
         equipment_requirement_id=requirement.id,
         equipment_item_id=item.id,
-        quantity=requirement.quantity,
+        quantity=quantity,
         start_datetime=start,
         end_datetime=end,
         status=RESERVED,
@@ -72,6 +105,11 @@ def reserve(
     )
     db.session.add(reservation)
     requirement.status = "confirmed"
+    requirement.needs_recheck = False
+    db.session.flush()
+    notifications.notify_coordinator_of_equipment_reservation(
+        reservation, "reserved", actor_id=user_id
+    )
     db.session.commit()
 
     from app.events.services.status import try_advance_to_safety_check
@@ -80,12 +118,21 @@ def reserve(
     return reservation
 
 
-def release(reservation: EquipmentReservation) -> EquipmentReservation:
-    """Releases equipment back to availability when an event is cancelled
-    or the requirement is removed."""
+def release(
+    reservation: EquipmentReservation, actor_id: int = None
+) -> EquipmentReservation:
+    """Manually release reserved equipment back to availability."""
     if reservation.status != RESERVED:
         raise ValueError("Only a currently reserved item can be released")
     reservation.status = RELEASED
+    requirement = db.session.get(
+        EventEquipmentRequirement, reservation.equipment_requirement_id
+    )
+    if requirement is not None:
+        requirement.status = "requested"
+    notifications.notify_coordinator_of_equipment_reservation(
+        reservation, "released", actor_id=actor_id
+    )
     db.session.commit()
 
     from app.events.services.status import reconsider_event_after_arrangement_loss

@@ -111,6 +111,7 @@ def update_event_fields(event: Event, user, changes: dict, offline_review_confir
         _flag_arrangements_needs_reconsideration(event)
         notifications.notify_arrangements_of_significant_change(event, significant_fields)
     if changes and (significant_fields or event.status == "safety_check"):
+        _flag_arrangements_needs_reconsideration(event, significant_fields)
         return_to_planning(
             event, user.id,
             reason=(
@@ -277,8 +278,25 @@ def _update_equipment_requirements(event: Event, requirements: list):
         else:
             item = EventEquipmentRequirement(event_id=event.id)
             event.equipment_requirements.append(item)
-        item.equipment_type = values.get("type", values.get("equipment_type"))
-        item.quantity = values["quantity"]
+        equipment_type = values.get("type", values.get("equipment_type"))
+        quantity = values["quantity"]
+        changed = (
+            (item.equipment_type or "").strip().casefold()
+            != equipment_type.strip().casefold()
+            or item.quantity != quantity
+        )
+        item.equipment_type = equipment_type
+        item.quantity = quantity
+        if requirement_id is not None and changed:
+            active_reservations = EquipmentReservation.query.filter_by(
+                equipment_requirement_id=item.id, status="reserved"
+            ).all()
+            for reservation in active_reservations:
+                reservation.status = "released"
+                db.session.add(reservation)
+            if active_reservations:
+                item.status = "requested"
+            item.needs_recheck = True
         if "technicalNotes" in values:
             item.technical_notes = values["technicalNotes"]
         elif "technical_notes" in values:
@@ -296,7 +314,7 @@ def _json_value(value):
     return value
 
 
-def _flag_arrangements_needs_reconsideration(event: Event):
+def _flag_arrangements_needs_reconsideration(event: Event, fields_changed: set):
     from app.models.venue import VenueBooking, BOOKING_APPROVED, BOOKING_HELD  # local import avoids a circular import
     bookings = VenueBooking.query.filter(
         VenueBooking.event_id == event.id,
@@ -306,9 +324,10 @@ def _flag_arrangements_needs_reconsideration(event: Event):
         b.needs_reconsideration = True
         db.session.add(b)
 
-    for requirement in event.equipment_requirements:
-        requirement.needs_recheck = True
-        db.session.add(requirement)
+    if {"proposed_date", "proposed_time"} & fields_changed:
+        for requirement in event.equipment_requirements:
+            requirement.needs_recheck = True
+            db.session.add(requirement)
 
 
 def _log_edit(event, user, fields_changed, old_values, new_values=None,

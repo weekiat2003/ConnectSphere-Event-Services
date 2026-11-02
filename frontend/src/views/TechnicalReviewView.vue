@@ -33,21 +33,110 @@
           <tr>
             <th>Type</th><th>Qty</th><th>Technical requirements</th><th>Status</th>
             <th>Reservation</th><th>Testing</th><th>Installation</th>
+            <th v-if="isTechSupport">Actions</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="req in event.equipmentRequirements" :key="req.id">
-            <td>{{ req.type }}</td>
-            <td>{{ req.quantity }}</td>
-            <td>{{ req.technicalNotes || "—" }}</td>
-            <td>
-              <StatusBadge kind="requirement" :status="req.status" />
-              <span v-if="req.needsRecheck" class="badge-warn">Needs recheck</span>
-            </td>
-            <td>{{ reservationText(req.reservation) }}</td>
-            <td><StatusBadge kind="preparation" :status="req.testingStatus" /></td>
-            <td><StatusBadge kind="preparation" :status="req.installationStatus" /></td>
-          </tr>
+          <template v-for="req in event.equipmentRequirements" :key="req.id">
+            <tr>
+              <td>{{ req.type }}</td>
+              <td>{{ req.quantity }}</td>
+              <td>{{ req.technicalNotes || "—" }}</td>
+              <td>
+                <StatusBadge kind="requirement" :status="req.status" />
+                <span v-if="req.needsRecheck" class="badge-warn">Needs recheck</span>
+              </td>
+              <td>{{ reservationText(req.reservation) }}</td>
+              <td><StatusBadge kind="preparation" :status="req.testingStatus" /></td>
+              <td><StatusBadge kind="preparation" :status="req.installationStatus" /></td>
+              <td v-if="isTechSupport">
+                <button
+                  v-if="!req.reservation"
+                  type="button"
+                  class="btn btn-primary"
+                  @click="openReservation(event, req)"
+                >
+                  Reserve
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="btn btn-grey"
+                  :disabled="releasingReservationId === req.reservation.id"
+                  @click="releaseReservation(event, req)"
+                >
+                  {{ releasingReservationId === req.reservation.id ? "Releasing…" : "Release" }}
+                </button>
+                <p v-if="req.actionError" class="form-error" role="alert">
+                  {{ req.actionError }}
+                </p>
+              </td>
+            </tr>
+            <tr
+              v-if="reservationForm?.key === rowKey(event.id, req.id)"
+              class="reserve-row"
+            >
+              <td :colspan="isTechSupport ? 8 : 7">
+                <form class="reserve-form" @submit.prevent="submitReservation(event, req)">
+                  <label class="field">
+                    <span>Equipment item</span>
+                    <select v-model="reservationForm.equipmentItemId" required>
+                      <option disabled value="">Select matching equipment</option>
+                      <option
+                        v-for="item in matchingItems(req)"
+                        :key="item.id"
+                        :value="item.id"
+                      >
+                        {{ item.name }} ({{ item.totalQuantity }} total)
+                      </option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Quantity</span>
+                    <input
+                      :value="req.quantity"
+                      type="number"
+                      min="1"
+                      :max="req.quantity"
+                      readonly
+                      required
+                    />
+                  </label>
+                  <label class="field">
+                    <span>Start</span>
+                    <input v-model="reservationForm.start" type="datetime-local" required />
+                  </label>
+                  <label class="field">
+                    <span>End</span>
+                    <input v-model="reservationForm.end" type="datetime-local" required />
+                  </label>
+                  <p v-if="!matchingItems(req).length" class="muted form-note">
+                    No active catalogue item matches this equipment type.
+                  </p>
+                  <p v-if="reservationForm.error" class="form-error" role="alert">
+                    {{ reservationForm.error }}
+                  </p>
+                  <div class="form-actions">
+                    <button
+                      class="btn btn-primary"
+                      type="submit"
+                      :disabled="reservationForm.submitting || !matchingItems(req).length"
+                    >
+                      {{ reservationForm.submitting ? "Reserving…" : "Confirm" }}
+                    </button>
+                    <button
+                      class="btn btn-grey"
+                      type="button"
+                      :disabled="reservationForm.submitting"
+                      @click="closeReservation"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </td>
+            </tr>
+          </template>
         </tbody>
       </table>
     </div>
@@ -60,6 +149,9 @@ import { useRoute } from "vue-router";
 import eventsApi from "../api/events";
 import equipmentApi from "../api/equipment";
 import StatusBadge from "../components/StatusBadge.vue";
+import { useAuthStore } from "../stores/auth";
+import { useConfirm } from "../composables/useConfirm";
+import { formatReservationDateTime } from "../utils/display";
 
 const HIDDEN_EVENT_STATUSES = ["draft", "cancelled", "rejected", "completed"];
 
@@ -67,9 +159,15 @@ const HIDDEN_EVENT_STATUSES = ["draft", "cancelled", "rejected", "completed"];
 const highlightEventId = Number(useRoute().query.event) || null;
 
 const events = ref([]);
+const equipmentItems = ref([]);
 const loading = ref(true);
 const error = ref("");
 const showEmpty = ref(false);
+const reservationForm = ref(null);
+const releasingReservationId = ref(null);
+const auth = useAuthStore();
+const { confirm } = useConfirm();
+const isTechSupport = computed(() => auth.hasRole("technical_support_staff"));
 
 const visibleEvents = computed(() =>
   events.value.filter(
@@ -79,16 +177,112 @@ const visibleEvents = computed(() =>
 const hiddenCount = computed(() => events.value.length - visibleEvents.value.length);
 
 function message(e, fallback) { return e.response?.data?.error || fallback; }
-function formatTime(iso) { return new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }); }
+function rowKey(eventId, requirementId) { return `${eventId}-${requirementId}`; }
+function normalizedName(name) { return String(name || "").trim().toLowerCase(); }
+function matchingItems(requirement) {
+  const type = normalizedName(requirement.type);
+  return equipmentItems.value.filter(
+    (item) => item.status === "active" && normalizedName(item.name) === type
+  );
+}
+function initialStart(event) {
+  if (!event.proposedDate) return "";
+  const time = String(event.proposedTime || "09:00").slice(0, 5);
+  return `${event.proposedDate}T${time}`;
+}
+function addHours(value, hours) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setHours(date.getHours() + hours);
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 function reservationText(r) {
   if (!r) return "—";
-  return `${r.quantity} × ${formatTime(r.start)} to ${formatTime(r.end)}`;
+  return `${r.quantity} × ${formatReservationDateTime(r.start)} to ${formatReservationDateTime(r.end)}`;
+}
+
+function openReservation(event, requirement) {
+  const start = initialStart(event);
+  reservationForm.value = {
+    key: rowKey(event.id, requirement.id),
+    equipmentItemId: "",
+    start,
+    end: addHours(start, 3),
+    error: "",
+    submitting: false,
+  };
+}
+
+function closeReservation() {
+  reservationForm.value = null;
+}
+
+async function submitReservation(event, requirement) {
+  const form = reservationForm.value;
+  if (!form) return;
+  const selectedItem = matchingItems(requirement).find(
+    (item) => item.id === form.equipmentItemId
+  );
+  if (!selectedItem) {
+    form.error = "Select an active equipment item matching this requirement.";
+    return;
+  }
+
+  form.error = "";
+  form.submitting = true;
+  const confirmed = await confirm(
+    `Reserve ${requirement.quantity} × ${selectedItem.name} for ${event.name}?`
+  );
+  if (!confirmed) {
+    form.submitting = false;
+    return;
+  }
+
+  try {
+    await equipmentApi.reserve({
+      eventId: event.id,
+      requirementId: requirement.id,
+      equipmentItemId: form.equipmentItemId,
+      quantity: requirement.quantity,
+      start: form.start,
+      end: form.end,
+    });
+    closeReservation();
+    await load();
+  } catch (e) {
+    form.error = message(e, "Could not reserve this equipment.");
+    form.submitting = false;
+  }
+}
+
+async function releaseReservation(event, requirement) {
+  requirement.actionError = "";
+  const confirmed = await confirm(
+    `Release ${requirement.reservation.quantity} × ${requirement.type} for ${event.name}?`
+  );
+  if (!confirmed) return;
+
+  releasingReservationId.value = requirement.reservation.id;
+  try {
+    await equipmentApi.release(requirement.reservation.id);
+    await load();
+  } catch (e) {
+    requirement.actionError = message(e, "Could not release this equipment reservation.");
+  } finally {
+    releasingReservationId.value = null;
+  }
 }
 
 async function load() {
   loading.value = true;
+  error.value = "";
   try {
-    const { data } = await eventsApi.allEvents();
+    const [{ data }, { data: items }] = await Promise.all([
+      eventsApi.allEvents(),
+      equipmentApi.listItems(),
+    ]);
+    equipmentItems.value = Array.isArray(items) ? items : [];
     const visible = data.filter((e) => !HIDDEN_EVENT_STATUSES.includes(e.status));
 
     // Reservation details come from the technical review endpoint.
@@ -137,6 +331,18 @@ onMounted(async () => {
 .req-table { width: 100%; border-collapse: collapse; }
 .req-table th, .req-table td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border, #e4defa); }
 .req-table th { font-size: 0.8rem; color: var(--text-muted, #6b6890); font-weight: 500; }
+.btn { padding: 0.4rem 1rem; border: none; border-radius: 999px; font: inherit; font-size: 0.9rem; font-weight: 500; cursor: pointer; }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-primary { background: var(--primary, #6d5bd0); color: #fff; }
+.btn-grey { background: #e2e5ea; color: #333; }
+.reserve-row td { background: #faf9ff; }
+.reserve-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; padding: 0.35rem 0; }
+.field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; font-weight: 500; color: var(--text-muted, #6b6890); }
+.field input, .field select { min-width: 12rem; padding: 0.4rem 0.7rem; border: 1px solid var(--border, #e4defa); border-radius: 8px; font: inherit; color: var(--text, #2d2a4a); }
+.field input[type="number"] { min-width: 5rem; width: 5rem; }
+.form-actions { display: inline-flex; gap: 0.5rem; }
+.form-note, .form-error { flex-basis: 100%; margin: 0; }
+.form-error { margin-top: 0.35rem; color: var(--rose-text, #a12b47); font-size: 0.9rem; }
 .badge-warn { display: inline-block; padding: 0.15rem 0.65rem; border-radius: 999px; font-size: 0.8rem; font-weight: 500;
   background: var(--butter-bg, #fff1c2); color: var(--butter-text, #8a5a00); }
 .error { margin: 0 0 1rem; padding: 0.6rem 0.9rem; border-radius: 10px; background: var(--rose-bg, #ffdce3);
