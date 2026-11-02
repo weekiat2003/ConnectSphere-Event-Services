@@ -28,6 +28,8 @@ class Event(db.Model):
 
     proposed_date = db.Column(db.Date)
     proposed_time = db.Column(db.Time)
+    proposed_end_date = db.Column(db.Date)
+    proposed_end_time = db.Column(db.Time)
     expected_attendance = db.Column(db.Integer)
 
     # venueRequirements
@@ -134,6 +136,8 @@ class Event(db.Model):
             "safetyApproved": self.safety_approved,
             "proposedDate": self.proposed_date.isoformat() if self.proposed_date else None,
             "proposedTime": proposed_time,
+            "proposedEndDate": self.proposed_end_date.isoformat() if self.proposed_end_date else None,
+            "proposedEndTime": self.proposed_end_time.strftime("%H:%M") if self.proposed_end_time else None,
             "expectedAttendance": self.expected_attendance,
             "venueRequirements": {
                 "capacityNeeded": self.capacity_needed,

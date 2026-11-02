@@ -33,17 +33,27 @@
         </label>
 
         <label>
-          Proposed Date
+          Start Date
+          <input v-model="form.proposed_date" type="date" :min="todayString" />
+        </label>
+
+        <label>
+          Start Time
+          <input v-model="form.proposed_time" type="time" />
+        </label>
+
+        <label>
+          End Date
           <input
-            v-model="form.proposed_date"
+            v-model="form.proposed_end_date"
             type="date"
-            :min="todayString"
+            :min="form.proposed_date || todayString"
           />
         </label>
 
         <label>
-          Proposed Time
-          <input v-model="form.proposed_time" type="time" />
+          End Time
+          <input v-model="form.proposed_end_time" type="time" />
         </label>
 
         <label>
@@ -238,6 +248,8 @@ const form = reactive({
   description: "",
   proposed_date: "",
   proposed_time: "",
+  proposed_end_date: "",
+  proposed_end_time: "",
   expected_attendance: null,
   capacity_needed: null,
   required_layout: "",
@@ -291,6 +303,10 @@ async function loadDraft() {
       description: data.description || "",
       proposed_date: data.proposedDate || "",
       proposed_time: data.proposedTime ? data.proposedTime.slice(0, 5) : "",
+      proposed_end_date: data.proposedEndDate || data.proposed_end_date || "",
+      proposed_end_time: data.proposedEndTime
+        ? data.proposedEndTime.slice(0, 5)
+        : data.proposed_end_time || "",
       expected_attendance: data.expectedAttendance ?? null,
       capacity_needed: data.venueRequirements?.capacityNeeded ?? null,
       required_layout: data.venueRequirements?.requiredLayout || "",
@@ -371,8 +387,10 @@ async function saveDraft() {
 }
 
 const FIELD_LABELS = {
-  proposed_date: "Proposed Date",
-  proposed_time: "Proposed Time",
+  proposed_date: "Start Date",
+  proposed_time: "Start Time",
+  proposed_end_date: "End Date",
+  proposed_end_time: "End Time",
   expected_attendance: "Expected Attendance",
   capacity_needed: "Capacity Needed",
   required_layout: "Required Layout",
