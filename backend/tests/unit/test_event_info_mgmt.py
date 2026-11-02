@@ -13,10 +13,6 @@ from app.venues.services.preparation import (
     update_venue_preparation,
     PreparationUpdateError,
 )
-from app.equipment.services.preparation import (
-    update_equipment_preparation,
-    EquipmentPreparationError,
-)
 
 
 def _make_event_change_booking(event_id, status=BOOKING_APPROVED):
@@ -503,8 +499,6 @@ class TestVenuePreparation:
             assert VenueBooking.query.get(booking.id).setup_status == "pending"
 
 
-# test equipment preparation service
-
 def test_adding_new_equipment_requirement_does_not_overwrite_existing(app, coordinator, make_event):
     with app.app_context():
         from app.models.user import User
@@ -524,83 +518,7 @@ def test_adding_new_equipment_requirement_does_not_overwrite_existing(app, coord
 
         items = {i.equipment_type: i.quantity for i in EventEquipmentRequirement.query.filter_by(event_id=event_id)}
         assert items == {"Projector": 1, "Speaker": 2}
-
-def _make_requirement(event_id, status="requested"):
-    req = EventEquipmentRequirement(event_id=event_id, equipment_type="Projector", quantity=2, status=status)
-    db.session.add(req)
-    db.session.commit()
-    return req
-
-
-class TestEquipmentPreparation:
-    def test_tss_updates_preparation(self, app, make_user, make_event):
-        with app.app_context():
-            from app.models.user import User
-            tss_id = make_user("tss@test.com", ["technical_support_staff"])
-            event_id = make_event(organiser_id=1, status="planning")
-            req = _make_requirement(event_id)
-            tss = User.query.get(tss_id)
-
-            update_equipment_preparation(req, tss, {"testing_status": "done", "installation_status": "in_progress"})
-
-            refreshed = EventEquipmentRequirement.query.get(req.id)
-            assert refreshed.testing_status == "done"
-            assert refreshed.installation_status == "in_progress"
-            assert refreshed.updated_at is not None
-
-    def test_non_tss_rejected(self, app, coordinator, make_event):
-        with app.app_context():
-            from app.models.user import User
-            event_id = make_event(organiser_id=1, status="planning")
-            req = _make_requirement(event_id)
-            coord = User.query.get(coordinator)
-
-            with pytest.raises(PermissionError):
-                update_equipment_preparation(req, coord, {"testing_status": "done"})
-
-    def test_cannot_touch_quantity_or_type(self, app, make_user, make_event):
-        """AC2: TSS can't change venue details, core event fields, or
-        quantity/type of equipment requested by the Coordinator."""
-        with app.app_context():
-            from app.models.user import User
-            tss_id = make_user("tss2@test.com", ["technical_support_staff"])
-            event_id = make_event(organiser_id=1, status="planning")
-            req = _make_requirement(event_id)
-            tss = User.query.get(tss_id)
-
-            with pytest.raises(EquipmentPreparationError):
-                update_equipment_preparation(req, tss, {"quantity": 10})
-
-            assert EventEquipmentRequirement.query.get(req.id).quantity == 2
-
-    def test_confirmed_equipment_reserved_still_updatable(self, app, make_user, make_event):
-        """AC3: updating preparation doesn't revert event status or touch
-        core info -- it's gated by the requirement's own status."""
-        with app.app_context():
-            from app.models.user import User
-            from app.models.event import Event
-            tss_id = make_user("tss3@test.com", ["technical_support_staff"])
-            event_id = make_event(organiser_id=1, status="confirmed")
-            req = _make_requirement(event_id, status="confirmed")
-            tss = User.query.get(tss_id)
-
-            update_equipment_preparation(req, tss, {"installation_status": "done"})
-
-            assert EventEquipmentRequirement.query.get(req.id).installation_status == "done"
-            assert Event.query.get(event_id).status == "confirmed"  # unchanged
-
-    def test_unavailable_requirement_rejected(self, app, make_user, make_event):
-        with app.app_context():
-            from app.models.user import User
-            tss_id = make_user("tss4@test.com", ["technical_support_staff"])
-            event_id = make_event(organiser_id=1, status="planning")
-            req = _make_requirement(event_id, status="unavailable")
-            tss = User.query.get(tss_id)
-
-            with pytest.raises(EquipmentPreparationError):
-                update_equipment_preparation(req, tss, {"testing_status": "done"})
-
-    #Testing info management change edit logic
+class TestSafetyCheckEdits:
     def test_significant_edit_during_safety_check_reverts_once_with_the_significant_reason(
         self, app, coordinator, make_event
     ):

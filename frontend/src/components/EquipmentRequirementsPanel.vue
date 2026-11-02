@@ -5,7 +5,7 @@
     <table v-else class="req-table">
       <thead>
         <tr>
-          <th>Type</th><th>Qty</th><th>Technical requirements</th><th>Status</th><th>Testing</th><th>Installation</th>
+          <th>Type</th><th>Qty</th><th>Technical requirements</th><th>Status</th>
         </tr>
       </thead>
       <tbody>
@@ -17,8 +17,6 @@
             <StatusBadge kind="requirement" :status="req.status" />
             <span v-if="req.needsRecheck" class="badge-warn">Needs recheck</span>
           </td>
-          <td><StatusBadge kind="preparation" :status="req.testingStatus" /></td>
-          <td><StatusBadge kind="preparation" :status="req.installationStatus" /></td>
         </tr>
       </tbody>
     </table>

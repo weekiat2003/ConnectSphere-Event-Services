@@ -32,8 +32,7 @@
         <thead>
           <tr>
             <th>Type</th><th>Qty</th><th>Technical requirements</th><th>Status</th>
-            <th>Reservation</th><th>Testing</th><th>Installation</th>
-            <th v-if="isTechSupport">Actions</th>
+            <th>Reservation</th><th v-if="isTechSupport">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -47,8 +46,6 @@
                 <span v-if="req.needsRecheck" class="badge-warn">Needs recheck</span>
               </td>
               <td>{{ reservationText(req.reservation) }}</td>
-              <td><StatusBadge kind="preparation" :status="req.testingStatus" /></td>
-              <td><StatusBadge kind="preparation" :status="req.installationStatus" /></td>
               <td v-if="isTechSupport">
                 <button
                   v-if="!req.reservation"
@@ -67,8 +64,20 @@
                 >
                   {{ releasingReservationId === req.reservation.id ? "Releasing…" : "Release" }}
                 </button>
+                <button
+                  v-if="req.status === 'confirmed' && req.needsRecheck"
+                  type="button"
+                  class="btn btn-grey"
+                  :disabled="confirmingRecheckId === req.id"
+                  @click="confirmStillSuitable(event, req)"
+                >
+                  {{ confirmingRecheckId === req.id ? "Confirming…" : "Confirm still suitable" }}
+                </button>
                 <p v-if="req.actionError" class="form-error" role="alert">
                   {{ req.actionError }}
+                </p>
+                <p v-if="req.recheckError" class="form-error" role="alert">
+                  {{ req.recheckError }}
                 </p>
               </td>
             </tr>
@@ -76,7 +85,7 @@
               v-if="reservationForm?.key === rowKey(event.id, req.id)"
               class="reserve-row"
             >
-              <td :colspan="isTechSupport ? 8 : 7">
+              <td :colspan="isTechSupport ? 6 : 5">
                 <form class="reserve-form" @submit.prevent="submitReservation(event, req)">
                   <label class="field">
                     <span>Equipment item</span>
@@ -165,6 +174,7 @@ const error = ref("");
 const showEmpty = ref(false);
 const reservationForm = ref(null);
 const releasingReservationId = ref(null);
+const confirmingRecheckId = ref(null);
 const auth = useAuthStore();
 const { confirm } = useConfirm();
 const isTechSupport = computed(() => auth.hasRole("technical_support_staff"));
@@ -200,6 +210,31 @@ function addHours(value, hours) {
 function reservationText(r) {
   if (!r) return "—";
   return `${r.quantity} × ${formatReservationDateTime(r.start)} to ${formatReservationDateTime(r.end)}`;
+}
+
+async function reloadRequirement(event, requirement) {
+  const { data } = await equipmentApi.eventRequirements(event.id);
+  const updated = data.requirements.find((row) => row.id === requirement.id);
+  if (!updated) throw new Error("Equipment requirement was not returned after reload.");
+  Object.assign(requirement, updated, { recheckError: "" });
+}
+
+async function confirmStillSuitable(event, requirement) {
+  const confirmed = await confirm(
+    `Confirm that ${requirement.type} is still suitable for ${event.name}?`
+  );
+  if (!confirmed) return;
+
+  requirement.recheckError = "";
+  confirmingRecheckId.value = requirement.id;
+  try {
+    await equipmentApi.confirmRecheck(requirement.id);
+    await reloadRequirement(event, requirement);
+  } catch (e) {
+    requirement.recheckError = message(e, "Could not confirm equipment suitability.");
+  } finally {
+    confirmingRecheckId.value = null;
+  }
 }
 
 function openReservation(event, requirement) {
@@ -339,6 +374,8 @@ onMounted(async () => {
 .reserve-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; padding: 0.35rem 0; }
 .field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; font-weight: 500; color: var(--text-muted, #6b6890); }
 .field input, .field select { min-width: 12rem; padding: 0.4rem 0.7rem; border: 1px solid var(--border, #e4defa); border-radius: 8px; font: inherit; color: var(--text, #2d2a4a); }
+.req-table select { max-width: 9rem; padding: 0.35rem; border: 1px solid var(--border, #e4defa); border-radius: 8px; font: inherit; color: var(--text, #2d2a4a); }
+.req-table select:disabled { opacity: 0.65; }
 .field input[type="number"] { min-width: 5rem; width: 5rem; }
 .form-actions { display: inline-flex; gap: 0.5rem; }
 .form-note, .form-error { flex-basis: 100%; margin: 0; }

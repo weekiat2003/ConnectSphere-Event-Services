@@ -513,6 +513,33 @@ def notify_arrangements_of_significant_change(event, fields) -> list:
         )
     return created
 
+
+@_never_blocks
+def notify_technical_support_of_safety_recheck(
+    event, decision: str, reason: str = None
+) -> list:
+    if not event.equipment_requirements:
+        return []
+
+    outcome = "requested changes to" if decision == "changes_requested" else "rejected"
+    message = (
+        f'The Safety Officer {outcome} the arrangements for "{_name(event)}". '
+        "Please recheck the flagged equipment."
+    )
+    if reason:
+        message = f"{message} Reason: {reason}"
+
+    return notify_role(
+        "technical_support_staff",
+        TYPE_ARRANGEMENT_REVIEW,
+        "Safety check: equipment recheck needed",
+        message,
+        event_id=event.id,
+        link=f"/technical-review?event={event.id}",
+        data={"decision": decision, "reason": reason},
+    )
+
+
 @_never_blocks
 def notify_coordinator_of_equipment_reservation(
     reservation, action: str, actor_id: int = None
@@ -574,6 +601,56 @@ def notify_coordinator_of_equipment_shortage(
             "kind": "reservation_refused",
             "requested_quantity": requested_quantity,
             "available_quantity": available_quantity,
+        },
+    )]
+
+
+@_never_blocks
+def notify_coordinator_of_equipment_preparation(
+    requirement, field: str, new_value: str
+) -> list:
+    event = db.session.get(Event, requirement.event_id)
+    if event is None or event.coordinator_id is None:
+        return []
+
+    item = requirement.equipment_type
+    field_label = field.replace("_", " ")
+    value_label = new_value.replace("_", " ")
+    return [notify(
+        event.coordinator_id,
+        TYPE_EQUIPMENT_RESERVATION_UPDATE,
+        "Equipment preparation updated",
+        f'{field_label.capitalize()} for {item} on "{_name(event)}" is now {value_label}.',
+        event_id=event.id,
+        link=_event_link(event),
+        data={
+            "kind": "preparation_updated",
+            "item": item,
+            "field": field,
+            "new_value": new_value,
+        },
+    )]
+
+
+@_never_blocks
+def notify_coordinator_of_equipment_recheck(requirement, kind: str) -> list:
+    event = db.session.get(Event, requirement.event_id)
+    if event is None or event.coordinator_id is None:
+        return []
+
+    item = requirement.equipment_type
+    return [notify(
+        event.coordinator_id,
+        TYPE_EQUIPMENT_RESERVATION_UPDATE,
+        "Equipment suitability confirmed",
+        f'Technical Support confirmed that {item} for "{_name(event)}" is still suitable.',
+        event_id=event.id,
+        link=_event_link(event),
+        data={
+            "kind": kind,
+            "item": item,
+            "field": "needs_recheck",
+            "new_value": False,
         },
     )]
 
