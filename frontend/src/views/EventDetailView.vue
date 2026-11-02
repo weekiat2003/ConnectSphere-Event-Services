@@ -153,16 +153,10 @@
           <div class="thread-message request">
             <span class="thread-meta">Coordinator · {{ formatDate(item.request.createdAt) }}</span>
             <p>{{ item.request.comments }}</p>
-            <p v-if="item.request.editableFields?.length" class="thread-fields">
-              Fields opened for editing: {{ formatFieldNames(item.request.editableFields) }}
-            </p>
           </div>
           <div v-if="item.response" class="thread-message response">
             <span class="thread-meta">Organiser · {{ formatDate(item.response.createdAt) }}</span>
             <p>{{ item.response.comments }}</p>
-            <p v-if="Object.keys(item.response.updatedFields || {}).length" class="thread-fields">
-              Updated: {{ formatFieldNames(Object.keys(item.response.updatedFields)) }}
-            </p>
           </div>
           <div v-else-if="item.withdrawn" class="thread-withdrawn">Withdrawn by coordinator</div>
           <div v-else class="thread-pending">
@@ -248,21 +242,8 @@
       <div v-if="event.status === 'under_review'" class="action-block">
         <textarea v-model="comment" placeholder="Comments / reason"></textarea>
 
-        <div class="field-select">
-          <span class="detail-label">Allow organiser to edit:</span>
-          <div class="checkbox-grid">
-            <label v-for="opt in EDITABLE_FIELD_OPTIONS" :key="opt.key" class="checkbox-option">
-              <input type="checkbox" :value="opt.key" v-model="editableFields" />
-              {{ opt.label }}
-            </label>
-          </div>
-        </div>
-
         <div v-if="event.clarificationFlag" class="notice">
           <strong>Clarification requested:</strong> {{ event.clarificationComments }}
-          <div v-if="event.clarificationEditableFields?.length" class="editable-fields-note">
-            Organiser can edit: {{ formatFieldNames(event.clarificationEditableFields) }}
-          </div>
         </div>
 
         <p v-if="clarificationError" class="field-error">{{ clarificationError }}</p>
@@ -495,25 +476,6 @@
                 placeholder="Explain what you changed, or answer the coordinator's question"></textarea>
             </div>
           </label>
-
-          <template v-if="item.request.editableFields?.length">
-            <div v-for="field in EDITABLE_FIELD_OPTIONS.filter((o) => item.request.editableFields.includes(o.key))"
-              :key="field.key" class="field-row">
-              <label>
-                {{ field.label }}
-                <input v-if="field.type === 'checkbox'" type="checkbox"
-                  v-model="openResponseForms[item.reviewId].fields[field.key]" />
-                <textarea v-else-if="field.type === 'textarea'"
-                  v-model="openResponseForms[item.reviewId].fields[field.key]"></textarea>
-                <input v-else-if="field.type === 'number'" type="number"
-                  v-model.number="openResponseForms[item.reviewId].fields[field.key]" />
-                <input v-else :type="field.type" v-model="openResponseForms[item.reviewId].fields[field.key]" />
-              </label>
-            </div>
-          </template>
-          <p v-else class="notice-inline">
-            The coordinator hasn't opened any fields for editing on this request. You can still respond in words.
-          </p>
 
           <p v-if="respondErrors[item.reviewId]" class="field-error">{{ respondErrors[item.reviewId] }}</p>
           <div class="actions">
@@ -837,8 +799,6 @@ const canEditEvent = computed(() =>
   isAssignedCoordinator.value && EDITABLE_EVENT_STATUSES.includes(event.value.status)
 );
 
-const editableFields = ref([]);       // coordinator's selection when requesting clarification
-
 const isAssignedCoordinator = computed(
   () => auth.hasRole("event_coordinator") && event.value?.coordinatorId === auth.user?.id
 );
@@ -1103,9 +1063,8 @@ async function loadCoordinators() {
 async function clarify() {
   clarificationError.value = "";
   try {
-    await eventsApi.requestClarification(event.value.id, comment.value, editableFields.value);
+    await eventsApi.requestClarification(event.value.id, comment.value);
     comment.value = "";
-    editableFields.value = [];
     await load();
   } catch (e) {
     clarificationError.value = e.response?.data?.error || "Could not request clarification.";
@@ -1127,7 +1086,7 @@ function ensureResponseForm(item) {
     registration_required: event.value.registrationRequired,
   };
   const fields = {};
-  (item.request.editableFields || []).forEach((key) => {
+  ([]).forEach((key) => {
     fields[key] = source[key] ?? (key === "registration_required" ? false : "");
   });
   openResponseForms[item.reviewId] = { comments: "", fields };
