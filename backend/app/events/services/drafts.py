@@ -10,7 +10,6 @@ from app.extensions import db
 from app.models.event import Event, EventEquipmentRequirement
 from datetime import date, time, datetime
 
-from app.models import event
 
 CORE_FIELDS = ["name", "purpose", "description", "category"]
 SCHEDULE_FIELDS = [
