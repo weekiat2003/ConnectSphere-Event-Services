@@ -68,7 +68,7 @@ class TestAttendeeViewsEvent:
     PUBLIC_KEYS = {
         "id", "name", "description", "date", "time", "venues", "status", "statusLabel",
         "registrationOpen", "capacity", "placesRemaining", "isFull", "canRegister",
-        "canJoinWaitlist", "myRegistration", "followingUpdates",
+        "canJoinWaitlist", "myRegistration", "followingUpdates", "registrationRequired"
     }
 
     def test_only_public_details_are_shown(self, app, people):
@@ -106,20 +106,32 @@ class TestAttendeeViewsEvent:
 
         assert str(hidden.value) == str(missing.value)  # does not reveal that the event exists
 
-    def test_confirmed_event_without_registration_is_not_listed_or_viewable(self, app, people):
+    def test_confirmed_event_without_registration_is_listed_and_viewable(self, app, people):
         event = make_event(people, required=False)
 
-        assert service.list_events(people["a1"]) == []
-        with pytest.raises(NotFound):
-            service.get_event(event.id, people["a1"])
+        events = service.list_events(people["a1"])
 
-    def test_list_shows_only_confirmed_events_that_take_registrations(self, app, people):
+        assert len(events) == 1
+        assert events[0]["id"] == event.id
+        assert events[0]["registrationRequired"] is False
+
+        info = service.get_event(event.id, people["a1"])
+
+        assert info["id"] == event.id
+        assert info["registrationRequired"] is False
+
+    def test_list_shows_all_confirmed_events_regardless_of_registration(self, app, people):
         shown = open_event(people, name="Shown")
         make_event(people, name="Draft", status="draft")
-        make_event(people, name="No sign-up", required=False)
+        no_signup = make_event(people, name="No sign-up", required=False)
         make_event(people, name="Done", status="completed")
 
-        assert [e["id"] for e in service.list_events(people["a1"])] == [shown.id]
+        events = service.list_events(people["a1"])
+
+        assert [e["id"] for e in events] == [shown.id, no_signup.id]
+
+        no_signup_info = next(e for e in events if e["id"] == no_signup.id)
+        assert no_signup_info["registrationRequired"] is False
 
     def test_limited_capacity_shows_remaining_places_then_full(self, app, people):
         event = open_event(people, capacity=2)
