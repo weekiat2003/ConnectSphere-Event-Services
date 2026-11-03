@@ -120,7 +120,16 @@
                     <input v-model="reservationForm.end" type="datetime-local" required />
                   </label>
                   <p v-if="!matchingItems(req).length" class="muted form-note">
-                    No active catalogue item matches this equipment type.
+                    <template v-if="unavailableMatchingItem(req)">
+                      {{ unavailableItemMessage(unavailableMatchingItem(req)) }}
+                      <StatusBadge
+                        kind="item"
+                        :status="unavailableMatchingItem(req).status"
+                      />
+                    </template>
+                    <template v-else>
+                      No active catalogue item matches this equipment type.
+                    </template>
                   </p>
                   <p v-if="reservationForm.error" class="form-error" role="alert">
                     {{ reservationForm.error }}
@@ -189,11 +198,23 @@ const hiddenCount = computed(() => events.value.length - visibleEvents.value.len
 function message(e, fallback) { return e.response?.data?.error || fallback; }
 function rowKey(eventId, requirementId) { return `${eventId}-${requirementId}`; }
 function normalizedName(name) { return String(name || "").trim().toLowerCase(); }
-function matchingItems(requirement) {
+function matchingCatalogueItems(requirement) {
   const type = normalizedName(requirement.type);
-  return equipmentItems.value.filter(
-    (item) => item.status === "active" && normalizedName(item.name) === type
-  );
+  return equipmentItems.value.filter((item) => normalizedName(item.name) === type);
+}
+function matchingItems(requirement) {
+  return matchingCatalogueItems(requirement).filter((item) => item.status === "active");
+}
+function unavailableMatchingItem(requirement) {
+  return matchingCatalogueItems(requirement).find((item) => item.status !== "active");
+}
+function unavailableItemMessage(item) {
+  const messages = {
+    damaged: `${item.name} is currently damaged and can't be reserved.`,
+    maintenance: `${item.name} is currently under maintenance and can't be reserved.`,
+    retired: `${item.name} has been retired from the catalogue and can't be reserved.`,
+  };
+  return messages[item.status] || `${item.name} is currently ${item.status} and can't be reserved.`;
 }
 function initialStart(event) {
   if (!event.proposedDate) return "";

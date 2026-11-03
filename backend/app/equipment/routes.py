@@ -56,7 +56,10 @@ def update_item(item_id):
     item = catalogue.get_item(item_id)
     if not item:
         return jsonify({"error": "Equipment item not found"}), 404
-    item = catalogue.update_item(item, request.get_json() or {})
+    try:
+        item = catalogue.update_item(item, request.get_json() or {})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return jsonify(item.to_dict()), 200
 
 
@@ -84,7 +87,46 @@ def mark_item_active(item_id):
     item = catalogue.get_item(item_id)
     if not item:
         return jsonify({"error": "Equipment item not found"}), 404
-    item = catalogue.mark_active(item)
+    try:
+        item = catalogue.mark_active(item)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(item.to_dict()), 200
+
+
+@equipment_bp.post("/items/<int:item_id>/retire")
+@roles_required("technical_support_staff")
+def retire_item(item_id):
+    item = catalogue.get_item(item_id)
+    if not item:
+        return jsonify({"error": "Equipment item not found"}), 404
+    try:
+        item = catalogue.retire_item(item)
+    except catalogue.ItemRetirementBlockedError as e:
+        affected = []
+        for reservation_record in e.reservations:
+            reservation_data = reservation_record.to_dict()
+            reservation_data["eventName"] = reservation_record.event.name
+            affected.append(reservation_data)
+        return jsonify({
+            "error": str(e),
+            "itemId": item.id,
+            "itemName": item.name,
+            "affectedReservations": affected,
+        }), 409
+    return jsonify(item.to_dict()), 200
+
+
+@equipment_bp.post("/items/<int:item_id>/restore")
+@roles_required("technical_support_staff")
+def restore_item(item_id):
+    item = catalogue.get_item(item_id)
+    if not item:
+        return jsonify({"error": "Equipment item not found"}), 404
+    try:
+        item = catalogue.restore_retired_item(item)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return jsonify(item.to_dict()), 200
 
 

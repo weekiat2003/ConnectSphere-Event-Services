@@ -21,7 +21,7 @@ const TONES = {
   },
   requirement: { requested: "butter", confirmed: "mint", unavailable: "rose" },
   preparation: { pending: "lilac", in_progress: "sky", done: "mint" },
-  item: { active: "mint", damaged: "rose", maintenance: "butter" },
+  item: { active: "mint", damaged: "rose", maintenance: "butter", retired: "lilac" },
   venue: {
     pending: "butter", approved: "mint", held: "sky",
     rejected: "rose", cancelled: "rose",
@@ -32,7 +32,7 @@ const TONES = {
 const LABELS = {
   requirement: { requested: "Requested", confirmed: "Reserved", unavailable: "Unavailable" },
   preparation: { pending: "Pending", in_progress: "In progress", done: "Done" },
-  item: { active: "Active", damaged: "Damaged", maintenance: "Under Maintenance" },
+  item: { active: "Active", damaged: "Damaged", maintenance: "Under Maintenance", retired: "Retired" },
   venue: {
     pending: "Pending", approved: "Approved", held: "Held",
     rejected: "Rejected", cancelled: "Cancelled",

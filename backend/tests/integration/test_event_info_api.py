@@ -3,7 +3,8 @@ from datetime import datetime
 from app.events.services import update as update_service
 from app.models.user import User
 from app.extensions import db
-from app.models.event import Event, EventEquipmentRequirement
+from app.models.equipment import EquipmentItem, EquipmentReservation
+from app.models.event import Event, EventEquipmentRequirement, EventFieldEditLog
 from app.models.venue import Venue, VenueBooking, BOOKING_APPROVED
 
 
@@ -185,6 +186,83 @@ class TestEventUpdateRoute:
         assert res.get_json()["expectedAttendance"] == 55
         with app.app_context():
             assert VenueBooking.query.get(booking_id).needs_reconsideration is True
+
+    def test_date_only_edit_preserves_equipment_and_reservation_data(
+        self, client, app, coordinator, make_event, auth_header
+    ):
+        with app.app_context():
+            event_id = make_event(
+                organiser_id=1,
+                status="planning",
+                coordinator_id=coordinator,
+                proposed_date=datetime(2026, 12, 1).date(),
+                proposed_time=datetime(2026, 12, 1, 9).time(),
+            )
+            item = EquipmentItem(name="Projector", total_quantity=5)
+            requirement = EventEquipmentRequirement(
+                event_id=event_id,
+                equipment_type="Projector",
+                quantity=2,
+                technical_notes="Ceiling mount",
+                status="confirmed",
+            )
+            db.session.add_all([item, requirement])
+            db.session.commit()
+            reservation = EquipmentReservation(
+                event_id=event_id,
+                equipment_requirement_id=requirement.id,
+                equipment_item_id=item.id,
+                quantity=2,
+                start_datetime=datetime(2026, 12, 1, 10),
+                end_datetime=datetime(2026, 12, 1, 12),
+                status="reserved",
+            )
+            db.session.add(reservation)
+            db.session.commit()
+            requirement_id = requirement.id
+            item_id = item.id
+            reservation_id = reservation.id
+
+        response = client.put(
+            f"/api/events/{event_id}/update",
+            json={
+                "fields": {"proposed_date": "2026-12-02"},
+                "offlineReviewConfirmed": True,
+            },
+            headers=auth_header("coordinator@test.com"),
+        )
+
+        assert response.status_code == 200
+        with app.app_context():
+            requirement = db.session.get(EventEquipmentRequirement, requirement_id)
+            reservation = db.session.get(EquipmentReservation, reservation_id)
+            edit_log = EventFieldEditLog.query.filter_by(event_id=event_id).one()
+            assert (
+                requirement.equipment_type,
+                requirement.quantity,
+                requirement.technical_notes,
+                requirement.status,
+            ) == ("Projector", 2, "Ceiling mount", "confirmed")
+            # Date edits retain the existing recheck behavior without changing the requirement itself.
+            assert requirement.needs_recheck is True
+            assert (
+                reservation.equipment_requirement_id,
+                reservation.equipment_item_id,
+                reservation.quantity,
+                reservation.status,
+                reservation.start_datetime,
+                reservation.end_datetime,
+            ) == (
+                requirement_id,
+                item_id,
+                2,
+                "reserved",
+                datetime(2026, 12, 1, 10),
+                datetime(2026, 12, 1, 12),
+            )
+            assert edit_log.fields_changed == ["proposed_date"]
+            assert "equipment_requirements" not in edit_log.old_values
+            assert "equipment_requirements" not in edit_log.new_values
 
     def test_non_assigned_coordinator_returns_403(self, client, app, coordinator, make_user, make_event, auth_header):
         with app.app_context():
