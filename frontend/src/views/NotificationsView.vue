@@ -54,6 +54,8 @@ const TYPE_LABELS = {
   registration_change: "Registration",
   safety_check: "Safety check",
   arrangement_review: "Review needed",
+  change_request: "Change request",
+  clarification: "Clarification",
 };
 const NOTIFICATION_KIND_LABELS = {
   preparation_updated: "Equipment preparation",

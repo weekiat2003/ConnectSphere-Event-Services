@@ -10,7 +10,10 @@ reused by booking.py's conflict detection so the two can never drift apart.
 from datetime import datetime, timedelta, time
 import re
 
-from app.notifications.services.triggers import notify_coordinator_of_booking_update
+from app.notifications.services.triggers import (
+    notify_coordinator_of_booking_update,
+    notify_coordinator_of_venue_flag,
+)
 from app.extensions import db
 from app.common.time import utcnow
 from app.models.venue import (
@@ -75,9 +78,13 @@ def compute_booking_window(booking, venue: Venue):
     return pad_window(booking.start_datetime, booking.end_datetime, venue)
 
 
-def add_flag_once(event_id: int, venue_id: int, reason: str):
+def add_flag_once(event_id: int, venue_id: int, reason: str, notify: bool = True):
     """Create an unresolved flag unless an identical one already exists.
-    Returns the new flag, or None if it would have been a duplicate."""
+    Returns the new flag, or None if it would have been a duplicate.
+
+    A new flag also notifies the event's Coordinator (otherwise the flag is
+    only visible on the Venue Availability page). notify=False is for a
+    caller that already sends its own, more specific notification."""
     existing = VenueAvailabilityFlag.query.filter_by(
         event_id=event_id, venue_id=venue_id, reason=reason, resolved=False
     ).first()
@@ -85,6 +92,9 @@ def add_flag_once(event_id: int, venue_id: int, reason: str):
         return None
     flag = VenueAvailabilityFlag(event_id=event_id, venue_id=venue_id, reason=reason)
     db.session.add(flag)
+    if notify:
+        db.session.flush()  # flag.id is included in the notification
+        notify_coordinator_of_venue_flag(flag)
     return flag
 
 
@@ -150,7 +160,7 @@ def get_combined_calendar(start, end):
     ]
 
 
-def _flag_affected_events(venue: Venue, start, end, reason: str):
+def _flag_affected_events(venue: Venue, start, end, reason: str, notify: bool = True):
     """Flag availability changes affecting an upcoming event: any APPROVED
     booking on this venue whose effective (setup/turnaround-padded) window
     overlaps the new unavailable period gets a flag so the Coordinator can
@@ -172,6 +182,7 @@ def _flag_affected_events(venue: Venue, start, end, reason: str):
                 event.id,
                 venue.id,
                 reason or "Venue marked unavailable during this event's scheduled time",
+                notify=notify,
             )
             if flag:
                 flagged.append(flag)
@@ -228,7 +239,10 @@ def add_unavailability(venue: Venue, user_id: int, start, end, reason: str = Non
     )
     db.session.add(block)
 
-    flags = _flag_affected_events(venue, start, end, reason)
+    # The overlapping bookings are rejected below, and that sends the
+    # Coordinator a "Venue booking rejected" notice, so the flag itself
+    # does not notify a second time.
+    flags = _flag_affected_events(venue, start, end, reason, notify=False)
 
     affected_bookings = VenueBooking.query.filter(
         VenueBooking.venue_id == venue.id,

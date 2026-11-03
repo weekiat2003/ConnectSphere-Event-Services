@@ -304,6 +304,7 @@ def review_safety_check(
             commit=False,
         )
         notifications.notify_organiser_of_safety_decision(event, review)
+        notifications.notify_coordinator_of_safety_decision(event, review)
 
     else:
         # Safety Officer approves the safety check.
