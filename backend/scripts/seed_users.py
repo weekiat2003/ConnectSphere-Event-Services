@@ -929,6 +929,22 @@ with app.app_context():
     print(f"Seeded {bookings_created} new venue booking request(s).")
 
 
+    # Events above are staged straight into safety_check, bypassing
+    # change_status(), so the "Safety check required" notification that the
+    # real workflow sends never fired: Safety Officers saw the events on
+    # their review list with nothing in their inbox. Send it now, once per
+    # event (re-running the seed does not duplicate it).
+    from app.models.notification import TYPE_SAFETY_CHECK, Notification  # noqa: E402
+    from app.notifications.services.triggers import notify_safety_officers_of_safety_check  # noqa: E402
+
+    safety_notices = 0
+    for staged in Event.query.filter_by(status="safety_check").all():
+        already = Notification.query.filter_by(type=TYPE_SAFETY_CHECK, event_id=staged.id).first()
+        if already is None:
+            safety_notices += len(notify_safety_officers_of_safety_check(staged))
+    db.session.commit()
+    print(f"Sent {safety_notices} safety-check notification(s) for staged events.")
+
     print(f"Seeded {created} new test user(s). Password for all: '{DEFAULT_PASSWORD}'")
     print(
         f"Seeded {venues_created} new sample venue(s); "

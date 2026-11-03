@@ -240,7 +240,7 @@ def _release_arrangements(event: Event, coordinator_id: int, reason: str, now):
 
     released_equipment = release_equipment_reservations(event)
 
-    return len(bookings), released_equipment
+    return bookings, released_equipment
 
 
 def cancel_event(event_id: int, coordinator_id: int, reason, dry_run: bool = False) -> Event:
@@ -272,10 +272,11 @@ def cancel_event(event_id: int, coordinator_id: int, reason, dry_run: bool = Fal
         reason=reason,
         changed_at=now,
     ))
-    _release_arrangements(event, coordinator_id, reason, now)
+    released_bookings, _ = _release_arrangements(event, coordinator_id, reason, now)
     from app.change_requests.services import resolve_withdrawals_for_cancelled_event
     resolve_withdrawals_for_cancelled_event(event, coordinator_id, reason)
     notifications.on_event_status_changed(event, old_status, "cancelled", coordinator_id, reason)
+    notifications.notify_venue_staff_of_released_bookings(event, released_bookings, reason)
     from app.events.services.assignment import close_reassignment_request_for_closed_event
     close_reassignment_request_for_closed_event(event)
     db.session.commit()

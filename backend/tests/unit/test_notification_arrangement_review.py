@@ -200,6 +200,9 @@ def test_organiser_text_says_the_coordinator_will_update_the_event(app, organise
     for outcome in ("processed", "applied"):
         triggers.notify_organiser_of_change_request(event, request, outcome)
 
-    messages = [n.message for n in Notification.query.filter_by(recipient_id=organiser)]
+    # Only the decision notices (submitting the request also sends the
+    # organiser a "Change request submitted" confirmation).
+    messages = [n.message for n in Notification.query.filter_by(recipient_id=organiser)
+                if n.data.get("kind", "").startswith(("change_request_processed", "change_request_applied"))]
     assert len(messages) == 2
     assert all("will update the event details" in m for m in messages)

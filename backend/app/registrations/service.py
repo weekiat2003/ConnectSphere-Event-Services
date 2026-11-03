@@ -298,6 +298,7 @@ def register(event_id, attendee_id):
 
     registration = Registration(event_id=event.id, attendee_id=attendee_id, status=REG_REGISTERED)
     db.session.add(registration)
+    notifications.notify_attendee_of_successful_registration(event, attendee_id)
     db.session.commit()
     return registration
 

@@ -601,6 +601,12 @@ def status_pair(notification):
     return notification.data["oldStatus"], notification.data["newStatus"]
 
 
+def status_updates(user_id):
+    """The Attendee's inbox without the "Registration successful" confirmation
+    sent when they register, i.e. only the status-change notices."""
+    return [n for n in inbox(user_id) if n.data.get("kind") != "registration_success"]
+
+
 # ===========================================================================
 # AC1  Opted-in Attendee: registration opens or closes
 # ===========================================================================
@@ -667,7 +673,7 @@ class TestISP108AC2StatusChanges:
 
         registrations.withdraw(mine.id, attendees[0])
 
-        [n] = inbox(attendees[0])
+        [n] = status_updates(attendees[0])
         assert status_pair(n) == ("registered", "withdrawn")
         assert "from Registered to Withdrawn" in n.message and "Gala Night" in n.message
 
@@ -677,7 +683,7 @@ class TestISP108AC2StatusChanges:
 
         registrations.withdraw(waiting.id, attendees[1])
 
-        [n] = inbox(attendees[1])
+        [n] = status_updates(attendees[1])
         assert status_pair(n) == ("waitlisted", "withdrawn")
         assert "from Waiting list to Withdrawn" in n.message
 
@@ -687,7 +693,7 @@ class TestISP108AC2StatusChanges:
 
         status.cancel_event(event.id, coordinator, "The venue flooded overnight.")
 
-        [n] = inbox(attendees[0])
+        [n] = status_updates(attendees[0])
         assert status_pair(n) == ("registered", "cancelled")
         assert "from Registered to Cancelled" in n.message and "Gala Night" in n.message
         assert "The venue flooded overnight." in n.message
@@ -698,7 +704,7 @@ class TestISP108AC2StatusChanges:
 
         status.cancel_event(event.id, coordinator, "No longer going ahead.")
 
-        assert status_pair(inbox(attendees[1])[0]) == ("waitlisted", "cancelled")
+        assert status_pair(status_updates(attendees[1])[0]) == ("waitlisted", "cancelled")
 
     def test_one_notification_per_change_with_no_duplicates(self, app, organiser, coordinator, attendees):
         event = open_event(organiser, coordinator, capacity=1)
@@ -707,11 +713,11 @@ class TestISP108AC2StatusChanges:
 
         registrations.withdraw(holder.id, attendees[0])
 
-        assert len(inbox(attendees[0])) == 1 and len(inbox(attendees[1])) == 1
+        assert len(status_updates(attendees[0])) == 1 and len(status_updates(attendees[1])) == 1
         # reading the event again must not repeat the promotion notice
         registrations.get_event(event.id, attendees[1])
         registrations.my_registrations(attendees[1])
-        assert len(inbox(attendees[1])) == 1
+        assert len(status_updates(attendees[1])) == 1
 
 
 # ===========================================================================
@@ -759,8 +765,8 @@ class TestISP108AC4OnlyAffectedAttendees:
 
         status.cancel_event(event.id, coordinator, "Cancelled for testing.")
 
-        assert len(inbox(attendees[0])) == 1
-        assert inbox(attendees[1]) == []
+        assert len(status_updates(attendees[0])) == 1
+        assert status_updates(attendees[1]) == []
 
     def test_cancellation_reaches_registered_and_waitlisted_but_not_withdrawn(self, app, organiser, coordinator, attendees):
         event = open_event(organiser, coordinator, capacity=1)
@@ -768,13 +774,13 @@ class TestISP108AC4OnlyAffectedAttendees:
         registrations.join_waitlist(event.id, attendees[1])
         gone = registrations.join_waitlist(event.id, attendees[2])
         registrations.withdraw(gone.id, attendees[2])
-        before = len(inbox(attendees[2]))  # their own withdrawal confirmation
+        before = len(status_updates(attendees[2]))  # their own withdrawal confirmation
 
         status.cancel_event(event.id, coordinator, "Cancelled for testing.")
 
-        assert len(inbox(attendees[0])) == 1 and len(inbox(attendees[1])) == 1
-        assert len(inbox(attendees[2])) == before  # already withdrawn: not affected any more
-        assert inbox(attendees[3]) == [] and inbox(attendees[4]) == []
+        assert len(status_updates(attendees[0])) == 1 and len(status_updates(attendees[1])) == 1
+        assert len(status_updates(attendees[2])) == before  # already withdrawn: not affected any more
+        assert status_updates(attendees[3]) == [] and status_updates(attendees[4]) == []
 
 # ---------------------------------------------------------------------------
 # The same notifications seen through the API (what the Attendee actually sees)

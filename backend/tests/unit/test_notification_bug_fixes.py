@@ -1,7 +1,7 @@
-"""Regression tests for the Coordinator items on the Notification System bug
-list (team test sheet).
+"""Regression tests for the Notification System bug list (team test sheet).
 
-Each test performs the real service action and checks the Coordinator's inbox.
+Each test performs the real service action and checks the inbox of the
+person who reported "not getting a notification".
 """
 from datetime import timedelta
 
@@ -31,6 +31,11 @@ def staff(make_user):
         "venue1": make_user("venue1@test.com", ["venue_staff"], name="Vic Venue"),
         "lead1": make_user("lead1@test.com", ["event_coordinator_lead"], name="Lena Lead"),
         "safety1": make_user("safety1@test.com", ["safety_officer"], name="Sid Safety"),
+        "venue2": make_user("venue2@test.com", ["venue_staff"], name="Val Venue"),
+        "safety2": make_user("safety2@test.com", ["safety_officer"], name="Sue Safety"),
+        "att1": make_user("att1@test.com", ["attendee"], name="Ann Attendee"),
+        "att2": make_user("att2@test.com", ["attendee"], name="Ben Attendee"),
+        "att3": make_user("att3@test.com", ["attendee"], name="Cat Follower"),
     }
 
 
@@ -77,13 +82,6 @@ class TestCoordinatorToldOfChangeRequest:
         event = review.submit_event(new_event(organiser), organiser)  # waiting in the Unassigned queue
         cr.submit_change_request(event, organiser, {"name": "Gala Night 2"}, "Updated the event branding.")
         assert inbox(organiser, TYPE_CHANGE_REQUEST) == []
-
-    def test_organiser_gets_no_extra_notification(self, app, organiser, coordinator, staff):
-        event = submitted_and_assigned(organiser, coordinator)
-        before = len(inbox(organiser, TYPE_ORGANISER_UPDATE))
-        cr.submit_change_request(event, organiser, {"name": "Gala Night 2"}, "Updated the event branding.")
-        cr.request_withdrawal(event, organiser, "The sponsor has pulled out.")
-        assert len(inbox(organiser, TYPE_ORGANISER_UPDATE)) == before
 
 
 # --- Clarification ----------------------------------------------------------
@@ -202,3 +200,118 @@ class TestCoordinatorToldOfSafetyDecision:
         _decide(event, staff["safety1"], "approved")
         [n] = inbox(coordinator, TYPE_SAFETY_CHECK)
         assert n.title == "Safety check approved: confirm the event"
+
+
+
+# ===========================================================================
+# Other roles
+# ===========================================================================
+
+from app.events.services import status  # noqa: E402
+from app.models.notification import TYPE_REGISTRATION_CHANGE  # noqa: E402
+from app.models.registration import EventRegistrationSetting, EventUpdateSubscription  # noqa: E402
+from app.models.user import User  # noqa: E402
+from app.registrations import service as registrations  # noqa: E402
+
+
+class TestOrganiserToldRequestWasSubmitted:
+    def test_change_request(self, app, organiser, coordinator, staff):
+        event = submitted_and_assigned(organiser, coordinator)
+        request = cr.submit_change_request(event, organiser, {"name": "Gala Night 2"}, "Updated the event branding.")
+        [n] = [n for n in inbox(organiser, TYPE_ORGANISER_UPDATE) if n.data["kind"] == "change_request_submitted"]
+        assert n.title == "Change request submitted"
+        assert n.data["changeRequestId"] == request.id
+
+    def test_withdrawal_request(self, app, organiser, coordinator, staff):
+        event = submitted_and_assigned(organiser, coordinator)
+        cr.request_withdrawal(event, organiser, "The sponsor has pulled out.")
+        [n] = [n for n in inbox(organiser, TYPE_ORGANISER_UPDATE) if n.data["kind"] == "withdrawal_request_submitted"]
+        assert n.title == "Withdrawal request submitted"
+
+    def test_unassigned_event_still_confirms(self, app, organiser, staff):
+        event = review.submit_event(new_event(organiser), organiser)
+        cr.submit_change_request(event, organiser, {"name": "Gala Night 2"}, "Updated the event branding.")
+        assert any(n.data["kind"] == "change_request_submitted" for n in inbox(organiser, TYPE_ORGANISER_UPDATE))
+
+
+class TestVenueStaffToldWhenCancellationReleasesBooking:
+    def test_venue_manager_is_notified(self, app, organiser, coordinator, staff):
+        event, _, booking = _planning_event_with_booking(organiser, coordinator, staff["venue1"])
+        status.cancel_event(event.id, coordinator, "The keynote speaker withdrew.")
+        [n] = [n for n in inbox(staff["venue1"], TYPE_VENUE_BOOKING_UPDATE)
+               if n.data.get("change") == "released_event_cancelled"]
+        assert n.title == "Venue booking released"
+        assert "Grand Hall" in n.message and "The keynote speaker withdrew." in n.message
+        assert n.data["bookingId"] == booking.id
+        assert inbox(staff["venue2"], TYPE_VENUE_BOOKING_UPDATE) == []  # only the venue's manager
+
+    def test_falls_back_to_all_venue_staff_if_manager_inactive(self, app, organiser, coordinator, staff):
+        event, _, _ = _planning_event_with_booking(organiser, coordinator, staff["venue1"])
+        db.session.get(User, staff["venue1"]).is_active = False
+        db.session.commit()
+        status.cancel_event(event.id, coordinator, "The keynote speaker withdrew.")
+        assert len(inbox(staff["venue2"], TYPE_VENUE_BOOKING_UPDATE)) == 1
+
+    def test_no_bookings_means_no_venue_notification(self, app, organiser, coordinator, staff):
+        event = new_event(organiser, "planning", coordinator)
+        status.cancel_event(event.id, coordinator, "The keynote speaker withdrew.")
+        assert inbox(staff["venue1"], TYPE_VENUE_BOOKING_UPDATE) == []
+
+
+class TestSafetyOfficerToldOfEventForReview:
+    def test_coordinator_sending_event_for_safety_check_notifies_every_officer(
+        self, app, organiser, coordinator, staff
+    ):
+        event, _, _ = _planning_event_with_booking(organiser, coordinator, staff["venue1"])
+        status.change_status(event, "safety_check", coordinator, reason="Sent for safety check by the Coordinator")
+        for officer in ("safety1", "safety2"):
+            [n] = inbox(staff[officer], TYPE_SAFETY_CHECK)
+            assert n.title == "Safety check required"
+            assert n.link == f"/safety-reviews/{event.id}"
+
+
+def _open_confirmed_event(organiser, coordinator, capacity=1):
+    event = new_event(organiser, "confirmed", coordinator, intended_capacity=capacity, registration_required=True)
+    db.session.add(EventRegistrationSetting(event_id=event.id, is_open=True))
+    db.session.commit()
+    return event
+
+
+class TestAttendeeToldOfRegistration:
+    def test_registering(self, app, organiser, coordinator, staff):
+        event = _open_confirmed_event(organiser, coordinator)
+        registrations.register(event.id, staff["att1"])
+        [n] = inbox(staff["att1"], TYPE_REGISTRATION_CHANGE)
+        assert n.title == "Registration successful"
+        assert "Gala Night" in n.message
+        assert n.link == f"/attendee/events/{event.id}"
+
+    def test_joining_the_waiting_list_is_not_a_registration(self, app, organiser, coordinator, staff):
+        event = _open_confirmed_event(organiser, coordinator, capacity=1)
+        registrations.register(event.id, staff["att1"])
+        registrations.join_waitlist(event.id, staff["att2"])
+        assert inbox(staff["att2"], TYPE_REGISTRATION_CHANGE) == []
+
+
+class TestAttendeeToldOfCancellation:
+    def test_registered_waitlisted_and_followers_are_told(self, app, organiser, coordinator, staff):
+        event = _open_confirmed_event(organiser, coordinator, capacity=1)
+        registrations.register(event.id, staff["att1"])
+        registrations.join_waitlist(event.id, staff["att2"])
+        db.session.add(EventUpdateSubscription(event_id=event.id, attendee_id=staff["att3"]))
+        db.session.commit()
+
+        status.cancel_event(event.id, coordinator, "The keynote speaker withdrew.")
+
+        for who in ("att1", "att2", "att3"):
+            cancelled = [n for n in inbox(staff[who], TYPE_REGISTRATION_CHANGE) if n.title == "Event cancelled"]
+            assert len(cancelled) == 1, who
+            assert "The keynote speaker withdrew." in cancelled[0].message
+
+    def test_registered_follower_is_told_once(self, app, organiser, coordinator, staff):
+        event = _open_confirmed_event(organiser, coordinator)
+        registrations.register(event.id, staff["att1"])
+        db.session.add(EventUpdateSubscription(event_id=event.id, attendee_id=staff["att1"]))
+        db.session.commit()
+        status.cancel_event(event.id, coordinator, "The keynote speaker withdrew.")
+        assert len([n for n in inbox(staff["att1"]) if n.title == "Event cancelled"]) == 1
