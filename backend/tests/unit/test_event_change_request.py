@@ -1,6 +1,8 @@
 """Organiser requests a change to an event (Event Change Requests)."""
 from datetime import date, datetime, time, timedelta
+from types import SimpleNamespace
 
+import app.change_requests.routes as change_routes
 import pytest
 
 from flask import url_for
@@ -465,3 +467,169 @@ def test_only_active_equipment_is_offered_in_name_order_without_quantities(app):
 
     assert [e["name"] for e in equipment] == ["Microphone", "Projector"]
     assert set(equipment[0]) == {"id", "name", "category"}
+
+# ---------------------------------------------------------------------
+# HTTP route coverage: retain all service-level tests above.
+# These tests exercise the blueprint's response and error branches.
+# ---------------------------------------------------------------------
+
+class _RouteResult:
+    def to_dict(self):
+        return {"id": 42, "status": "pending"}
+
+
+@pytest.fixture
+def route_auth(app, monkeypatch):
+    # The role decorator uses the real JWT; the route handlers use a stable
+    # mock user to avoid coupling HTTP tests to database-generated user IDs.
+    organiser_headers = _headers(app, "event_organiser")
+    coordinator_headers = _headers(app, "event_coordinator")
+    monkeypatch.setattr(change_routes, "_current_user", lambda: SimpleNamespace(id=ORGANISER_ID))
+    return organiser_headers, coordinator_headers
+
+
+@pytest.mark.parametrize("endpoint", [
+    "/api/change-requests/events/99999",
+])
+def test_change_routes_organiser_view_missing_event(app, route_auth, endpoint):
+    response = app.test_client().get(endpoint, headers=route_auth[0])
+    assert response.status_code == 404
+
+
+def test_change_routes_organiser_view_success(app, route_auth, monkeypatch):
+    with app.app_context():
+        event_id = _event("planning").id
+    monkeypatch.setattr(change_routes, "can_request_change", lambda *a: True)
+    monkeypatch.setattr(change_routes, "current_venue_id", lambda *a: None)
+    monkeypatch.setattr(change_routes, "list_change_requests_for_event", lambda *a: [_RouteResult()])
+    monkeypatch.setattr(change_routes, "can_request_withdrawal", lambda *a: False)
+    response = app.test_client().get(f"/api/change-requests/events/{event_id}", headers=route_auth[0])
+    assert response.status_code == 200
+    assert response.json["requests"] == [{"id": 42, "status": "pending"}]
+
+
+@pytest.mark.parametrize("suffix,method,service", [
+    ("", "submit_change_request", "change"),
+    ("/withdrawal", "request_withdrawal", "withdrawal"),
+])
+@pytest.mark.parametrize("outcome,expected", [
+    ("success", 201), ("validation", 400), ("permission", 403),
+])
+def test_change_routes_organiser_submission_responses(app, route_auth, monkeypatch,
+                                                      suffix, method, service, outcome, expected):
+    with app.app_context():
+        event_id = _event("planning").id
+    def handler(*args):
+        if outcome == "validation":
+            raise ChangeRequestError({"reason": "Invalid reason"})
+        if outcome == "permission":
+            raise PermissionError("Not allowed")
+        return _RouteResult()
+    monkeypatch.setattr(change_routes, method, handler)
+    response = app.test_client().post(
+        f"/api/change-requests/events/{event_id}{suffix}",
+        headers=route_auth[0], json={"changes": {"purpose": "Updated"}, "reason": REASON},
+    )
+    assert response.status_code == expected
+    if outcome == "validation":
+        assert response.json["errors"]["reason"] == "Invalid reason"
+
+
+@pytest.mark.parametrize("suffix", ["", "/withdrawal"])
+def test_change_routes_organiser_submission_missing_event(app, route_auth, suffix):
+    response = app.test_client().post(
+        f"/api/change-requests/events/99999{suffix}",
+        headers=route_auth[0], json={"reason": REASON},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize("path,service", [
+    ("/assigned", "list_change_requests_for_coordinator"),
+    ("/review", "list_review_queue"),
+])
+def test_change_routes_coordinator_lists(app, route_auth, monkeypatch, path, service):
+    if path == "/assigned":
+        monkeypatch.setattr(change_routes, service, lambda *a: [_RouteResult()])
+    else:
+        monkeypatch.setattr(change_routes, service, lambda *a: [{"id": 42}])
+    response = app.test_client().get("/api/change-requests" + path, headers=route_auth[1])
+    assert response.status_code == 200
+    assert response.json[0]["id"] == 42
+
+
+@pytest.mark.parametrize("outcome,expected", [
+    ("success", 200), ("missing", 404), ("permission", 403),
+])
+def test_change_routes_review_detail_responses(app, route_auth, monkeypatch, outcome, expected):
+    def handler(*args):
+        if outcome == "missing":
+            raise LookupError()
+        if outcome == "permission":
+            raise PermissionError("Not assigned")
+        return {"id": 42}
+    monkeypatch.setattr(change_routes, "get_review_detail", handler)
+    response = app.test_client().get("/api/change-requests/42/review", headers=route_auth[1])
+    assert response.status_code == expected
+
+
+@pytest.mark.parametrize("endpoint,service", [
+    ("process", "process_routine_change"),
+    ("reject", "reject_change_request"),
+    ("re-review", "trigger_re_review"),
+    ("apply", "apply_re_reviewed_change"),
+])
+@pytest.mark.parametrize("outcome,expected", [
+    ("confirmation", 409), ("success", 200),
+    ("missing", 404), ("permission", 403), ("validation", 400),
+])
+def test_change_routes_coordinator_decisions(app, route_auth, monkeypatch,
+                                             endpoint, service, outcome, expected):
+    calls = []
+    def handler(*args, **kwargs):
+        calls.append(kwargs)
+        if outcome == "missing":
+            raise LookupError()
+        if outcome == "permission":
+            raise PermissionError("Not assigned")
+        if outcome == "validation":
+            raise ChangeRequestError({"request": "Invalid transition"})
+        return _RouteResult()
+    monkeypatch.setattr(change_routes, service, handler)
+    response = app.test_client().post(
+        f"/api/change-requests/42/{endpoint}",
+        headers=route_auth[1],
+        json={"confirmed": outcome == "success", "reason": "Not suitable"},
+    )
+    assert response.status_code == expected, response.get_json()
+    assert calls[0].get("dry_run") is True
+    if outcome == "confirmation":
+        assert response.json["requiresConfirmation"] is True
+        assert len(calls) == 1
+    if outcome == "success":
+        assert response.json["id"] == 42
+        assert len(calls) == 2
+
+
+def test_change_routes_own_event_owner_and_nonowner(app, route_auth):
+    with app.app_context():
+        own = _event("planning")
+        own_id = own.id
+        other = _event("planning", organiser_id=OTHER_ORGANISER_ID)
+        assert change_routes._own_event(own_id, SimpleNamespace(id=ORGANISER_ID)) is not None
+        assert change_routes._own_event(other.id, SimpleNamespace(id=ORGANISER_ID)) is None
+        assert change_routes._own_event(999999, SimpleNamespace(id=ORGANISER_ID)) is None
+
+def test_current_user_helper(app, monkeypatch):
+    from app.change_requests import routes
+
+    class FakeQuery:
+        def get(self, user_id):
+            assert user_id == 42
+            return "mock-user"
+
+    monkeypatch.setattr(routes, "get_jwt_identity", lambda: "42")
+    monkeypatch.setattr(routes.User, "query", FakeQuery())
+
+    with app.app_context():
+        assert routes._current_user() == "mock-user"
