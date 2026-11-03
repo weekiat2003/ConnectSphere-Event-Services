@@ -1,7 +1,9 @@
+from unittest.mock import patch
+from sqlalchemy.exc import IntegrityError
 import pytest
 from datetime import datetime, timezone, date, time
 from werkzeug.security import generate_password_hash
-from app.models.event import Event, EventClarificationResponse, EventEquipmentRequirement
+from app.models.event import Event, EventClarificationResponse, EventEquipmentRequirement, EventReview
 from app.events import routes as event_routes
 from app.events.routes import _build_display_fields, _require_confirmation  # both pure/stateless, safe to import directly
 from app.models.user import Role, User
@@ -1195,3 +1197,88 @@ def test_full_review_history_for_an_unresubmitted_event_contains_only_its_own_en
         assert history[0]["action"] == "clarification_requested"
         assert history[0]["comments"] == "Please confirm the headcount."
         assert history[0]["isCurrentSubmission"] is True
+
+
+def test_cannot_respond_to_withdrawn_clarification(app):
+    with app.app_context():
+        event = _persist_event(coordinator_id=200)
+        request_clarification(event, 200, "Please confirm the headcount.")
+        review_id = event.reviews[-1].id
+        delete_clarification_request(event, 200, review_id)
+
+        with pytest.raises(ValueError, match="withdrawn"):
+            respond_to_clarification(event, 100, review_id, {"comments": "Confirmed at 80."})
+
+        assert EventClarificationResponse.query.filter_by(review_id=review_id).count() == 0
+
+
+def test_response_integrity_error_rolls_back_and_reports_duplicate(app):
+    with app.app_context():
+        event = _persist_event(coordinator_id=200)
+        request_clarification(event, 200, "Please confirm the headcount.")
+        review_id = event.reviews[-1].id
+        event_id = event.id
+        error = IntegrityError("INSERT", {}, Exception("duplicate response"))
+        with patch.object(db.session, "commit", side_effect=error), patch.object(
+            db.session, "rollback", wraps=db.session.rollback
+        ) as rollback:
+            with pytest.raises(ValueError, match="already been responded to"):
+                respond_to_clarification(event, 100, review_id, {"comments": "Confirmed at 80."})
+            rollback.assert_called_once()
+
+        assert EventClarificationResponse.query.filter_by(review_id=review_id).count() == 0
+        assert db.session.get(Event, event_id).clarification_flag is True
+
+
+def test_clarification_thread_ignores_other_review_actions(app):
+    with app.app_context():
+        event = _persist_event(coordinator_id=200)
+        request_clarification(event, 200, "Please confirm the headcount.")
+        review_id = event.reviews[-1].id
+        db.session.add(EventReview(event_id=event.id, coordinator_id=200, action="approved"))
+        db.session.commit()
+        db.session.expire(event, ["reviews"])
+
+        thread = get_clarification_thread(event)
+
+        assert len(thread) == 1
+        assert thread[0]["reviewId"] == review_id
+        assert thread[0]["request"]["comments"] == "Please confirm the headcount."
+
+
+@pytest.mark.parametrize("broken_chain", ["missing_parent", "cycle"])
+def test_review_history_stops_at_missing_or_repeated_parent(app, broken_chain):
+    with app.app_context():
+        event = _persist_event(coordinator_id=200)
+        db.session.add(EventReview(
+            event_id=event.id, coordinator_id=200, action="rejected", comments="Revise the plan."
+        ))
+        db.session.commit()
+        # Simulate legacy/corrupt links in memory without persisting invalid foreign keys.
+        with db.session.no_autoflush:
+            event.resubmitted_from_event_id = 999999 if broken_chain == "missing_parent" else event.id
+            history = get_full_review_history(event)
+            prior = get_prior_rejection_decisions(event)
+
+        assert len(history) == 1
+        assert history[0]["eventId"] == event.id
+        assert history[0]["comments"] == "Revise the plan."
+        assert history[0]["isCurrentSubmission"] is True
+        assert prior == []
+
+
+@pytest.mark.parametrize("timestamp", [None, datetime(2026, 11, 4, 9, 30)])
+def test_event_review_to_dict(timestamp):
+    review = EventReview(
+        id=7, event_id=42, coordinator_id=200, action="clarification_requested",
+        comments="Please confirm the headcount.", withdrawn_at=timestamp, created_at=timestamp,
+    )
+
+    assert review.to_dict() == {
+        "id": 7,
+        "coordinatorId": 200,
+        "action": "clarification_requested",
+        "comments": "Please confirm the headcount.",
+        "withdrawnAt": "2026-11-04T09:30:00" if timestamp else None,
+        "createdAt": "2026-11-04T09:30:00" if timestamp else None,
+    }

@@ -20,7 +20,7 @@ from app.change_requests.services import (
 )
 from app.events.services.drafts import update_draft
 from app.extensions import db
-from app.models.change_request import ChangeRequest
+from app.models.change_request import ChangeRequest, EventChangeHistory
 from app.models.event import Event
 from app.models.venue import BOOKING_APPROVED, VenueBooking
 from app.venues.services.catalogue import create_venue, deactivate_venue
@@ -467,6 +467,31 @@ def test_only_active_equipment_is_offered_in_name_order_without_quantities(app):
 
     assert [e["name"] for e in equipment] == ["Microphone", "Projector"]
     assert set(equipment[0]) == {"id", "name", "category"}
+
+@pytest.mark.parametrize("changed_at", [None, datetime(2026, 11, 3, 10, 30, 45)])
+def test_event_change_history_to_dict(changed_at):
+    """History serialization preserves field values and handles an absent timestamp."""
+    history = EventChangeHistory(
+        id=1,
+        event_id=42,
+        change_request_id=7,
+        field="expected_attendance",
+        old_value=80,
+        new_value=120,
+        changed_by=COORDINATOR_ID,
+        changed_at=changed_at,
+    )
+
+    assert history.to_dict() == {
+        "id": 1,
+        "eventId": 42,
+        "changeRequestId": 7,
+        "field": "expected_attendance",
+        "oldValue": 80,
+        "newValue": 120,
+        "changedBy": COORDINATOR_ID,
+        "changedAt": "2026-11-03T10:30:45" if changed_at else None,
+    }
 
 # ---------------------------------------------------------------------
 # HTTP route coverage: retain all service-level tests above.
