@@ -228,6 +228,8 @@ def submit_change_request(event: Event, organiser_id: int, changes: dict, reason
         status="pending",
     )
     db.session.add(change_request)
+    db.session.flush()  # change_request.id is needed for the notification link
+    notifications.notify_coordinator_of_change_request(event, change_request)
     db.session.commit()
     return change_request
 
@@ -303,6 +305,8 @@ def request_withdrawal(event: Event, organiser_id: int, reason: str) -> ChangeRe
         status="pending",
     )
     db.session.add(withdrawal)
+    db.session.flush()  # withdrawal.id is needed for the notification link
+    notifications.notify_coordinator_of_change_request(event, withdrawal)
     db.session.commit()
     return withdrawal
 

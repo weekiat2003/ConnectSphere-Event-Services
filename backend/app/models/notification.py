@@ -16,6 +16,8 @@ TYPE_REGISTRATION_CHANGE = "registration_change"              # ISP-108
 TYPE_SAFETY_CHECK = "safety_check"                            # ISP-130
 TYPE_REASSIGNMENT_REQUEST = "reassignment_request"            # Coordinator Assignment
 TYPE_ARRANGEMENT_REVIEW = "arrangement_review"                # Significant change
+TYPE_CHANGE_REQUEST = "change_request"                        # Change / withdrawal request for the Coordinator
+TYPE_CLARIFICATION = "clarification"                          # Clarification thread, Coordinator side
 
 NOTIFICATION_TYPES = (
     TYPE_ORGANISER_UPDATE,
@@ -29,6 +31,8 @@ NOTIFICATION_TYPES = (
     TYPE_SAFETY_CHECK,
     TYPE_REASSIGNMENT_REQUEST,
     TYPE_ARRANGEMENT_REVIEW,
+    TYPE_CHANGE_REQUEST,
+    TYPE_CLARIFICATION,
 )
 
 
