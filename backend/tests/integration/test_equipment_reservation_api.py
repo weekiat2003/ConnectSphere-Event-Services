@@ -84,6 +84,24 @@ def test_reserve_creates_reservation_and_confirms_requirement(client, tech_heade
     assert requirement_status(req_id) == "confirmed"
 
 
+def test_reservation_rejects_mixed_timezone_datetimes(
+    client, tech_headers, item, setup_event
+):
+    event_id, req_id = setup_event()
+    body = payload(event_id, req_id, item)
+    body["start"] = "2026-12-01T10:00:00+00:00"
+    body["end"] = "2026-12-01T11:00:00"
+
+    response = reserve(client, tech_headers, body)
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == (
+        "start and end must both include, or both omit, a timezone"
+    )
+    assert count() == 0
+    assert requirement_status(req_id) == "requested"
+
+
 def test_reservation_matches_equipment_type_case_insensitively_and_trims(
     client, tech_headers, item, setup_event
 ):

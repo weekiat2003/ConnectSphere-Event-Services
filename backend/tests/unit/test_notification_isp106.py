@@ -176,6 +176,50 @@ def test_equipment_change_is_rejected_while_the_event_is_under_review(
     assert inbox(tech) == []
 
 
+def test_equipment_preparation_update_notifies_the_assigned_coordinator(
+    app, organiser, coordinator, make_event, make_user
+):
+    event = make_with_lines(make_event, organiser, coordinator, "planning")
+    requirement = event.equipment_requirements[0]
+    other_coordinator = make_user(
+        "other-equipment-coordinator@test.com", ["event_coordinator"]
+    )
+
+    notices = triggers.notify_coordinator_of_equipment_preparation(
+        requirement, "testing_status", "ready_for_testing"
+    )
+
+    assert len(notices) == 1
+    notice = notices[0]
+    assert notice.recipient_id == coordinator
+    assert notice.recipient_id != other_coordinator
+    assert notice.event_id == event.id
+    assert notice.link == f"/events/{event.id}"
+    assert notice.title == "Equipment preparation updated"
+    assert "Testing status for Projector" in notice.message
+    assert "ready for testing" in notice.message
+    assert notice.data == {
+        "kind": "preparation_updated",
+        "item": "Projector",
+        "field": "testing_status",
+        "new_value": "ready_for_testing",
+    }
+
+
+def test_equipment_preparation_update_skips_events_without_a_coordinator(
+    app, organiser, make_event
+):
+    event = make_with_lines(make_event, organiser, None, "planning")
+    requirement = event.equipment_requirements[0]
+
+    notices = triggers.notify_coordinator_of_equipment_preparation(
+        requirement, "installation_status", "complete"
+    )
+
+    assert notices == []
+    assert Notification.query.count() == 0
+
+
 def test_only_technical_support_is_notified_once_each(app, organiser, coordinator, make_event, make_user, tech):
     both = make_user("both@test.com", ["technical_support_staff", "event_coordinator"], name="Bo Both")
     event = make_with_lines(make_event, organiser, coordinator, "under_review")

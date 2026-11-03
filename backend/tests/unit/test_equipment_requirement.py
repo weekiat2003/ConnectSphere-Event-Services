@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from app.events.services import update as updateservice
@@ -7,7 +9,7 @@ from app.events.services.update import (
     OfflineReviewNotConfirmedError,
 )
 from app.extensions import db
-from app.models.event import Event, EventFieldEditLog
+from app.models.event import Event, EventEquipmentRequirement, EventFieldEditLog
 from app.models.user import User
 
 def make(make_event, organiser, coordinator, status):
@@ -31,6 +33,18 @@ def test_ac1_assigned_coordinator_can_add_a_line_while_planning(
     assert lines[0].status == "requested"
 
 
+def test_update_rejects_non_object_changes(app, organiser, coordinator, make_event):
+    event = make(make_event, organiser, coordinator, "planning")
+    user = db.session.get(User, coordinator)
+
+    with pytest.raises(EventValidationError) as exc:
+        updateservice.update_event_fields(event, user, None)
+
+    assert exc.value.field_errors == {
+        "fields": "Expected an object of fields to update"
+    }
+
+
 @pytest.mark.parametrize("status", ["under_review", "approved", "safety_check"])
 def test_equipment_change_is_rejected_outside_planning(
         app, organiser, coordinator, make_event, status):
@@ -44,6 +58,138 @@ def test_equipment_change_is_rejected_outside_planning(
     }
     db.session.rollback()
     assert db.session.get(Event, event.id).equipment_requirements == []
+
+
+def test_unchanged_equipment_submission_is_allowed_outside_planning(
+        app, organiser, coordinator, make_event):
+    event = make(make_event, organiser, coordinator, "under_review")
+    requirement = EventEquipmentRequirement(
+        event_id=event.id, equipment_type="Projector", quantity=2
+    )
+    db.session.add(requirement)
+    db.session.commit()
+
+    add_line(
+        event, coordinator,
+        {"id": requirement.id, "type": "Projector", "quantity": 2},
+    )
+
+    db.session.expire_all()
+    saved = db.session.get(Event, event.id)
+    assert [(row.id, row.equipment_type, row.quantity) for row in saved.equipment_requirements] == [
+        (requirement.id, "Projector", 2)
+    ]
+    assert EventFieldEditLog.query.filter_by(event_id=event.id).count() == 0
+
+
+def test_equipment_update_accepts_snake_case_notes(app, organiser, coordinator, make_event):
+    event = make(make_event, organiser, coordinator, "planning")
+    requirement = EventEquipmentRequirement(
+        event_id=event.id, equipment_type="Projector", quantity=2
+    )
+    db.session.add(requirement)
+    db.session.commit()
+
+    add_line(
+        event, coordinator,
+        {
+            "id": requirement.id,
+            "type": "Projector",
+            "quantity": 2,
+            "technical_notes": "Ceiling mount",
+        },
+    )
+
+    db.session.expire_all()
+    assert db.session.get(EventEquipmentRequirement, requirement.id).technical_notes == (
+        "Ceiling mount"
+    )
+
+
+def test_equipment_update_rejects_non_object_requirement(app, organiser, coordinator, make_event):
+    event = make(make_event, organiser, coordinator, "planning")
+
+    with pytest.raises(EventValidationError) as exc:
+        add_line(event, coordinator, None)
+
+    assert exc.value.field_errors == {
+        "equipment_requirements[0]": "Each equipment requirement must be an object"
+    }
+
+
+def test_equipment_update_rejects_id_from_another_event(app, organiser, coordinator, make_event):
+    event = make(make_event, organiser, coordinator, "planning")
+
+    with pytest.raises(EventValidationError) as exc:
+        add_line(
+            event, coordinator,
+            {"id": 9999, "type": "Projector", "quantity": 1},
+        )
+
+    assert exc.value.field_errors == {
+        "equipment_requirements[0].id": (
+            "Equipment requirement does not belong to this event"
+        )
+    }
+
+
+def test_optional_end_date_can_be_cleared(app, organiser, coordinator, make_event):
+    event = make(
+        make_event, organiser, coordinator, "planning",
+    )
+    event.proposed_end_date = date(2026, 12, 2)
+    db.session.commit()
+
+    updateservice.update_event_fields(
+        event,
+        db.session.get(User, coordinator),
+        {"proposed_end_date": None},
+        offline_review_confirmed=True,
+    )
+
+    db.session.expire_all()
+    assert db.session.get(Event, event.id).proposed_end_date is None
+
+
+def test_invalid_date_type_is_reported_as_validation_error(
+        app, organiser, coordinator, make_event):
+    event = make(make_event, organiser, coordinator, "planning")
+
+    with pytest.raises(EventValidationError) as exc:
+        updateservice.update_event_fields(
+            event, db.session.get(User, coordinator), {"proposed_date": 42}
+        )
+
+    assert "must be a valid ISO value" in exc.value.field_errors["proposed_date"]
+
+
+def test_date_update_requires_an_existing_or_submitted_time(
+        app, organiser, coordinator, make_event):
+    event = make(make_event, organiser, coordinator, "planning")
+    event.proposed_date = None
+    event.proposed_time = None
+    db.session.commit()
+
+    with pytest.raises(EventValidationError) as exc:
+        updateservice.update_event_fields(
+            event, db.session.get(User, coordinator), {"proposed_time": "10:00"}
+        )
+
+    assert exc.value.field_errors["proposed_date"] == "Proposed date is required"
+
+
+def test_descriptive_fields_must_contain_a_word(app, organiser, coordinator, make_event):
+    event = make(make_event, organiser, coordinator, "planning")
+    original_name = event.name
+
+    with pytest.raises(EventValidationError) as exc:
+        updateservice.update_event_fields(
+            event, db.session.get(User, coordinator), {"name": "123"}
+        )
+
+    assert "descriptive text" in exc.value.field_errors["name"]
+    db.session.expire_all()
+    assert db.session.get(Event, event.id).name == original_name
 
 
 @pytest.mark.parametrize("line, field", [

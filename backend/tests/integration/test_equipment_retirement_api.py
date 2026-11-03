@@ -65,6 +65,20 @@ def restore(client, headers, item_id):
     return client.post(f"{BASE}/{item_id}/restore", headers=headers)
 
 
+@pytest.mark.parametrize(
+    "action",
+    [
+        pytest.param(lambda client, headers: retire(client, headers, 9999), id="retire"),
+        pytest.param(lambda client, headers: restore(client, headers, 9999), id="restore"),
+    ],
+)
+def test_retire_and_restore_missing_items_return_not_found(client, tech_headers, action):
+    response = action(client, tech_headers)
+
+    assert response.status_code == 404
+    assert response.get_json()["error"] == "Equipment item not found"
+
+
 def fresh_item(item_id):
     db.session.expire_all()
     return db.session.get(EquipmentItem, item_id)
