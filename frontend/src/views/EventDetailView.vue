@@ -112,6 +112,12 @@
       </div>
     </div>
 
+    <div
+      v-if="event.venueBookings?.length || ['planning', 'safety_check', 'safety_approved', 'confirmed'].includes(event.status)"
+      class="equipment-requirements-spacing"
+    >
+      <VenueRequirementsPanel :bookings="event.venueBookings" :requirements="event.venueRequirements" />
+    </div>
     <div v-if="event.equipmentRequirements?.length" class="equipment-requirements-spacing">
       <EquipmentRequirementsPanel :requirements="event.equipmentRequirements" />
     </div>
@@ -674,6 +680,7 @@ import { useConfirm } from "../composables/useConfirm";
 import changeRequestsApi from "../api/changeRequests";
 import equipmentApi from "../api/equipment";
 import EquipmentRequirementsPanel from "../components/EquipmentRequirementsPanel.vue";
+import VenueRequirementsPanel from "../components/VenueRequirementsPanel.vue";
 
 
 const route = useRoute();
