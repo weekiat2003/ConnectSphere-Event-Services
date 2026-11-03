@@ -77,7 +77,9 @@ def test_an_unchanged_equipment_save_sends_nothing(app, organiser, coordinator, 
 def test_notes_only_equipment_change_keeps_reservation_and_notifies_once(
     app, organiser, coordinator, make_event, tech
 ):
-    event, requirement, item = make_reservable_event(make_event, organiser, coordinator)
+    event, requirement, item = make_reservable_event(
+        make_event, organiser, coordinator, status="planning"
+    )
     reservation = make_reservation(event, requirement, item, tech)
 
     updateservice.update_event_fields(
@@ -106,7 +108,9 @@ def test_notes_only_equipment_change_keeps_reservation_and_notifies_once(
 def test_quantity_change_on_reserved_equipment_releases_reservation_and_notifies_once(
     app, organiser, coordinator, make_event, tech
 ):
-    event, requirement, item = make_reservable_event(make_event, organiser, coordinator)
+    event, requirement, item = make_reservable_event(
+        make_event, organiser, coordinator, status="planning"
+    )
     reservation = make_reservation(event, requirement, item, tech)
 
     save(event, coordinator, [{
@@ -156,9 +160,19 @@ def test_removing_a_line_notifies(app, organiser, coordinator, make_event, tech)
     assert len(notices) == 1 and "Speaker" not in notices[0].message
 
 
-def test_no_notification_while_the_event_is_under_review(app, organiser, coordinator, make_event, tech):
+def test_equipment_change_is_rejected_while_the_event_is_under_review(
+    app, organiser, coordinator, make_event, tech
+):
+    from app.events.services.update import EventValidationError
+
     event = make_with_lines(make_event, organiser, coordinator, "under_review")
-    save(event, coordinator, [{"type": "Speaker", "quantity": 3}])
+    with pytest.raises(EventValidationError) as raised:
+        save(event, coordinator, [{"type": "Speaker", "quantity": 3}])
+    assert raised.value.field_errors == {
+        "equipment_requirements": (
+            "Equipment can only be requested while the event is in Planning."
+        )
+    }
     assert inbox(tech) == []
 
 
@@ -214,9 +228,9 @@ def reservation_notice_inbox(user_id):
     ).order_by(Notification.id).all()
 
 
-def make_reservable_event(make_event, organiser, coordinator=None, quantity=2):
+def make_reservable_event(make_event, organiser, coordinator=None, quantity=2, status="approved"):
     event_id = make_event(
-        organiser, status="approved", coordinator_id=coordinator
+        organiser, status=status, coordinator_id=coordinator
     )
     event = db.session.get(Event, event_id)
     requirement = EventEquipmentRequirement(

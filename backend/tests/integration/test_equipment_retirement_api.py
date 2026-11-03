@@ -6,6 +6,7 @@ from app.common.time import utcnow
 from app.extensions import db
 from app.models.equipment import EquipmentItem, EquipmentReservation
 from app.models.event import Event, EventEquipmentRequirement
+from app.models.notification import TYPE_NEW_EQUIPMENT_REQUEST, Notification
 
 BASE = "/api/equipment/items"
 
@@ -24,11 +25,17 @@ def item_id(app):
     return item.id
 
 
-def create_event_with_requirement(organiser, make_event, item_id):
-    event_id = make_event(organiser, name="Retirement Test Event")
+def create_event_with_requirement(
+    organiser, make_event, item_id, coordinator_id=None, status="draft",
+    equipment_type="Projector",
+):
+    event_id = make_event(
+        organiser, name="Retirement Test Event", coordinator_id=coordinator_id,
+        status=status,
+    )
     event = db.session.get(Event, event_id)
     requirement = EventEquipmentRequirement(
-        event_id=event_id, equipment_type="Projector", quantity=2
+        event_id=event_id, equipment_type=equipment_type, quantity=2
     )
     db.session.add(requirement)
     db.session.commit()
@@ -63,6 +70,12 @@ def fresh_item(item_id):
     return db.session.get(EquipmentItem, item_id)
 
 
+def equipment_notifications(user_id):
+    return Notification.query.filter_by(
+        recipient_id=user_id, type=TYPE_NEW_EQUIPMENT_REQUEST
+    ).all()
+
+
 def test_retire_succeeds_and_preserves_requirements_and_historical_reservations(
     client, tech_headers, item_id, organiser, make_event
 ):
@@ -91,6 +104,98 @@ def test_retire_succeeds_and_preserves_requirements_and_historical_reservations(
     assert db.session.get(EventEquipmentRequirement, requirement.id) is not None
     assert db.session.get(EquipmentReservation, released.id).status == "released"
     assert db.session.get(EquipmentReservation, past.id).status == "reserved"
+
+
+def test_retirement_notifies_assigned_coordinator_for_requested_requirement(
+    client, tech_headers, item_id, organiser, coordinator, make_event
+):
+    event, requirement = create_event_with_requirement(
+        organiser, make_event, item_id, coordinator_id=coordinator,
+        status="planning",
+    )
+
+    response = retire(client, tech_headers, item_id)
+
+    assert response.status_code == 200
+    notices = equipment_notifications(coordinator)
+    assert len(notices) == 1
+    assert notices[0].event_id == event.id
+    assert notices[0].link == f"/events/{event.id}"
+    assert notices[0].title == "Equipment catalogue item retired"
+    assert event.name in notices[0].message
+    assert "Projector has been retired from the catalogue" in notices[0].message
+    assert "Technical Support can no longer reserve it" in notices[0].message
+    assert notices[0].data == {
+        "kind": "catalogue_item_retired",
+        "equipmentItemId": item_id,
+        "equipmentItemName": "Projector",
+    }
+
+
+def test_retirement_sends_only_one_notification_for_multiple_matching_rows(
+    client, tech_headers, item_id, organiser, coordinator, make_event
+):
+    event, _ = create_event_with_requirement(
+        organiser, make_event, item_id, coordinator_id=coordinator,
+        status="planning",
+    )
+    db.session.add(EventEquipmentRequirement(
+        event_id=event.id, equipment_type="Projector", quantity=1
+    ))
+    db.session.commit()
+
+    response = retire(client, tech_headers, item_id)
+
+    assert response.status_code == 200
+    assert len(equipment_notifications(coordinator)) == 1
+
+
+def test_blocked_retirement_sends_no_notification(
+    client, tech_headers, item_id, organiser, coordinator, make_event
+):
+    event, requirement = create_event_with_requirement(
+        organiser, make_event, item_id, coordinator_id=coordinator,
+        status="planning",
+    )
+    now = utcnow().replace(tzinfo=None)
+    create_reservation(
+        event, item_id, requirement, now + timedelta(days=2),
+        now + timedelta(days=2, hours=1),
+    )
+
+    response = retire(client, tech_headers, item_id)
+
+    assert response.status_code == 409
+    assert equipment_notifications(coordinator) == []
+
+
+def test_retirement_does_not_notify_events_without_matching_equipment(
+    client, tech_headers, item_id, organiser, coordinator, make_event
+):
+    create_event_with_requirement(
+        organiser, make_event, item_id, coordinator_id=coordinator,
+        status="planning", equipment_type="Speaker",
+    )
+
+    response = retire(client, tech_headers, item_id)
+
+    assert response.status_code == 200
+    assert equipment_notifications(coordinator) == []
+
+
+@pytest.mark.parametrize("status", ["cancelled", "rejected", "completed"])
+def test_retirement_does_not_notify_terminal_events(
+    client, tech_headers, item_id, organiser, coordinator, make_event, status
+):
+    create_event_with_requirement(
+        organiser, make_event, item_id, coordinator_id=coordinator,
+        status=status,
+    )
+
+    response = retire(client, tech_headers, item_id)
+
+    assert response.status_code == 200
+    assert equipment_notifications(coordinator) == []
 
 
 @pytest.mark.parametrize("period", ["current", "future"])

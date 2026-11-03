@@ -11,7 +11,7 @@ COORD = "coordinator@test.com"
 
 @pytest.fixture
 def event_id(organiser, coordinator, make_event):
-    return make_event(organiser, status="approved", coordinator_id=coordinator)
+    return make_event(organiser, status="planning", coordinator_id=coordinator)
 
 
 def url(event_id):

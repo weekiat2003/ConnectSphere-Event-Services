@@ -3,6 +3,7 @@ inventory, separate from what an Organiser requests on an event."""
 from app.common.time import utcnow
 from app.extensions import db
 from app.models.equipment import EquipmentItem, EquipmentReservation
+from app.notifications.services import triggers as notifications
 
 UNAVAILABLE_REASONS = ("damaged", "maintenance")
 
@@ -77,6 +78,7 @@ def retire_item(item: EquipmentItem) -> EquipmentItem:
     if reservations:
         raise ItemRetirementBlockedError(reservations)
     item.status = "retired"
+    notifications.notify_coordinators_of_retired_equipment(item)
     db.session.commit()
     return item
 

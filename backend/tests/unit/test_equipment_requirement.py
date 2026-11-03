@@ -10,9 +10,6 @@ from app.extensions import db
 from app.models.event import Event, EventFieldEditLog
 from app.models.user import User
 
-EDITABLE_STATUSES = ["under_review", "approved", "planning", "safety_check"]
-
-
 def make(make_event, organiser, coordinator, status):
     return db.session.get(Event, make_event(organiser, status=status, coordinator_id=coordinator))
 
@@ -23,16 +20,30 @@ def add_line(event, coordinator, line, confirmed=True):
         {"equipment_requirements": [line]}, offline_review_confirmed=confirmed)
 
 
-@pytest.mark.parametrize("status", EDITABLE_STATUSES)
-def test_ac1_assigned_coordinator_can_add_a_line_in_editable_statuses(
-        app, organiser, coordinator, make_event, status):
-    event = make(make_event, organiser, coordinator, status)
+def test_ac1_assigned_coordinator_can_add_a_line_while_planning(
+        app, organiser, coordinator, make_event):
+    event = make(make_event, organiser, coordinator, "planning")
     add_line(event, coordinator, {"type": "Projector", "quantity": 2, "technicalNotes": "HDMI input"})
     db.session.expire_all()
     lines = db.session.get(Event, event.id).equipment_requirements
     assert len(lines) == 1
     assert lines[0].equipment_type == "Projector" and lines[0].quantity == 2
     assert lines[0].status == "requested"
+
+
+@pytest.mark.parametrize("status", ["under_review", "approved", "safety_check"])
+def test_equipment_change_is_rejected_outside_planning(
+        app, organiser, coordinator, make_event, status):
+    event = make(make_event, organiser, coordinator, status)
+    with pytest.raises(EventValidationError) as exc:
+        add_line(event, coordinator, {"type": "Projector", "quantity": 2})
+    assert exc.value.field_errors == {
+        "equipment_requirements": (
+            "Equipment can only be requested while the event is in Planning."
+        )
+    }
+    db.session.rollback()
+    assert db.session.get(Event, event.id).equipment_requirements == []
 
 
 @pytest.mark.parametrize("line, field", [

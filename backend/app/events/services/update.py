@@ -97,6 +97,13 @@ def update_event_fields(event: Event, user, changes: dict, offline_review_confir
     ):
         changes.pop("equipment_requirements")
 
+    if "equipment_requirements" in changes and event.status != "planning":
+        raise EventValidationError({
+            "equipment_requirements": (
+                "Equipment can only be requested while the event is in Planning."
+            )
+        })
+
     if not changes:
         return event
 

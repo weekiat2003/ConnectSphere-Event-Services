@@ -220,7 +220,17 @@ async function submit() {
     success.value = "Equipment requirements saved to the event for Technical Review.";
   } catch (e) {
     const details = e.response?.data;
-    error.value = details?.error || (details?.errors ? JSON.stringify(details.errors) : "Unable to save equipment requirements.");
+    const equipmentError = details?.errors?.equipment_requirements;
+    if (equipmentError === "Equipment can only be requested while the event is in Planning.") {
+      await loadEvents();
+      eventId.value = "";
+      requirements.value = [];
+      initialRequirements.value = [];
+      offlineReviewConfirmed.value = false;
+    }
+    error.value = details?.error || (typeof equipmentError === "string"
+      ? equipmentError
+      : details?.errors ? JSON.stringify(details.errors) : "Unable to save equipment requirements.");
   } finally {
     saving.value = false;
   }

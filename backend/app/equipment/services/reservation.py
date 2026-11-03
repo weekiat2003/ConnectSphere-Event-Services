@@ -61,7 +61,12 @@ def reserve(
         .one()
     )
     if item.status != ACTIVE:
-        raise ReservationError(f"{item.name} is not active (status: {item.status})")
+        status_message = {
+            "damaged": f"{item.name} is currently damaged",
+            "maintenance": f"{item.name} is currently under maintenance",
+            "retired": f"{item.name} has been retired from the catalogue",
+        }.get(item.status, f"{item.name} is currently {item.status}")
+        raise ReservationError(f"{status_message} and can't be reserved.")
 
     if item.name.strip().casefold() != requirement.equipment_type.strip().casefold():
         raise ReservationError("This item doesn't match the requested equipment type.")
