@@ -7,19 +7,37 @@
         <router-link v-if="auth.hasRole('event_organiser')" to="/drafts">My Drafts</router-link>
         <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/assignments">Assignment Queue</router-link>
         <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/supervision">Supervision</router-link>
-        <router-link v-if="auth.hasRole('event_coordinator')" to="/review">Review Queue</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/change-requests">Change Requests</router-link>
         <router-link v-if="auth.hasRole('safety_officer')" to="/safety-reviews">Safety Reviews</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/planning">Planning View</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/calendar">My Calendar</router-link>
-        <router-link v-if="auth.hasRole('event_coordinator')" to="/venues/request">Venue Booking</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/equipment/request">Equipment Booking</router-link>
+        <!-- Coordinators: all venue pages grouped under one dropdown -->
+<div v-if="auth.hasRole('event_coordinator')" ref="venueMenu" class="dropdown">
+  <button
+    type="button"
+    class="dropdown-toggle"
+    :class="{ active: venueSectionActive }"
+    aria-haspopup="true"
+    :aria-expanded="venueOpen"
+    @click="venueOpen = !venueOpen"
+  >
+    Venue <span class="caret" aria-hidden="true">▾</span>
+  </button>
+  <div v-if="venueOpen" class="dropdown-menu">
+    <router-link to="/venues/request">Venue Booking</router-link>
+    <router-link to="/venues/search">Venue Search</router-link>
+    <router-link to="/venues">Venue Catalogue</router-link>
+    <router-link to="/venues/availability">Venue Availability</router-link>
+  </div>
+</div>
+
+<!-- Venue Staff (not also a coordinator) keep their flat links -->
+<router-link v-if="auth.hasRole('venue_staff') && !auth.hasRole('event_coordinator')" to="/venues">Venue Catalogue</router-link>
+<router-link v-if="auth.hasRole('venue_staff') && !auth.hasRole('event_coordinator')" to="/venues/availability">Venue Availability</router-link>
         <router-link v-if="auth.hasRole('venue_staff')" to="/venues/approval">Venue Approval</router-link>
-        <router-link v-if="auth.hasRole('event_coordinator')" to="/venues/search">Venue Search</router-link>
         <router-link v-if="auth.hasRole('technical_support_staff')" to="/equipment">Equipment</router-link>
         <router-link v-if="auth.hasRole('technical_support_staff')" to="/technical-review">Technical Review</router-link>
-        <router-link v-if="auth.hasRole('venue_staff') || auth.hasRole('event_coordinator')" to="/venues">Venue Catalogue</router-link>
-        <router-link v-if="auth.hasRole('venue_staff') || auth.hasRole('event_coordinator')" to="/venues/availability">Venue Availability</router-link>
         <router-link v-if="auth.hasRole('attendee')" to="/attendee/events">Events</router-link>
         <router-link v-if="auth.hasRole('attendee')" to="/my-registrations">My Registrations</router-link>
         <router-link v-if="auth.hasRole('event_organiser') || auth.hasRole('event_coordinator')" to="/registrations/manage">Registrations</router-link>
@@ -38,14 +56,19 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "./stores/auth";
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import NotificationBell from './components/NotificationBell.vue';
 
 const auth = useAuthStore();
 const router = useRouter();
+const route = useRoute();
+const venueOpen = ref(false);
+const venueMenu = ref(null);
+
+const venueSectionActive = computed(() => route.path.startsWith("/venues"));
 
 // A Safety Officer with no other role only works on events awaiting a safety
 // check, so their nav is just Safety Reviews (the router also sends them there
@@ -59,6 +82,24 @@ async function handleLogout() {
     router.replace({ name: "login" });
   }
 }
+
+function closeOnOutsideClick(e) {
+  if (venueMenu.value && !venueMenu.value.contains(e.target)) venueOpen.value = false;
+}
+function closeOnEscape(e) {
+  if (e.key === "Escape") venueOpen.value = false;
+}
+
+watch(() => route.fullPath, () => { venueOpen.value = false; });
+
+onMounted(() => {
+  document.addEventListener("click", closeOnOutsideClick);
+  document.addEventListener("keydown", closeOnEscape);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener("click", closeOnOutsideClick);
+  document.removeEventListener("keydown", closeOnEscape);
+});
 </script>
 
 <style>
@@ -189,5 +230,60 @@ td {
 
 button {
   cursor: pointer;
+}
+/* Dropdown nav item */
+.dropdown {
+  position: relative;
+}
+
+.dropdown-toggle {
+  padding: 0.4rem 0.85rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.dropdown-toggle:hover {
+  background: var(--lilac-bg);
+  color: var(--lilac-text);
+}
+
+.dropdown-toggle.active {
+  background: var(--primary-tint);
+  color: var(--primary);
+}
+
+.dropdown-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.caret {
+  font-size: 0.75em;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 11rem;
+  padding: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(45, 42, 74, 0.15);
+}
+
+.dropdown-menu a {
+  border-radius: 8px;
+  white-space: nowrap;
 }
 </style>
