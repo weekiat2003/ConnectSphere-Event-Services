@@ -70,6 +70,7 @@ def request_clarification(event, coordinator_id, comments):
     event.clarification_flag = True
     event.clarification_comments = comments
     notifications.notify_organiser_of_clarification(event, comments)
+    notifications.notify_coordinator_of_clarification_sent(event, coordinator_id, comments)
     db.session.commit()
     return event
 
@@ -104,6 +105,7 @@ def respond_to_clarification(event: Event, organiser_id: int, review_id: int, da
     )
 
     event.clarification_flag = _has_open_clarification(event, newly_resolved_review_id=review_id)
+    notifications.notify_coordinator_of_clarification_response(event, target_review, comments)
 
     try:
         db.session.commit()
