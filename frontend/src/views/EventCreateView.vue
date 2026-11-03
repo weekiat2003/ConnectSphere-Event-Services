@@ -179,12 +179,12 @@
         </label>
 
         <label v-if="form.registration_required">
-          Intended Capacity (optional)
+          Intended Capacity
           <input
             v-model.number="form.intended_capacity"
             type="number"
             min="1"
-            placeholder="Optional if not yet known"
+            placeholder=""
           />
         </label>
 
