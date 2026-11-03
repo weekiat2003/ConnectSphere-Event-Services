@@ -20,7 +20,7 @@ DECIDED_STATUSES = ("processed", "rejected")
 # Changing these can affect arrangements already made, so the request is
 # marked significant. Everything else the organiser may change is routine.
 SIGNIFICANT_FIELDS = {
-    "proposed_date", "proposed_time", "expected_attendance",
+    "proposed_date", "proposed_time", "proposed_end_date", "proposed_end_time", "expected_attendance",
     "capacity_needed", "required_layout", "required_facilities",
     "accessibility_needs",
     "venue_id", "equipment_requirements",
@@ -124,6 +124,8 @@ CLEANERS = {
     "required_layout": _text("Required Layout", False),
     "proposed_date": _clean_date,
     "proposed_time": _clean_time,
+    "proposed_end_date": _clean_date,
+    "proposed_end_time": _clean_time,
     "expected_attendance": _positive_int("Expected attendance"),
     "capacity_needed": _positive_int("Capacity Needed"),
     "intended_capacity": _positive_int("Intended capacity"),
@@ -143,6 +145,10 @@ def _current_value(event: Event, field: str):
         return event.proposed_date.isoformat() if event.proposed_date else None
     if field == "proposed_time":
         return event.proposed_time.isoformat() if event.proposed_time else None
+    if field == "proposed_end_date":
+        return event.proposed_end_date.isoformat() if event.proposed_end_date else None
+    if field == "proposed_end_time":
+        return event.proposed_end_time.isoformat() if event.proposed_end_time else None
     if field == "required_facilities":
         return list(event.required_facilities or [])
     if field == "registration_required":
@@ -202,7 +208,7 @@ def submit_change_request(event: Event, organiser_id: int, changes: dict, reason
             errors[field] = f"{field} cannot be changed through a change request"
             continue
         try:
-            proposed = CLEANERS[field](raw)
+            proposed = None if raw in (None, "") and field in CLEARABLE_FIELDS else CLEANERS[field](raw)
         except ValueError as problem:
             errors[field] = str(problem)
             continue
@@ -436,7 +442,7 @@ def resolve_withdrawals_for_cancelled_event(event: Event, coordinator_id: int, r
 # ---------------------------------------------------------------------
 
 # For these, a stored None means "clear the value" and is allowed.
-CLEARABLE_FIELDS = {"category", "accessibility_needs"}
+CLEARABLE_FIELDS = {"category", "accessibility_needs", "proposed_end_date", "proposed_end_time"}
 PROCESS_STATUS_MESSAGE = "A change can only be processed while the event is submitted, under review, approved, planning or in safety check"
 
 
@@ -529,10 +535,10 @@ def reject_change_request(
 def _python_value(field: str, value):
     """Change-request JSON stores dates/times as ISO strings, but the Event
     model columns need Python date/time objects."""
-    if field == "proposed_date" and isinstance(value, str):
+    if field in ("proposed_date", "proposed_end_date") and isinstance(value, str):
         return date.fromisoformat(value)
 
-    if field == "proposed_time" and isinstance(value, str):
+    if field in ("proposed_time", "proposed_end_time") and isinstance(value, str):
         return time.fromisoformat(value)
 
     return value

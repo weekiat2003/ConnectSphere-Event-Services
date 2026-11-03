@@ -263,80 +263,22 @@
 
       <div v-if="showEditForm && canEditEvent" class="action-block">
         <h3 class="block-title">Edit Event Information</h3>
-        <div class="edit-event-form">
-          <div v-for="field in EVENT_EDIT_FIELD_OPTIONS" :key="field.key" class="edit-field"
-            :class="{ 'edit-field-wide': field.type === 'textarea' || field.type === 'checkbox', 'edit-field-inline': field.type === 'checkbox' }">
-            <template v-if="field.type === 'checkbox'">
-              <label :for="`edit-${field.key}`" class="inline-checkbox-label">
-                <input :id="`edit-${field.key}`" type="checkbox" v-model="editForm[field.key]" />
-                {{ field.label }}
-              </label>
-            </template>
-            <template v-else>
-              <label :for="`edit-${field.key}`">{{ field.label }}</label>
-              <textarea v-if="field.type === 'textarea'" :id="`edit-${field.key}`" v-model="editForm[field.key]"
-                rows="3"></textarea>
-              <input v-else-if="field.type === 'number'" :id="`edit-${field.key}`" type="number" min="1"
-                v-model.number="editForm[field.key]" />
-              <input v-else :id="`edit-${field.key}`" :type="field.type" v-model="editForm[field.key]" />
-            </template>
-            <p v-if="editErrors[field.key]" class="field-error">{{ editErrors[field.key] }}</p>
-          </div>
-        </div>
-
-        <div class="edit-field edit-field-wide">
-          <label>Required facilities</label>
-          <div v-for="(facility, index) in editForm.required_facilities" :key="index" class="facility-row">
-            <input type="text" v-model="editForm.required_facilities[index]" placeholder="e.g. Projector" />
-            <button type="button" class="btn btn-grey btn-small"
-              @click="editForm.required_facilities.splice(index, 1)">Remove</button>
-          </div>
-          <button type="button" class="btn btn-grey btn-small" @click="editForm.required_facilities.push('')">+ Add
-            facility</button>
-          <p v-if="editErrors.required_facilities" class="field-error">{{ editErrors.required_facilities }}</p>
-        </div>
-
-        <div class="edit-field edit-field-wide">
-          <label>Equipment requirements</label>
-          <p class="eq-help">Choose equipment from the catalogue, set how many are needed, and add any technical notes.
-          </p>
-
-          <div v-if="editForm.equipment_requirements.length" class="eq-row eq-head" aria-hidden="true">
-            <span>Equipment</span><span>Qty</span><span>Technical notes</span><span></span>
-          </div>
-
-          <div v-for="(item, index) in editForm.equipment_requirements" :key="item.id ?? `new-${index}`"
-            class="eq-block">
-            <div class="eq-row">
-              <select v-if="equipmentOptions.length" v-model="item.type" aria-label="Equipment">
-                <option value="" disabled>Choose equipment</option>
-                <option v-if="item.type && !equipmentOptions.some((e) => e.name === item.type)" :value="item.type">
-                  {{ item.type }} (not in catalogue)
-                </option>
-                <option v-for="entry in equipmentOptions" :key="entry.id" :value="entry.name">
-                  {{ entry.name }}
-                </option>
-              </select>
-              <input v-else type="text" v-model="item.type" placeholder="Equipment type" aria-label="Equipment" />
-              <input type="number" min="1" v-model.number="item.quantity" aria-label="Quantity" />
-              <input type="text" v-model="item.technicalNotes" placeholder="e.g. ceiling-mounted, 5 m cable"
-                aria-label="Technical notes" />
-              <button type="button" class="btn btn-grey btn-small"
-                @click="editForm.equipment_requirements.splice(index, 1)">Remove</button>
-            </div>
-            <p v-if="editErrors[`equipment_requirements[${index}].type`]" class="field-error">{{
-              editErrors[`equipment_requirements[${index}].type`] }}</p>
-            <p v-if="editErrors[`equipment_requirements[${index}].quantity`]" class="field-error">{{
-              editErrors[`equipment_requirements[${index}].quantity`] }}</p>
-          </div>
-
-          <button type="button" class="btn btn-grey btn-small"
-            @click="editForm.equipment_requirements.push({ id: null, type: '', quantity: 1, technicalNotes: '' })">
-            + Add equipment
-          </button>
-          <p v-if="editErrors.equipment_requirements" class="field-error">{{ editErrors.equipment_requirements }}</p>
-        </div>
-
+<div class="create-aligned-form">
+<label class="aligned-field"><span>Name</span><input type="text" v-model="editForm.name"  /><span v-if="editErrors.name" class="field-error">{{ editErrors.name }}</span></label>
+<label class="aligned-field"><span>Purpose</span><input type="text" v-model="editForm.purpose"  /><span v-if="editErrors.purpose" class="field-error">{{ editErrors.purpose }}</span></label>
+<label class="aligned-field"><span>Event Type</span><select v-model="editForm.category"><option value="">Select a type (optional)</option><option v-for="type in EVENT_TYPES" :key="type" :value="type">{{ type }}</option><option v-if="editForm.category && !EVENT_TYPES.includes(editForm.category)" :value="editForm.category">{{ editForm.category }}</option></select><span v-if="editErrors.category" class="field-error">{{ editErrors.category }}</span></label>
+<label class="aligned-field"><span>Description</span><textarea v-model="editForm.description" rows="3" placeholder=""></textarea><span v-if="editErrors.description" class="field-error">{{ editErrors.description }}</span></label>
+<label class="aligned-field"><span>Start Date</span><input type="date" v-model="editForm.proposed_date"  /><span v-if="editErrors.proposed_date" class="field-error">{{ editErrors.proposed_date }}</span></label>
+<label class="aligned-field"><span>Start Time</span><input type="time" v-model="editForm.proposed_time"  /><span v-if="editErrors.proposed_time" class="field-error">{{ editErrors.proposed_time }}</span></label>
+<label class="aligned-field"><span>End Date</span><input type="date" v-model="editForm.proposed_end_date"  /><span v-if="editErrors.proposed_end_date" class="field-error">{{ editErrors.proposed_end_date }}</span></label>
+<label class="aligned-field"><span>End Time</span><input type="time" v-model="editForm.proposed_end_time"  /><span v-if="editErrors.proposed_end_time" class="field-error">{{ editErrors.proposed_end_time }}</span></label>
+<label class="aligned-field"><span>Expected Attendance</span><input type="number" v-model.number="editForm.expected_attendance" min="1" /><span v-if="editErrors.expected_attendance" class="field-error">{{ editErrors.expected_attendance }}</span></label>
+<label class="aligned-field"><span>Capacity Needed</span><input type="number" v-model.number="editForm.capacity_needed" min="1" /><span v-if="editErrors.capacity_needed" class="field-error">{{ editErrors.capacity_needed }}</span></label>
+<label class="aligned-field"><span>Required Layout</span><select v-model="editForm.required_layout"><option value="">Select a layout</option><option v-for="layout in venueLayouts" :key="layout" :value="layout">{{ layout }}</option><option v-if="editForm.required_layout && !venueLayouts.includes(editForm.required_layout)" :value="editForm.required_layout">{{ editForm.required_layout }}</option></select><span v-if="editErrors.required_layout" class="field-error">{{ editErrors.required_layout }}</span></label>
+<label class="aligned-field"><span>Accessibility Needs</span><textarea v-model="editForm.accessibility_needs" rows="3" placeholder=""></textarea><span v-if="editErrors.accessibility_needs" class="field-error">{{ editErrors.accessibility_needs }}</span></label>
+<div class="aligned-equipment full"><h3>Equipment Required</h3><p class="aligned-help">Select equipment from the catalogue and specify the quantity needed for your event.</p><div v-for="(item, index) in editForm.equipment_requirements" :key="item.id ?? index" class="aligned-equipment-item"><div class="aligned-item-header"><strong>Equipment {{ index + 1 }}</strong><button type="button" class="aligned-remove" @click="editForm.equipment_requirements.splice(index, 1)">Remove</button></div><div class="aligned-equipment-fields"><label>Equipment Type *<select v-model="item.type"><option value="">Select equipment</option><option v-if="item.type && !equipmentOptions.some(e => e.name === item.type)" :value="item.type">{{ item.type }}</option><option v-for="eq in equipmentOptions" :key="eq.id" :value="eq.name">{{ eq.name }}</option></select></label><label>Quantity *<input type="number" min="1" v-model.number="item.quantity" /></label></div><label>Technical Requirements<textarea v-model="item.technicalNotes" rows="2" placeholder="e.g. HDMI connection required"></textarea></label></div><button type="button" class="btn btn-grey" @click="editForm.equipment_requirements.push({ id: null, type: '', quantity: 1, technicalNotes: '' })">+ Add Equipment</button></div>
+<label class="aligned-field full aligned-checkbox"><input type="checkbox" v-model="editForm.registration_required" />Registration required</label><label v-if="editForm.registration_required" class="aligned-field"><span>Intended Capacity (optional)</span><input type="number" min="1" v-model.number="editForm.intended_capacity" /></label>
+</div>
         <div v-if="editTouchesSignificantField" class="offline-review-callout">
           <label class="checkbox-option">
             <input type="checkbox" v-model="offlineReviewConfirmed" />
@@ -502,60 +444,21 @@
           <h3 class="block-title">Request a Change</h3>
           <p class="notice-inline">Fill in only what you want to change and leave everything else blank.</p>
 
-          <div v-for="field in CHANGE_FIELDS" :key="field.key" class="change-row">
-            <span class="detail-label">{{ field.label }}</span>
-            <span class="change-current">Current: {{ formatChangeValue(field.key, field.current(event)) }}</span>
-            <textarea v-if="field.type === 'textarea'" v-model="changeForm[field.key]"
-              placeholder="Proposed value"></textarea>
-            <input v-else-if="field.type === 'number'" v-model.number="changeForm[field.key]" type="number" min="1"
-              placeholder="Proposed value" />
-            <input v-else v-model="changeForm[field.key]" :type="field.type" placeholder="Proposed value" />
-            <p v-if="changeErrors[field.key]" class="field-error">{{ changeErrors[field.key] }}</p>
-          </div>
-
-          <div class="change-row">
-            <span class="detail-label">Venue</span>
-            <span class="change-current">Current: {{ currentVenueLabel }}</span>
-            <select v-model="changeForm.venue_id">
-              <option value="">Keep current venue</option>
-              <option v-for="venue in venues" :key="venue.id" :value="venue.id">
-                {{ venue.name }} (capacity {{ venue.capacity }})
-              </option>
-            </select>
-            <p v-if="changeErrors.venue_id" class="field-error">{{ changeErrors.venue_id }}</p>
-          </div>
-
-          <div class="change-row">
-            <span class="detail-label">Equipment</span>
-            <span class="change-current">Current: {{ currentEquipmentLabel }}</span>
-            <button v-if="changeEquipment === null" type="button" class="btn btn-grey btn-small"
-              @click="startEquipmentChange">
-              Change equipment
-            </button>
-            <template v-else>
-              <div v-for="(item, index) in changeEquipment" :key="index" class="equipment-row">
-                <select v-model="item.type">
-                  <option value="" disabled>Choose equipment</option>
-                  <option v-if="item.type && !equipmentCatalogue.some((e) => e.name === item.type)" :value="item.type">
-                    {{ item.type }} (not in catalogue)
-                  </option>
-                  <option v-for="entry in equipmentCatalogue" :key="entry.id" :value="entry.name">
-                    {{ entry.name }}
-                  </option>
-                </select>
-                <input v-model.number="item.quantity" type="number" min="1" />
-                <button type="button" class="btn btn-grey btn-small" @click="removeEquipmentRow(index)">Remove</button>
-              </div>
-              <div class="actions">
-                <button type="button" class="btn btn-grey btn-small" @click="addEquipmentRow">Add item</button>
-                <button type="button" class="btn btn-grey btn-small" @click="changeEquipment = null">Keep current
-                  equipment</button>
-              </div>
-            </template>
-            <p v-if="changeErrors.equipment_requirements" class="field-error">{{ changeErrors.equipment_requirements }}
-            </p>
-          </div>
-
+<div class="create-aligned-form">
+<label class="aligned-field"><span>Name</span><span class="aligned-current">Current: {{ formatChangeValue('name', eventFieldValue('name')) }}</span><input type="text" v-model="changeForm.name"  /><span v-if="changeErrors.name" class="field-error">{{ changeErrors.name }}</span></label>
+<label class="aligned-field"><span>Purpose</span><span class="aligned-current">Current: {{ formatChangeValue('purpose', eventFieldValue('purpose')) }}</span><input type="text" v-model="changeForm.purpose"  /><span v-if="changeErrors.purpose" class="field-error">{{ changeErrors.purpose }}</span></label>
+<label class="aligned-field"><span>Event Type</span><span class="aligned-current">Current: {{ formatChangeValue('category', eventFieldValue('category')) }}</span><select v-model="changeForm.category"><option value="">Keep current type</option><option v-for="type in EVENT_TYPES" :key="type" :value="type">{{ type }}</option><option v-if="changeForm.category && !EVENT_TYPES.includes(changeForm.category)" :value="changeForm.category">{{ changeForm.category }}</option></select><span v-if="changeErrors.category" class="field-error">{{ changeErrors.category }}</span></label>
+<label class="aligned-field"><span>Description</span><span class="aligned-current">Current: {{ formatChangeValue('description', eventFieldValue('description')) }}</span><textarea v-model="changeForm.description" rows="3" placeholder="Proposed value (leave blank to keep current)"></textarea><span v-if="changeErrors.description" class="field-error">{{ changeErrors.description }}</span></label>
+<label class="aligned-field"><span>Start Date</span><span class="aligned-current">Current: {{ formatChangeValue('proposed_date', eventFieldValue('proposed_date')) }}</span><input type="date" v-model="changeForm.proposed_date"  /><span v-if="changeErrors.proposed_date" class="field-error">{{ changeErrors.proposed_date }}</span></label>
+<label class="aligned-field"><span>Start Time</span><span class="aligned-current">Current: {{ formatChangeValue('proposed_time', eventFieldValue('proposed_time')) }}</span><input type="time" v-model="changeForm.proposed_time"  /><span v-if="changeErrors.proposed_time" class="field-error">{{ changeErrors.proposed_time }}</span></label>
+<label class="aligned-field"><span>End Date</span><span class="aligned-current">Current: {{ formatChangeValue('proposed_end_date', eventFieldValue('proposed_end_date')) }}</span><input type="date" v-model="changeForm.proposed_end_date"  /><span v-if="changeErrors.proposed_end_date" class="field-error">{{ changeErrors.proposed_end_date }}</span></label>
+<label class="aligned-field"><span>End Time</span><span class="aligned-current">Current: {{ formatChangeValue('proposed_end_time', eventFieldValue('proposed_end_time')) }}</span><input type="time" v-model="changeForm.proposed_end_time"  /><span v-if="changeErrors.proposed_end_time" class="field-error">{{ changeErrors.proposed_end_time }}</span></label>
+<label class="aligned-field"><span>Expected Attendance</span><span class="aligned-current">Current: {{ formatChangeValue('expected_attendance', eventFieldValue('expected_attendance')) }}</span><input type="number" v-model.number="changeForm.expected_attendance" min="1" /><span v-if="changeErrors.expected_attendance" class="field-error">{{ changeErrors.expected_attendance }}</span></label>
+<label class="aligned-field"><span>Capacity Needed</span><span class="aligned-current">Current: {{ formatChangeValue('capacity_needed', eventFieldValue('capacity_needed')) }}</span><input type="number" v-model.number="changeForm.capacity_needed" min="1" /><span v-if="changeErrors.capacity_needed" class="field-error">{{ changeErrors.capacity_needed }}</span></label>
+<label class="aligned-field"><span>Required Layout</span><span class="aligned-current">Current: {{ formatChangeValue('required_layout', eventFieldValue('required_layout')) }}</span><select v-model="changeForm.required_layout"><option value="">Keep current layout</option><option v-for="layout in venueLayouts" :key="layout" :value="layout">{{ layout }}</option><option v-if="changeForm.required_layout && !venueLayouts.includes(changeForm.required_layout)" :value="changeForm.required_layout">{{ changeForm.required_layout }}</option></select><span v-if="changeErrors.required_layout" class="field-error">{{ changeErrors.required_layout }}</span></label>
+<label class="aligned-field"><span>Accessibility Needs</span><span class="aligned-current">Current: {{ formatChangeValue('accessibility_needs', eventFieldValue('accessibility_needs')) }}</span><textarea v-model="changeForm.accessibility_needs" rows="3" placeholder="Proposed value (leave blank to keep current)"></textarea><span v-if="changeErrors.accessibility_needs" class="field-error">{{ changeErrors.accessibility_needs }}</span></label>
+<div class="aligned-equipment full"><h3>Equipment Required</h3><p class="aligned-help">Select equipment from the catalogue and specify the quantity needed for your event.</p><p class="aligned-current">Current: {{ currentEquipmentLabel }}</p><button v-if="changeEquipment === null" type="button" class="btn btn-grey" @click="startEquipmentChange">Change equipment</button><template v-else><div v-for="(item, index) in changeEquipment" :key="index" class="aligned-equipment-item"><div class="aligned-item-header"><strong>Equipment {{ index + 1 }}</strong><button type="button" class="aligned-remove" @click="removeEquipmentRow(index)">Remove</button></div><div class="aligned-equipment-fields"><label>Equipment Type *<select v-model="item.type"><option value="">Select equipment</option><option v-if="item.type && !equipmentOptions.some(e => e.name === item.type)" :value="item.type">{{ item.type }}</option><option v-for="eq in equipmentOptions" :key="eq.id" :value="eq.name">{{ eq.name }}</option></select></label><label>Quantity *<input type="number" min="1" v-model.number="item.quantity" /></label></div><label>Technical Requirements<textarea v-model="item.technicalNotes" rows="2" placeholder="e.g. HDMI connection required"></textarea></label></div><button type="button" class="btn btn-grey" @click="addEquipmentRow">+ Add Equipment</button><button type="button" class="btn btn-grey" @click="changeEquipment = null">Keep current equipment</button></template><p v-if="changeErrors.equipment_requirements" class="field-error">{{ changeErrors.equipment_requirements }}</p></div>
+</div>
           <label class="field-row">
             Reason for the change
             <textarea v-model="changeReason" placeholder="Why do you need this change?"></textarea>
@@ -604,56 +507,22 @@
         <h3 class="block-title">Revise and Resubmit</h3>
         <p class="notice-inline">Update the details below, then resubmit for review.</p>
 
-        <label class="field-row">
-          Event name
-          <p></p>
-          <input v-model="revisionForm.name" />
-        </label>
-        <label class="field-row">
-          Purpose
-          <p></p>
-          <input v-model="revisionForm.purpose" />
-        </label>
-        <label class="field-row">
-          Description
-          <p></p>
-          <textarea v-model="revisionForm.description"></textarea>
-        </label>
-        <label class="field-row">
-          Proposed date
-          <p></p>
-          <input v-model="revisionForm.proposed_date" type="date" />
-        </label>
-        <label class="field-row">
-          Proposed time
-          <p></p>
-          <input v-model="revisionForm.proposed_time" type="time" />
-        </label>
-        <label class="field-row">
-          Expected attendance
-          <p></p>
-          <input v-model.number="revisionForm.expected_attendance" type="number" min="1" />
-        </label>
-        <label class="field-row">
-          Capacity Needed
-          <p></p>
-          <input v-model.number="revisionForm.capacity_needed" type="number" min="1" />
-        </label>
-        <label class="field-row">
-          Required Layout
-          <p></p>
-          <input v-model="revisionForm.required_layout" />
-        </label>
-        <label class="field-row">
-          Accessibility needs
-          <p></p>
-          <textarea v-model="revisionForm.accessibility_needs"></textarea>
-        </label>
-        <label class="checkbox-option">
-          <input v-model="revisionForm.registration_required" type="checkbox" />
-          Registration required
-        </label>
-
+<div class="create-aligned-form">
+<label class="aligned-field"><span>Name</span><input type="text" v-model="revisionForm.name"  /><span v-if="revisionFieldErrors.name" class="field-error">{{ revisionFieldErrors.name }}</span></label>
+<label class="aligned-field"><span>Purpose</span><input type="text" v-model="revisionForm.purpose"  /><span v-if="revisionFieldErrors.purpose" class="field-error">{{ revisionFieldErrors.purpose }}</span></label>
+<label class="aligned-field"><span>Event Type</span><select v-model="revisionForm.category"><option value="">Select a type (optional)</option><option v-for="type in EVENT_TYPES" :key="type" :value="type">{{ type }}</option><option v-if="revisionForm.category && !EVENT_TYPES.includes(revisionForm.category)" :value="revisionForm.category">{{ revisionForm.category }}</option></select><span v-if="revisionFieldErrors.category" class="field-error">{{ revisionFieldErrors.category }}</span></label>
+<label class="aligned-field"><span>Description</span><textarea v-model="revisionForm.description" rows="3" placeholder=""></textarea><span v-if="revisionFieldErrors.description" class="field-error">{{ revisionFieldErrors.description }}</span></label>
+<label class="aligned-field"><span>Start Date</span><input type="date" v-model="revisionForm.proposed_date"  /><span v-if="revisionFieldErrors.proposed_date" class="field-error">{{ revisionFieldErrors.proposed_date }}</span></label>
+<label class="aligned-field"><span>Start Time</span><input type="time" v-model="revisionForm.proposed_time"  /><span v-if="revisionFieldErrors.proposed_time" class="field-error">{{ revisionFieldErrors.proposed_time }}</span></label>
+<label class="aligned-field"><span>End Date</span><input type="date" v-model="revisionForm.proposed_end_date"  /><span v-if="revisionFieldErrors.proposed_end_date" class="field-error">{{ revisionFieldErrors.proposed_end_date }}</span></label>
+<label class="aligned-field"><span>End Time</span><input type="time" v-model="revisionForm.proposed_end_time"  /><span v-if="revisionFieldErrors.proposed_end_time" class="field-error">{{ revisionFieldErrors.proposed_end_time }}</span></label>
+<label class="aligned-field"><span>Expected Attendance</span><input type="number" v-model.number="revisionForm.expected_attendance" min="1" /><span v-if="revisionFieldErrors.expected_attendance" class="field-error">{{ revisionFieldErrors.expected_attendance }}</span></label>
+<label class="aligned-field"><span>Capacity Needed</span><input type="number" v-model.number="revisionForm.capacity_needed" min="1" /><span v-if="revisionFieldErrors.capacity_needed" class="field-error">{{ revisionFieldErrors.capacity_needed }}</span></label>
+<label class="aligned-field"><span>Required Layout</span><select v-model="revisionForm.required_layout"><option value="">Select a layout</option><option v-for="layout in venueLayouts" :key="layout" :value="layout">{{ layout }}</option><option v-if="revisionForm.required_layout && !venueLayouts.includes(revisionForm.required_layout)" :value="revisionForm.required_layout">{{ revisionForm.required_layout }}</option></select><span v-if="revisionFieldErrors.required_layout" class="field-error">{{ revisionFieldErrors.required_layout }}</span></label>
+<label class="aligned-field"><span>Accessibility Needs</span><textarea v-model="revisionForm.accessibility_needs" rows="3" placeholder=""></textarea><span v-if="revisionFieldErrors.accessibility_needs" class="field-error">{{ revisionFieldErrors.accessibility_needs }}</span></label>
+<div class="aligned-equipment full"><h3>Equipment Required</h3><p class="aligned-help">Select equipment from the catalogue and specify the quantity needed for your event.</p><div v-for="(item, index) in revisionEquipment" :key="item.id ?? index" class="aligned-equipment-item"><div class="aligned-item-header"><strong>Equipment {{ index + 1 }}</strong><button type="button" class="aligned-remove" @click="revisionEquipment.splice(index, 1)">Remove</button></div><div class="aligned-equipment-fields"><label>Equipment Type *<select v-model="item.type"><option value="">Select equipment</option><option v-if="item.type && !equipmentOptions.some(e => e.name === item.type)" :value="item.type">{{ item.type }}</option><option v-for="eq in equipmentOptions" :key="eq.id" :value="eq.name">{{ eq.name }}</option></select></label><label>Quantity *<input type="number" min="1" v-model.number="item.quantity" /></label></div><label>Technical Requirements<textarea v-model="item.technicalNotes" rows="2" placeholder="e.g. HDMI connection required"></textarea></label></div><button type="button" class="btn btn-grey" @click="revisionEquipment.push({ id: null, type: '', quantity: 1, technicalNotes: '' })">+ Add Equipment</button></div>
+<label class="aligned-field full aligned-checkbox"><input type="checkbox" v-model="revisionForm.registration_required" />Registration required</label><label v-if="revisionForm.registration_required" class="aligned-field"><span>Intended Capacity (optional)</span><input type="number" min="1" v-model.number="revisionForm.intended_capacity" /></label>
+</div>
         <p v-if="revisionError" class="field-error">{{ revisionError }}</p>
         <div class="actions">
           <button class="btn btn-primary" @click="resubmit">Resubmit for Review</button>
@@ -679,6 +548,7 @@ import usersApi from "../api/users";
 import { useConfirm } from "../composables/useConfirm";
 import changeRequestsApi from "../api/changeRequests";
 import equipmentApi from "../api/equipment";
+import venuesApi from "../api/venues";
 import EquipmentRequirementsPanel from "../components/EquipmentRequirementsPanel.vue";
 import VenueRequirementsPanel from "../components/VenueRequirementsPanel.vue";
 
@@ -761,21 +631,37 @@ const EDITABLE_FIELD_OPTIONS = [
 ];
 
 const EVENT_EDIT_FIELD_OPTIONS = [
-  { key: "name", label: "Event name", type: "text" },
-  { key: "purpose", label: "Purpose", type: "text" },
-  { key: "description", label: "Description", type: "textarea" },
-  { key: "category", label: "Category", type: "text" },
-  { key: "proposed_date", label: "Proposed date", type: "date" },
-  { key: "proposed_time", label: "Proposed time", type: "time" },
-  { key: "expected_attendance", label: "Expected attendance", type: "number" },
-  { key: "capacity_needed", label: "Capacity needed", type: "number" },
-  { key: "required_layout", label: "Required layout", type: "text" },
-  { key: "accessibility_needs", label: "Accessibility needs", type: "textarea" },
-  { key: "registration_required", label: "Registration required", type: "checkbox" },
-  { key: "intended_capacity", label: "Intended capacity (registration cap)", type: "number" },
-
+  { key: "name", label: "Name" }, { key: "purpose", label: "Purpose" },
+  { key: "category", label: "Event Type" }, { key: "description", label: "Description" },
+  { key: "proposed_date", label: "Start Date" }, { key: "proposed_time", label: "Start Time" },
+  { key: "proposed_end_date", label: "End Date" }, { key: "proposed_end_time", label: "End Time" },
+  { key: "expected_attendance", label: "Expected Attendance" },
+  { key: "capacity_needed", label: "Capacity Needed" },
+  { key: "required_layout", label: "Required Layout" },
+  { key: "accessibility_needs", label: "Accessibility Needs" },
+  { key: "registration_required", label: "Registration required" },
+  { key: "intended_capacity", label: "Intended Capacity" },
 ];
-
+const EVENT_TYPES = ["Conference", "Seminar", "Workshop", "Meeting", "Panel", "Networking", "Social", "Community", "Competition", "Entertainment", "Exhibition", "Orientation", "Ceremony", "Other"];
+const venueLayouts = ref([]);
+async function loadVenueLayouts() {
+  try {
+    const { data } = await venuesApi.listVenues();
+    venueLayouts.value = [...new Set((Array.isArray(data) ? data : []).flatMap(v => v.supportedLayouts || []).filter(Boolean))].sort();
+  } catch (error) { console.warn("Could not load venue layouts", error); }
+}
+const revisionEquipment = ref([]);
+const revisionFieldErrors = ref({});
+function eventFieldValue(key) {
+  const e = event.value || {};
+  const direct = { name: e.name, purpose: e.purpose, category: e.category, description: e.description,
+    proposed_date: e.proposedDate, proposed_time: e.proposedTime,
+    proposed_end_date: e.proposedEndDate, proposed_end_time: e.proposedEndTime,
+    expected_attendance: e.expectedAttendance, capacity_needed: e.venueRequirements?.capacityNeeded,
+    required_layout: e.venueRequirements?.requiredLayout,
+    accessibility_needs: e.venueRequirements?.accessibilityNeeds };
+  return direct[key];
+}
 const EVENT_EDIT_FIELD_LABELS = Object.fromEntries(EVENT_EDIT_FIELD_OPTIONS.map((f) => [f.key, f.label]));
 
 const REASSIGNABLE_STATUSES = [
@@ -842,14 +728,18 @@ const priorDecisions = ref([]);
 const revisionForm = reactive({
   name: "",
   purpose: "",
+  category: "",
   description: "",
   proposed_date: "",
   proposed_time: "",
+  proposed_end_date: "",
+  proposed_end_time: "",
   expected_attendance: null,
   capacity_needed: null,
   required_layout: "",
   accessibility_needs: "",
   registration_required: false,
+  intended_capacity: null,
 });
 const revisionError = ref("");
 
@@ -874,16 +764,19 @@ const withdrawalErrors = ref({});
 const withdrawalSubmitting = ref(false);
 
 const CHANGE_FIELDS = [
-  { key: "proposed_date", label: "Date", type: "date", current: (e) => e.proposedDate },
-  { key: "proposed_time", label: "Time", type: "time", current: (e) => e.proposedTime },
-  { key: "expected_attendance", label: "Expected attendance", type: "number", current: (e) => e.expectedAttendance },
-  { key: "capacity_needed", label: "Capacity Needed", type: "number", current: (e) => e.venueRequirements?.capacityNeeded },
-  { key: "required_layout", label: "Required Layout", type: "text", current: (e) => e.venueRequirements?.requiredLayout },
-  { key: "accessibility_needs", label: "Accessibility needs", type: "textarea", current: (e) => e.venueRequirements?.accessibilityNeeds },
-  { key: "name", label: "Event name", type: "text", current: (e) => e.name },
-  { key: "description", label: "Description", type: "textarea", current: (e) => e.description },
+  { key: "name", label: "Name", type: "text", current: e => e.name },
+  { key: "purpose", label: "Purpose", type: "text", current: e => e.purpose },
+  { key: "category", label: "Event Type", type: "text", current: e => e.category },
+  { key: "description", label: "Description", type: "textarea", current: e => e.description },
+  { key: "proposed_date", label: "Start Date", type: "date", current: e => e.proposedDate },
+  { key: "proposed_time", label: "Start Time", type: "time", current: e => e.proposedTime },
+  { key: "proposed_end_date", label: "End Date", type: "date", current: e => e.proposedEndDate },
+  { key: "proposed_end_time", label: "End Time", type: "time", current: e => e.proposedEndTime },
+  { key: "expected_attendance", label: "Expected Attendance", type: "number", current: e => e.expectedAttendance },
+  { key: "capacity_needed", label: "Capacity Needed", type: "number", current: e => e.venueRequirements?.capacityNeeded },
+  { key: "required_layout", label: "Required Layout", type: "text", current: e => e.venueRequirements?.requiredLayout },
+  { key: "accessibility_needs", label: "Accessibility Needs", type: "textarea", current: e => e.venueRequirements?.accessibilityNeeds },
 ];
-
 const CHANGE_LABELS = {
   ...Object.fromEntries(CHANGE_FIELDS.map((f) => [f.key, f.label])),
   venue_id: "Venue",
@@ -964,25 +857,25 @@ async function loadChangeRequests() {
 
 function resetChangeForm() {
   for (const field of CHANGE_FIELDS) changeForm[field.key] = field.type === "number" ? null : "";
-  changeForm.venue_id = "";
   changeEquipment.value = null;
   changeReason.value = "";
   changeErrors.value = {};
 }
 
 async function openChangeForm() {
-  await ensureCatalogue();
+  await Promise.all([loadEquipmentOptions(), loadVenueLayouts()]);
   resetChangeForm();
   showChangeForm.value = true;
 }
 
 function startEquipmentChange() {
   changeEquipment.value = (event.value.equipmentRequirements || []).map((e) => ({
-    type: e.type,
+    type: e.type ?? e.equipmentType,
     quantity: e.quantity,
+    technicalNotes: e.technicalNotes ?? "",
   }));
 }
-const addEquipmentRow = () => changeEquipment.value.push({ type: "", quantity: 1 });
+const addEquipmentRow = () => changeEquipment.value.push({ type: "", quantity: 1, technicalNotes: "" });
 const removeEquipmentRow = (index) => changeEquipment.value.splice(index, 1);
 
 function buildChanges() {
@@ -991,7 +884,6 @@ function buildChanges() {
     const value = changeForm[field.key];
     if (value !== "" && value !== null && value !== undefined) changes[field.key] = value;
   }
-  if (changeForm.venue_id !== "") changes.venue_id = changeForm.venue_id;
   if (changeEquipment.value !== null) changes.equipment_requirements = changeEquipment.value;
   return changes;
 }
@@ -1094,7 +986,9 @@ function ensureResponseForm(item) {
     purpose: event.value.purpose,
     description: event.value.description,
     proposed_date: event.value.proposedDate,
-    proposed_time: event.value.proposedTime,
+    proposed_time: (event.value.proposedTime || "").slice(0, 5),
+    proposed_end_date: event.value.proposedEndDate || "",
+    proposed_end_time: (event.value.proposedEndTime || "").slice(0, 5),
     expected_attendance: event.value.expectedAttendance,
     capacity_needed: event.value.venueRequirements?.capacityNeeded,
     required_layout: event.value.venueRequirements?.requiredLayout,
@@ -1112,14 +1006,21 @@ function initRevisionForm() {
   if (event.value?.status !== "rejected") return;
   revisionForm.name = event.value.name || "";
   revisionForm.purpose = event.value.purpose || "";
+  revisionForm.category = event.value.category || "";
   revisionForm.description = event.value.description || "";
   revisionForm.proposed_date = event.value.proposedDate || "";
-  revisionForm.proposed_time = event.value.proposedTime || "";
+  revisionForm.proposed_time = (event.value.proposedTime || "").slice(0, 5);
+  revisionForm.proposed_end_date = event.value.proposedEndDate || "";
+  revisionForm.proposed_end_time = (event.value.proposedEndTime || "").slice(0, 5);
   revisionForm.expected_attendance = event.value.expectedAttendance;
   revisionForm.capacity_needed = event.value.venueRequirements?.capacityNeeded;
   revisionForm.required_layout = event.value.venueRequirements?.requiredLayout;
   revisionForm.accessibility_needs = event.value.venueRequirements?.accessibilityNeeds;
   revisionForm.registration_required = event.value.registrationRequired;
+  revisionForm.intended_capacity = event.value.intendedCapacity ?? null;
+  revisionEquipment.value = (event.value.equipmentRequirements || []).map(item => ({ id: item.id, type: item.type ?? item.equipmentType, quantity: item.quantity, technicalNotes: item.technicalNotes ?? "" }));
+  loadEquipmentOptions();
+  loadVenueLayouts();
 }
 
 const SIGNIFICANT_FIELD_KEYS = [
@@ -1150,6 +1051,7 @@ let initialEditValues = {};
 function openEditForm() {
   ensureCatalogue();
   loadEquipmentOptions();
+  loadVenueLayouts();
   if (!canEditEvent.value) return;
   const source = {
     name: event.value.name,
@@ -1393,7 +1295,7 @@ async function resubmit() {
   if (!confirmed) return;
 
   try {
-    const { data } = await eventsApi.resubmitEvent(event.value.id, { ...revisionForm });
+    const { data } = await eventsApi.resubmitEvent(event.value.id, { ...revisionForm, equipment_requirements: revisionEquipment.value.map(({ id, type, quantity, technicalNotes }) => ({ ...(id != null ? { id } : {}), type, quantity: Number(quantity), technicalNotes })) });
     router.push(`/events/${data.id}`);
   } catch (e) {
     revisionError.value = e.response?.data?.error || "Could not resubmit this request.";
@@ -2311,4 +2213,35 @@ textarea {
   border-radius: 8px;
   font: inherit;
 }
+
+/* Consistent with EventCreateView's two-column event request layout. */
+.create-aligned-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem 1.1rem; margin:1rem 0 1.5rem; }
+.aligned-field { display:flex; flex-direction:column; gap:.4rem; min-width:0; font-size:.92rem; font-weight:600; color:#2d2a4a; }
+.aligned-field input:not([type="checkbox"]), .aligned-field select, .aligned-field textarea, .aligned-equipment input, .aligned-equipment select, .aligned-equipment textarea { box-sizing:border-box; width:100%; min-width:0; padding:.75rem .85rem; background:#faf9ff; border:1px solid #ded7ff; border-radius:10px; color:#302b4d; font:inherit; }
+/* Match EventCreateView: labels are semibold, entered values are regular. */
+.aligned-field input:not([type="checkbox"]),
+.aligned-field select,
+.aligned-field textarea,
+.aligned-equipment input,
+.aligned-equipment select,
+.aligned-equipment textarea {
+  font-weight: 400;
+}
+.aligned-field textarea { min-height:105px; resize:vertical; }
+.aligned-field input:focus, .aligned-field select:focus, .aligned-field textarea:focus, .aligned-equipment input:focus, .aligned-equipment select:focus, .aligned-equipment textarea:focus { outline:2px solid #a89af0; outline-offset:1px; }
+.aligned-current { color:#70689c; font-size:.82rem; font-weight:400; }
+.create-aligned-form .full { grid-column:1/-1; }
+.aligned-checkbox { flex-direction:row; align-items:center; gap:.65rem; }
+.aligned-checkbox input { width:auto; }
+.aligned-equipment { border:1px solid #e2dcff; border-radius:12px; padding:1.2rem; background:#f9f7ff; }
+.aligned-equipment h3 { margin:0 0 .35rem; color:#5140a8; }
+.aligned-help { color:#6e6599; margin:.25rem 0 1rem; font-size:.88rem; }
+.aligned-equipment-item { border:1px solid #e1dafa; background:#fff; border-radius:10px; padding:1rem; margin:1rem 0; }
+.aligned-item-header { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:.7rem; }
+.aligned-remove { border:0; background:none; color:#a52e5e; cursor:pointer; }
+.aligned-equipment-fields { display:grid; grid-template-columns:2fr 1fr; gap:1rem; }
+.aligned-equipment-item label { display:block; font-weight:600; font-size:.9rem; margin:.5rem 0; }
+.aligned-equipment-item label input, .aligned-equipment-item label select, .aligned-equipment-item label textarea { display:block; margin-top:.35rem; }
+.aligned-equipment > .btn { margin:.7rem .5rem 0 0; }
+@media(max-width:650px) { .create-aligned-form, .aligned-equipment-fields { grid-template-columns:1fr; } }
 </style>
