@@ -36,6 +36,8 @@ from app.models.notification import (
     TYPE_SAFETY_CHECK,
     TYPE_VENUE_BOOKING_UPDATE,
     TYPE_ARRANGEMENT_REVIEW,
+    TYPE_CHANGE_REQUEST,
+    TYPE_CLARIFICATION,
 )
 from app.models.registration import (
     ACTIVE_STATUSES,
@@ -209,6 +211,60 @@ def notify_organiser_of_clarification(event, comments):
     message = f'Your Coordinator needs clarification on "{_name(event)}": {_sentence(comments)}'
     return _organiser(event, "clarification_requested", "Clarification needed", message,
                       {"comments": comments})
+
+
+@_never_blocks
+def notify_coordinator_of_clarification_sent(event, coordinator_id, comments) -> list:
+    """Confirmation to the Coordinator that their clarification comment was
+    posted and the organiser has been asked to respond."""
+    organiser = event.organiser.name if event.organiser else "the organiser"
+    return [notify(
+        coordinator_id, TYPE_CLARIFICATION, "Clarification request sent",
+        f'Your clarification request on "{_name(event)}" was sent to {organiser}: {_sentence(comments)}',
+        event_id=event.id, link=_event_link(event),
+        data={"kind": "clarification_sent", "comments": comments},
+    )]
+
+
+@_never_blocks
+def notify_coordinator_of_clarification_response(event, review, comments) -> list:
+    """The organiser answered a clarification request. The event's current
+    Coordinator is told; so is the Coordinator who asked, if that was
+    someone else (e.g. before a reassignment)."""
+    organiser = event.organiser.name if event.organiser else "The organiser"
+    return notify_users(
+        [event.coordinator_id, getattr(review, "coordinator_id", None)],
+        TYPE_CLARIFICATION, "Clarification response received",
+        f'{organiser} responded to your clarification request on "{_name(event)}": {_sentence(comments)}',
+        event_id=event.id, link=_event_link(event),
+        data={"kind": "clarification_response", "reviewId": getattr(review, "id", None),
+              "comments": comments},
+    )
+
+
+@_never_blocks
+def notify_coordinator_of_change_request(event, change_request) -> list:
+    """An organiser submitted a change or withdrawal request: the assigned
+    Coordinator is asked to review it. (If no Coordinator is assigned yet,
+    the request is picked up from the review queue once one is.)"""
+    if not event.coordinator_id:
+        return []
+    organiser = event.organiser.name if event.organiser else "The organiser"
+    if change_request.request_type == "withdrawal":
+        title = "Withdrawal requested"
+        message = (f'{organiser} asked to withdraw "{_name(event)}". '
+                   f"Reason: {_sentence(change_request.reason)}")
+    else:
+        fields = ", ".join(_humanise(f) for f in sorted(change_request.requested_changes or {}))
+        title = "Significant change requested" if change_request.is_significant else "Change requested"
+        message = (f'{organiser} requested a change to "{_name(event)}" ({fields}). '
+                   f"Reason: {_sentence(change_request.reason)}")
+    return [notify(
+        event.coordinator_id, TYPE_CHANGE_REQUEST, title, message,
+        event_id=event.id, link=f"/change-requests?id={change_request.id}",
+        data={"changeRequestId": change_request.id, "requestType": change_request.request_type,
+              "isSignificant": bool(change_request.is_significant), "reason": change_request.reason},
+    )]
 
 
 @_never_blocks
@@ -455,6 +511,28 @@ def notify_venue_staff_of_booking_requests(bookings) -> list:
     return created
 
 
+@_never_blocks
+def notify_coordinator_of_venue_flag(flag) -> list:
+    """A booked venue became unavailable or unsuitable (an unavailable period
+    now overlaps the booking, or the venue's details/timings changed). The
+    flag is listed on the Venue Availability page; this tells the Coordinator
+    it is there."""
+    event = db.session.get(Event, flag.event_id)
+    if event is None or not event.coordinator_id:
+        return []
+    venue = db.session.get(Venue, flag.venue_id)
+    venue_name = venue.name if venue else f"Venue #{flag.venue_id}"
+    return [notify(
+        event.coordinator_id, TYPE_VENUE_BOOKING_UPDATE, "Booked venue unavailable",
+        f'{venue_name}, booked for "{_name(event)}", has an availability change that affects '
+        f"this event. Reason: {_sentence(flag.reason)} "
+        "Review it on the Venue Availability page.",
+        event_id=event.id, link="/venues/availability",
+        data={"change": "availability_flag", "flagId": flag.id, "venueName": venue_name,
+              "reason": flag.reason},
+    )]
+
+
 # ===========================================================================
 # ISP-106 — Technical Support Staff
 # ===========================================================================
@@ -682,6 +760,28 @@ def notify_safety_officers_of_safety_check(event) -> list:
         event_id=event.id, link=f"/safety-reviews/{event.id}",
         data={"recheck": recheck, "venues": venues, "expectedAttendance": event.expected_attendance},
     )
+
+
+@_never_blocks
+def notify_coordinator_of_safety_decision(event, review: EventSafetyReview) -> list:
+    """Safety check rejected or changes requested: the event has returned to
+    planning, so its Coordinator is told what the Safety Officer found and
+    which arrangements need rework."""
+    if not event.coordinator_id:
+        return []
+    label = "rejected" if review.decision == "rejected" else "changes requested"
+    officer = review.safety_officer.name if review.safety_officer else "The Safety Officer"
+    affected = review.affected_arrangements or []
+    return [notify(
+        event.coordinator_id, TYPE_SAFETY_CHECK, f"Safety check {label}",
+        f'{officer} {"rejected" if review.decision == "rejected" else "requested changes to"} '
+        f'the safety check for "{_name(event)}". Reason: {_sentence(review.comments)} '
+        f"Affected arrangements: {', '.join(affected) or 'none listed'}. "
+        "The event has returned to planning.",
+        event_id=event.id, link=_event_link(event),
+        data={"decision": review.decision, "reason": review.comments,
+              "affectedArrangements": affected},
+    )]
 
 
 @_never_blocks
