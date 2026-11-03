@@ -811,3 +811,305 @@ def test_hold_other_staff_cannot_release_hold(client, approve_context):
     )
 
     assert response.status_code == 403
+
+# ---------------------------------------------------------------------------
+# Additional service edge-case coverage (existing tests above are unchanged).
+# ---------------------------------------------------------------------------
+
+def test_service_submit_booking_and_duplicate_guard(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    from app.models.event import Event
+    event = db.session.get(Event, context.event_id)
+    venue = db.session.get(Venue, context.my_venue_id)
+    monkeypatch.setattr(svc.notifications, "notify_venue_staff_of_booking_requests",
+                        lambda bookings: None)
+    created = svc.submit_booking_request(
+        event, venue, context.coordinator_id,
+        start_datetime=when(30), end_datetime=when(30) + timedelta(hours=2),
+    )
+    assert created.status == "pending"
+    assert created.event_id == event.id
+    with pytest.raises(ValueError, match="active booking"):
+        svc.submit_booking_request(
+            event, venue, context.coordinator_id,
+            start_datetime=when(30), end_datetime=when(30) + timedelta(hours=2),
+        )
+
+
+@pytest.mark.parametrize("reason, message", [
+    (123, "Reason must be text"),
+    ("x" * 501, "Reason must not exceed 500 characters"),
+])
+def test_service_cancel_rejects_invalid_reason(app, context, reason, message):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context, status="approved"))
+    with pytest.raises(ValueError, match=message):
+        svc.cancel_booking(record, context.staff_id, reason)
+
+
+@pytest.mark.parametrize("reason, alternative, expected", [
+    (123, None, "Reason must be text"),
+    ("x" * 501, None, "Reason must not exceed 500 characters"),
+    (None, 123, "Alternative suggestion must be text"),
+    (None, "x" * 501, "Alternative suggestion must not exceed 500 characters"),
+])
+def test_service_reject_rejects_invalid_text(app, context, reason, alternative, expected):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context))
+    with pytest.raises(ValueError, match=expected):
+        svc.reject_booking(record, context.staff_id, reason, alternative)
+
+
+def test_service_cancel_missing_venue(app, context):
+    from app.venues.services import booking as svc
+    record = SimpleNamespace(id=add_booking(context, status="approved"), venue_id=-999999)
+    with pytest.raises(ValueError, match="Venue not found"):
+        svc.cancel_booking(record, context.staff_id)
+
+
+def test_service_cancel_stale_conditional_update(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context, status="approved"))
+    query_type = type(VenueBooking.query)
+    original_update = query_type.update
+    monkeypatch.setattr(query_type, "update", lambda self, *a, **k: 0)
+    with pytest.raises(ValueError, match="no longer approved"):
+        svc.cancel_booking(record, context.staff_id)
+
+
+def test_service_conflict_missing_venue_and_missing_window(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context))
+    assert svc.has_confirmed_conflict(-999999, record) is False
+    monkeypatch.setattr(svc, "compute_booking_window", lambda *args: None)
+    assert svc.has_confirmed_conflict(context.my_venue_id, record) is False
+
+
+def test_service_approve_missing_venue(app, context):
+    from app.venues.services import booking as svc
+    record = SimpleNamespace(id=add_booking(context), venue_id=-999999)
+    with pytest.raises(ValueError, match="Venue not found"):
+        svc.approve_booking(record, context.staff_id)
+
+
+def test_service_reject_missing_venue(app, context):
+    from app.venues.services import booking as svc
+    record = SimpleNamespace(id=add_booking(context), venue_id=-999999)
+    with pytest.raises(ValueError, match="Venue not found"):
+        svc.reject_booking(record, context.staff_id)
+
+
+def test_service_hold_missing_booking(app, context):
+    from app.venues.services import booking as svc
+    with pytest.raises(LookupError, match="Booking not found"):
+        svc.manage_hold(-999999, context.staff_id, "place",
+                        utcnow() + timedelta(hours=2))
+
+
+def test_service_hold_missing_venue(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context))
+    monkeypatch.setattr(db.session, "get", lambda model, ident: SimpleNamespace(id=ident, venue_id=-999999))
+    with pytest.raises(LookupError, match="Venue not found"):
+        svc.manage_hold(record.id, context.staff_id, "place",
+                        utcnow() + timedelta(hours=2))
+
+
+def test_service_hold_invalid_action(app, context):
+    from app.venues.services import booking as svc
+    booking_id = add_booking(context)
+    with pytest.raises(ValueError, match="Invalid hold action"):
+        svc.manage_hold(booking_id, context.staff_id, "invalid")
+
+
+def test_service_hold_conflict_guard(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    booking_id = add_booking(context)
+    monkeypatch.setattr(svc, "has_confirmed_conflict", lambda *a, **k: True)
+    with pytest.raises(ValueError, match="Venue conflicts"):
+        svc.manage_hold(booking_id, context.staff_id, "place",
+                        utcnow() + timedelta(hours=2))
+
+
+def test_service_hold_release_non_active(app, context):
+    from app.venues.services import booking as svc
+    booking_id = add_booking(context)
+    with pytest.raises(ValueError, match="Only an active hold"):
+        svc.manage_hold(booking_id, context.staff_id, "release")
+
+
+def test_service_approve_stale_conditional_update(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context))
+    query_type = type(VenueBooking.query)
+    monkeypatch.setattr(query_type, "update", lambda self, *a, **k: 0)
+    monkeypatch.setattr(svc, "compute_booking_window",
+                        lambda booking, venue: (when(30), when(30) + timedelta(hours=2)))
+    monkeypatch.setattr(svc, "_refuse_if_venue_unavailable", lambda *a: None)
+    with pytest.raises(ValueError, match="already been decided"):
+        svc.approve_booking(record, context.staff_id)
+
+
+def test_service_reject_stale_conditional_update(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context))
+    query_type = type(VenueBooking.query)
+    monkeypatch.setattr(query_type, "update", lambda self, *a, **k: 0)
+    with pytest.raises(ValueError, match="already been decided"):
+        svc.reject_booking(record, context.staff_id)
+
+
+def test_service_withdraw_rolls_back_unexpected_error(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context))
+    query_type = type(VenueBooking.query)
+    def fail(*a, **kw):
+        raise RuntimeError("database failure")
+    monkeypatch.setattr(query_type, "update", fail)
+    with pytest.raises(RuntimeError, match="database failure"):
+        svc.withdraw_booking_request(record, context.coordinator_id)
+
+
+def test_service_submit_booking_rejects_missing_or_invalid_times(app, context):
+    from app.venues.services import booking as svc
+    from app.models.event import Event
+    event = db.session.get(Event, context.event_id)
+    venue = db.session.get(Venue, context.my_venue_id)
+    with pytest.raises(ValueError, match="valid booking start and end datetime"):
+        svc.submit_booking_request(event, venue, context.coordinator_id)
+    with pytest.raises(ValueError, match="valid booking start and end datetime"):
+        svc.submit_booking_request(
+            event, venue, context.coordinator_id,
+            start_datetime=when(30), end_datetime=when(29),
+        )
+
+# Further edge-case tests for booking service coverage. Original tests remain unchanged.
+
+def test_booking_service_withdraw_wrong_owner(app, context):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context))
+    with pytest.raises(ValueError, match="not authorised"):
+        svc.withdraw_booking_request(record, context.other_staff_id)
+
+
+def test_booking_service_withdraw_stale_and_success(app, context):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context))
+    assert svc.withdraw_booking_request(record, context.coordinator_id).status == svc.WITHDRAWN
+    with pytest.raises(ValueError, match="already been decided"):
+        svc.withdraw_booking_request(record, context.coordinator_id)
+
+
+def test_booking_service_cancel_wrong_staff_and_nonapproved(app, context):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context))
+    with pytest.raises(PermissionError, match="another staff member"):
+        svc.cancel_booking(record, context.other_staff_id)
+    with pytest.raises(ValueError, match="Only approved"):
+        svc.cancel_booking(record, context.staff_id)
+
+
+def test_booking_service_cancel_success_and_missing_event(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    record = db.session.get(VenueBooking, add_booking(context, status="approved"))
+    monkeypatch.setattr(svc, "resolve_flags_for_booking", lambda *a: None)
+    monkeypatch.setattr(svc.notifications, "notify_coordinator_of_booking_update", lambda *a: None)
+    from app.events.services import status as status_service
+    seen = []
+    monkeypatch.setattr(status_service, "reconsider_event_after_arrangement_loss",
+                        lambda *a, **kw: seen.append(kw))
+    result = svc.cancel_booking(record, context.staff_id, "Schedule changed")
+    assert result.status == svc.CANCELLED
+    assert seen and "Schedule changed" in seen[0]["reason"]
+
+
+def test_booking_service_cancel_no_event_branch(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    from app.models.event import Event
+    record = db.session.get(VenueBooking, add_booking(context, status="approved"))
+    monkeypatch.setattr(svc, "resolve_flags_for_booking", lambda *a: None)
+    monkeypatch.setattr(svc.notifications, "notify_coordinator_of_booking_update", lambda *a: None)
+    original_get = db.session.get
+    def no_event(model, key, *a, **kw):
+        return None if model is Event else original_get(model, key, *a, **kw)
+    monkeypatch.setattr(db.session, "get", no_event)
+    assert svc.cancel_booking(record, context.staff_id).status == svc.CANCELLED
+
+
+def test_booking_service_conflict_with_overlapping_approved(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    candidate = db.session.get(VenueBooking, add_booking(context))
+    other_id = add_booking(context, status="approved")
+    other = db.session.get(VenueBooking, other_id)
+    monkeypatch.setattr(svc, "compute_booking_window", lambda *a: (when(30), when(30) + timedelta(hours=2)))
+    assert svc.has_confirmed_conflict(context.my_venue_id, candidate) is True
+    assert svc.has_confirmed_conflict(context.my_venue_id, candidate, exclude_booking_id=other.id) is False
+
+
+def test_booking_service_unavailable_venue(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    venue = db.session.get(Venue, context.my_venue_id)
+    start, end = when(30), when(30) + timedelta(hours=2)
+    blocked = SimpleNamespace(start_datetime=start, end_datetime=end, reason="Maintenance")
+    monkeypatch.setattr(svc, "find_unavailability_overlap", lambda *a: blocked)
+    with pytest.raises(ValueError, match="Maintenance"):
+        svc._refuse_if_venue_unavailable(venue, start, end)
+    blocked.reason = None
+    with pytest.raises(ValueError, match="marked unavailable"):
+        svc._refuse_if_venue_unavailable(venue, start, end)
+
+
+def test_booking_service_missing_booking_after_venue_lock(app, context, monkeypatch):
+    from app.venues.services import booking as svc
+    from unittest.mock import MagicMock
+    record = db.session.get(VenueBooking, add_booking(context))
+    original_query = db.session.query
+    def mock_query(model, *a, **kw):
+        if model is VenueBooking:
+            query = MagicMock()
+            query.populate_existing.return_value.filter.return_value.first.return_value = None
+            return query
+        return original_query(model, *a, **kw)
+    monkeypatch.setattr(db.session, "query", mock_query)
+    with pytest.raises(ValueError, match="Booking not found"):
+        svc.approve_booking(record, context.staff_id)
+    with pytest.raises(ValueError, match="Booking not found"):
+        svc.reject_booking(record, context.staff_id)
+    with pytest.raises(ValueError, match="Booking not found"):
+        svc.cancel_booking(record, context.staff_id)
+
+
+
+def test_booking_service_cancel_existing_event_without_reason(app, context, monkeypatch):
+    """Cover reconsideration when cancellation has no reason."""
+    from app.venues.services import booking as svc
+    from app.events.services import status as status_service
+
+    record = db.session.get(VenueBooking, add_booking(context, status="approved"))
+    monkeypatch.setattr(svc, "resolve_flags_for_booking", lambda *args: None)
+    monkeypatch.setattr(svc.notifications, "notify_coordinator_of_booking_update", lambda *args: None)
+    reconsiderations = []
+    monkeypatch.setattr(status_service, "reconsider_event_after_arrangement_loss",
+                        lambda *args, **kwargs: reconsiderations.append(kwargs))
+
+    cancelled = svc.cancel_booking(record, context.staff_id)
+
+    assert cancelled.status == svc.CANCELLED
+    assert len(reconsiderations) == 1
+    assert reconsiderations[0]["reason"] == f"Venue booking #{record.id} was cancelled"
+
+
+def test_booking_service_conflict_with_nonoverlapping_approved(app, context, monkeypatch):
+    """An approved booking at a different time must not cause a conflict."""
+    from app.venues.services import booking as svc
+
+    candidate = db.session.get(VenueBooking, add_booking(context))
+    other = db.session.get(VenueBooking, add_booking(context, status="approved"))
+    candidate_window = (when(30), when(30) + timedelta(hours=2))
+    other_window = (when(31), when(31) + timedelta(hours=2))
+
+    def window_for(booking, venue):
+        return other_window if booking.id == other.id else candidate_window
+
+    monkeypatch.setattr(svc, "compute_booking_window", window_for)
+    assert svc.has_confirmed_conflict(context.my_venue_id, candidate) is False
