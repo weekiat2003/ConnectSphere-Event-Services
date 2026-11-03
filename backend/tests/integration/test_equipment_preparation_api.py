@@ -7,6 +7,7 @@ from app.extensions import db
 from app.models.event import Event, EventEquipmentRequirement
 from app.models.equipment import EquipmentItem, EquipmentReservation
 from app.models.notification import TYPE_EQUIPMENT_RESERVATION_UPDATE, Notification
+from app.models.user import User
 from app.models.venue import Venue, VenueBooking
 
 
@@ -93,6 +94,40 @@ def test_confirm_recheck_clears_flag_and_notifies_coordinator(
         "field": "needs_recheck",
         "new_value": False,
     }
+
+
+def test_confirm_recheck_returns_forbidden_when_live_user_role_was_revoked(
+    client, tech_headers, line
+):
+    line.status = "confirmed"
+    line.needs_recheck = True
+    user = User.query.filter_by(email="tech@test.com").one()
+    user.roles = []
+    db.session.commit()
+
+    response = client.post(
+        f"/api/equipment/requirements/{line.id}/confirm-recheck",
+        headers=tech_headers,
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["error"] == (
+        "Only Technical Support Staff can confirm equipment suitability."
+    )
+    db.session.expire_all()
+    assert db.session.get(EventEquipmentRequirement, line.id).needs_recheck is True
+
+
+def test_confirm_recheck_for_missing_requirement_returns_not_found(
+    client, tech_headers
+):
+    response = client.post(
+        "/api/equipment/requirements/9999/confirm-recheck",
+        headers=tech_headers,
+    )
+
+    assert response.status_code == 404
+    assert response.get_json()["error"] == "Equipment requirement not found"
 
 
 def test_flagged_reserved_requirement_blocks_safety_check(

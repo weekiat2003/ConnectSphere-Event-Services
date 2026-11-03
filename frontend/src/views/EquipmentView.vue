@@ -2,6 +2,11 @@
   <div>
     <h2 class="page-title">Equipment Catalogue</h2>
     <p v-if="error" class="error">{{ error }}</p>
+    <ul v-if="blockingReservations.length" class="error reservation-blockers">
+      <li v-for="reservation in blockingReservations" :key="reservation.id">
+        {{ reservation.eventName }}: {{ formatDate(reservation.start) }} – {{ formatDate(reservation.end) }}
+      </li>
+    </ul>
     <p v-if="warning" class="warning">{{ warning }}</p>
     <p v-if="success" class="success">{{ success }}</p>
 
@@ -60,6 +65,10 @@
         placeholder="Search equipment…"
         aria-label="Search equipment"
       />
+      <label class="show-retired">
+        <input v-model="showRetired" type="checkbox" />
+        Show retired
+      </label>
     </div>
 
     <div v-if="filtered.length" class="card">
@@ -79,7 +88,7 @@
               <td>
                 <span v-if="editingId !== item.id">
                   {{ item.totalQuantity }}
-                  <button type="button" class="link" @click="startEdit(item)">Edit</button>
+                  <button v-if="item.status !== 'retired'" type="button" class="link" @click="startEdit(item)">Edit</button>
                 </span>
                 <span v-else class="edit">
                   <input
@@ -114,8 +123,19 @@
                     Report issue
                   </button>
                 </template>
-                <button v-else type="button" class="btn btn-sky" @click="markActive(item)">
+                <button v-else-if="item.status !== 'retired'" type="button" class="btn btn-sky" @click="markActive(item)">
                   Restore to service
+                </button>
+                <button v-if="item.status !== 'retired'" type="button" class="btn btn-rose" @click="retire(item)">
+                  Remove
+                </button>
+                <button
+                  v-if="item.status === 'retired' && showRetired"
+                  type="button"
+                  class="btn btn-sky"
+                  @click="restoreRetired(item)"
+                >
+                  Restore
                 </button>
               </td>
             </tr>
@@ -154,6 +174,8 @@ const filter = ref("all");
 const editingId = ref(null);
 const editQuantity = ref(0);
 const reportingId = ref(null);
+const showRetired = ref(false);
+const blockingReservations = ref([]);
 const nameInput = ref(null);
 const { confirm } = useConfirm();
 
@@ -165,6 +187,7 @@ function clearMessages() {
   error.value = "";
   warning.value = "";
   success.value = "";
+  blockingReservations.value = [];
 }
 
 const availableSuggestions = computed(() => {
@@ -183,6 +206,7 @@ const tabs = computed(() => [
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase();
   return items.value.filter((i) => {
+    if (i.status === "retired" && !showRetired.value) return false;
     if (filter.value === "active" && i.status !== "active") return false;
     if (filter.value === "unavailable" && i.status === "active") return false;
     return !q || i.name.toLowerCase().includes(q);
@@ -217,6 +241,11 @@ async function addItem() {
   );
   if (existing) {
     filter.value = "all";
+    if (existing.status === "retired") {
+      showRetired.value = true;
+      error.value = `${existing.name} is retired and cannot be added again.`;
+      return;
+    }
     startEdit(existing);
     error.value = `${existing.name} is already in the catalogue (${existing.totalQuantity} in total). Change its quantity below instead of adding it again.`;
     return;
@@ -277,6 +306,41 @@ async function markActive(item) {
   }
 }
 
+function formatDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+async function retire(item) {
+  clearMessages();
+  const ok = await confirm(`Remove ${item.name} from the active catalogue? This will retire the item.`);
+  if (!ok) return;
+  try {
+    await equipmentApi.retire(item.id);
+    success.value = `Retired ${item.name}.`;
+    await load();
+  } catch (e) {
+    const data = e.response?.data;
+    error.value = message(e, `Could not retire ${item.name}.`);
+    if (e.response?.status === 409) {
+      blockingReservations.value = data?.affectedReservations || [];
+    }
+  }
+}
+
+async function restoreRetired(item) {
+  clearMessages();
+  const ok = await confirm(`Restore ${item.name} to the active equipment catalogue?`);
+  if (!ok) return;
+  try {
+    await equipmentApi.restore(item.id);
+    success.value = `Restored ${item.name} to active service.`;
+    await load();
+  } catch (e) {
+    error.value = message(e, `Could not restore ${item.name}.`);
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -294,6 +358,9 @@ onMounted(load);
   color: var(--lilac-text, #4b3fa0); font: inherit; font-size: 0.8rem; font-weight: 500; cursor: pointer; }
 .chip:hover { background: #ddd6fb; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.75rem; }
+.show-retired { display: inline-flex; align-items: center; gap: .4rem; color: var(--text-muted, #6b6890); font-size: .9rem; }
+.show-retired input { accent-color: var(--primary, #6d5bd0); }
+.reservation-blockers { padding-left: 2rem; }
 .tabs { display: inline-flex; gap: 0.35rem; }
 .tab { padding: 0.3rem 0.9rem; border: 1px solid var(--border, #e4defa); border-radius: 999px; background: #fff;
   color: var(--text-muted, #6b6890); font: inherit; font-size: 0.9rem; font-weight: 500; cursor: pointer; }

@@ -5,9 +5,6 @@ import pytest
 from app.extensions import db
 from app.models.event import Event, EventFieldEditLog
 
-EDITABLE_STATUSES = ["under_review", "approved", "planning", "safety_check"]
-
-
 def new_event(make_event, organiser, coordinator, status="planning"):
     return make_event(organiser, status=status, coordinator_id=coordinator)
 
@@ -23,10 +20,9 @@ def saved_lines(event_id):
     return db.session.get(Event, event_id).equipment_requirements
 
 
-@pytest.mark.parametrize("status", EDITABLE_STATUSES)
 def test_ac1_assigned_coordinator_saves_a_line_and_it_appears(
-        client, auth_header, organiser, coordinator, make_event, status):
-    event_id = new_event(make_event, organiser, coordinator, status)
+        client, auth_header, organiser, coordinator, make_event):
+    event_id = new_event(make_event, organiser, coordinator)
     headers = auth_header("coordinator@test.com")
     res = put_lines(client, headers, event_id, [{"type": "Projector", "quantity": 2}])
     assert res.status_code == 200, res.get_json()
@@ -34,6 +30,37 @@ def test_ac1_assigned_coordinator_saves_a_line_and_it_appears(
     assert [(item.equipment_type, item.quantity, item.status) for item in lines] == [("Projector", 2, "requested")]
     shown = client.get(f"/api/events/{event_id}", headers=headers).get_json()
     assert "Projector" in json.dumps(shown) and "requested" in json.dumps(shown)
+
+
+@pytest.mark.parametrize("status", ["under_review", "approved", "safety_check"])
+def test_equipment_change_outside_planning_returns_clear_validation_error(
+        client, auth_header, organiser, coordinator, make_event, status):
+    event_id = new_event(make_event, organiser, coordinator, status)
+    res = put_lines(
+        client, auth_header("coordinator@test.com"), event_id,
+        [{"type": "Projector", "quantity": 2}],
+    )
+    assert res.status_code == 400
+    assert res.get_json() == {
+        "errors": {
+            "equipment_requirements": (
+                "Equipment can only be requested while the event is in Planning."
+            )
+        }
+    }
+    assert saved_lines(event_id) == []
+
+
+def test_non_equipment_edit_is_still_allowed_outside_planning(
+        client, auth_header, organiser, coordinator, make_event):
+    event_id = new_event(make_event, organiser, coordinator, "approved")
+    res = client.put(
+        f"/api/events/{event_id}/update",
+        headers=auth_header("coordinator@test.com"),
+        json={"fields": {"purpose": "Updated purpose"}},
+    )
+    assert res.status_code == 200
+    assert db.session.get(Event, event_id).purpose == "Updated purpose"
 
 
 @pytest.mark.parametrize("line, field", [

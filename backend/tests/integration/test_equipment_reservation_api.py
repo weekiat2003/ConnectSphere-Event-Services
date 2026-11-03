@@ -84,6 +84,24 @@ def test_reserve_creates_reservation_and_confirms_requirement(client, tech_heade
     assert requirement_status(req_id) == "confirmed"
 
 
+def test_reservation_rejects_mixed_timezone_datetimes(
+    client, tech_headers, item, setup_event
+):
+    event_id, req_id = setup_event()
+    body = payload(event_id, req_id, item)
+    body["start"] = "2026-12-01T10:00:00+00:00"
+    body["end"] = "2026-12-01T11:00:00"
+
+    response = reserve(client, tech_headers, body)
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == (
+        "start and end must both include, or both omit, a timezone"
+    )
+    assert count() == 0
+    assert requirement_status(req_id) == "requested"
+
+
 def test_reservation_matches_equipment_type_case_insensitively_and_trims(
     client, tech_headers, item, setup_event
 ):
@@ -222,8 +240,17 @@ def test_requirement_of_another_event_returns_400(client, tech_headers, item, se
     assert count() == 0
 
 
-@pytest.mark.parametrize("status", ["damaged", "maintenance", "retired"])
-def test_inactive_item_is_rejected(client, tech_headers, item, setup_event, status):
+@pytest.mark.parametrize(
+    "status,error_message",
+    [
+        ("damaged", "Projector is currently damaged and can't be reserved."),
+        ("maintenance", "Projector is currently under maintenance and can't be reserved."),
+        ("retired", "Projector has been retired from the catalogue and can't be reserved."),
+    ],
+)
+def test_inactive_item_is_rejected(
+    client, tech_headers, item, setup_event, status, error_message
+):
     db.session.get(EquipmentItem, item).status = status
     db.session.commit()
     event_id, req_id = setup_event()
@@ -231,7 +258,7 @@ def test_inactive_item_is_rejected(client, tech_headers, item, setup_event, stat
     res = reserve(client, tech_headers, payload(event_id, req_id, item))
 
     assert res.status_code == 400
-    assert "not active" in res.get_json()["error"]
+    assert res.get_json()["error"] == error_message
     assert count() == 0
 
 
