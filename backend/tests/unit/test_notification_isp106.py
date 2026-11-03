@@ -8,7 +8,7 @@ from app.events.services import review
 from app.events.services import update as updateservice
 from app.extensions import db
 from app.models.equipment import EquipmentItem, EquipmentReservation
-from app.models.event import Event, EventEquipmentRequirement
+from app.models.event import Event, EventEquipmentRequirement, EventFieldEditLog
 from app.models.notification import (
     TYPE_EQUIPMENT_RESERVATION_UPDATE,
     TYPE_NEW_EQUIPMENT_REQUEST,
@@ -45,10 +45,86 @@ def save(event, coordinator, requirements):
 
 
 def test_an_unchanged_equipment_save_sends_nothing(app, organiser, coordinator, make_event, tech):
-    event = make_with_lines(make_event, organiser, coordinator, "planning")
-    line = event.equipment_requirements[0]
-    save(event, coordinator, [{"id": line.id, "type": "Projector", "quantity": 2}])
+    event, line, item = make_reservable_event(make_event, organiser, coordinator)
+    line.technical_notes = None
+    reservation = make_reservation(event, line, item, tech)
+    db.session.commit()
+
+    updateservice.update_event_fields(
+        event,
+        db.session.get(User, coordinator),
+        {"equipment_requirements": [{
+            "id": line.id,
+            "type": "Projector",
+            "quantity": 2,
+            "technicalNotes": "",
+        }]},
+    )
+
+    db.session.expire_all()
+    line = db.session.get(EventEquipmentRequirement, line.id)
+    reservation = db.session.get(EquipmentReservation, reservation.id)
+    event = db.session.get(Event, event.id)
+    assert event.status == "approved"
+    assert line.technical_notes is None
+    assert line.needs_recheck is False
+    assert line.status == "confirmed"
+    assert reservation.status == "reserved"
+    assert EventFieldEditLog.query.filter_by(event_id=event.id).count() == 0
     assert inbox(tech) == []
+
+
+def test_notes_only_equipment_change_keeps_reservation_and_notifies_once(
+    app, organiser, coordinator, make_event, tech
+):
+    event, requirement, item = make_reservable_event(make_event, organiser, coordinator)
+    reservation = make_reservation(event, requirement, item, tech)
+
+    updateservice.update_event_fields(
+        event,
+        db.session.get(User, coordinator),
+        {"equipment_requirements": [{
+            "id": requirement.id,
+            "type": "Projector",
+            "quantity": 2,
+            "technicalNotes": "Use a ceiling mount",
+        }]},
+    )
+
+    db.session.expire_all()
+    requirement = db.session.get(EventEquipmentRequirement, requirement.id)
+    reservation = db.session.get(EquipmentReservation, reservation.id)
+    logs = EventFieldEditLog.query.filter_by(event_id=event.id).all()
+    assert requirement.technical_notes == "Use a ceiling mount"
+    assert requirement.needs_recheck is False
+    assert requirement.status == "confirmed"
+    assert reservation.status == "reserved"
+    assert len(logs) == 1 and logs[0].was_significant is False
+    assert len(inbox(tech)) == 1
+
+
+def test_quantity_change_on_reserved_equipment_releases_reservation_and_notifies_once(
+    app, organiser, coordinator, make_event, tech
+):
+    event, requirement, item = make_reservable_event(make_event, organiser, coordinator)
+    reservation = make_reservation(event, requirement, item, tech)
+
+    save(event, coordinator, [{
+        "id": requirement.id,
+        "type": "Projector",
+        "quantity": 3,
+    }])
+
+    db.session.expire_all()
+    requirement = db.session.get(EventEquipmentRequirement, requirement.id)
+    reservation = db.session.get(EquipmentReservation, reservation.id)
+    logs = EventFieldEditLog.query.filter_by(event_id=event.id).all()
+    assert requirement.quantity == 3
+    assert requirement.needs_recheck is True
+    assert requirement.status == "requested"
+    assert reservation.status == "released"
+    assert len(logs) == 1 and logs[0].was_significant is True
+    assert len(inbox(tech)) == 1
 
 
 def test_editing_another_field_sends_nothing(app, organiser, coordinator, make_event, tech):

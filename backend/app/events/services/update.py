@@ -88,16 +88,31 @@ def update_event_fields(event: Event, user, changes: dict, offline_review_confir
         raise EventValidationError({f: "This field cannot be edited here" for f in unknown_fields})
 
     changes = _normalize_changes(changes)
+    field_errors = _validate_changes(event, changes)
+    if field_errors:
+        raise EventValidationError(field_errors)
+
+    if "equipment_requirements" in changes and _equipment_requirements_unchanged(
+        event, changes["equipment_requirements"]
+    ):
+        changes.pop("equipment_requirements")
+
+    if not changes:
+        return event
+
     significant_fields = set(changes) & SIGNIFICANT_FIELDS
+    if (
+        "equipment_requirements" in significant_fields
+        and not _equipment_requirements_need_offline_review(
+            event, changes["equipment_requirements"]
+        )
+    ):
+        significant_fields.remove("equipment_requirements")
     if significant_fields and not offline_review_confirmed:
         raise OfflineReviewNotConfirmedError(
             "Changing date, time, attendance, venue, or equipment requirements requires "
             "confirming the offline review has been done first."
         )
-
-    field_errors = _validate_changes(event, changes)
-    if field_errors:
-        raise EventValidationError(field_errors)
 
     old_values = {f: _json_value(_current_field_value(event, f)) for f in changes}
     before = notifications.schedule_snapshot(event)
@@ -267,6 +282,56 @@ def _current_field_value(event: Event, field: str):
         ]
     return getattr(event, field)
 
+
+def _equipment_requirements_unchanged(event: Event, requirements: list) -> bool:
+    existing = {item.id: item for item in event.equipment_requirements}
+    submitted = {}
+    for values in requirements:
+        requirement_id = values.get("id")
+        if requirement_id is None or requirement_id in submitted:
+            return False
+        submitted[requirement_id] = values
+
+    if submitted.keys() != existing.keys():
+        return False
+
+    for requirement_id, values in submitted.items():
+        item = existing[requirement_id]
+        equipment_type = values.get("type", values.get("equipment_type"))
+        quantity = values.get("quantity")
+        notes = values.get(
+            "technicalNotes",
+            values.get("technical_notes", item.technical_notes),
+        )
+        if (
+            equipment_type != item.equipment_type
+            or quantity != item.quantity
+            or (notes or "") != (item.technical_notes or "")
+        ):
+            return False
+    return True
+
+
+def _equipment_requirements_need_offline_review(event: Event, requirements: list) -> bool:
+    existing = {item.id: item for item in event.equipment_requirements}
+    submitted = {}
+    for values in requirements:
+        requirement_id = values.get("id")
+        if requirement_id is None or requirement_id in submitted:
+            return True
+        submitted[requirement_id] = values
+
+    if submitted.keys() != existing.keys():
+        return True
+
+    for requirement_id, values in submitted.items():
+        item = existing[requirement_id]
+        equipment_type = values.get("type", values.get("equipment_type"))
+        if equipment_type != item.equipment_type or values.get("quantity") != item.quantity:
+            return True
+    return False
+
+
 def _release_reservations(requirement):
     """A removed line gives its reserved equipment back."""
     held = EquipmentReservation.query.filter_by(
@@ -313,9 +378,13 @@ def _update_equipment_requirements(event: Event, requirements: list):
                 item.status = "requested"
             item.needs_recheck = True
         if "technicalNotes" in values:
-            item.technical_notes = values["technicalNotes"]
+            notes = values["technicalNotes"]
         elif "technical_notes" in values:
-            item.technical_notes = values["technical_notes"]
+            notes = values["technical_notes"]
+        else:
+            notes = item.technical_notes
+        if (notes or "") != (item.technical_notes or ""):
+            item.technical_notes = notes
         db.session.add(item)
 
 

@@ -42,9 +42,19 @@
           <textarea :id="`eq-notes-${index}`" v-model="item.technicalNotes" rows="2" placeholder="e.g. ceiling-mounted, 5 m cable"></textarea>
         </div>
         <button type="button" class="btn secondary" @click="addEquipment">+ Add Equipment</button>
+        <div v-if="equipmentNeedsOfflineReview" class="offline-review-callout">
+          <label class="checkbox-option">
+            <input type="checkbox" v-model="offlineReviewConfirmed" />
+            I confirm the offline review for this change has been done
+          </label>
+          <p class="offline-review-hint">
+            You're changing equipment type or quantity, or adding or removing a row.
+            Confirm you've coordinated this outside the system before saving.
+          </p>
+        </div>
         <p v-if="error" role="alert" class="error">{{ error }}</p>
         <p v-if="success" role="status" class="success">{{ success }}</p>
-        <button type="button" class="btn primary submit" :disabled="saving || !requirements.length" @click="submit">{{ saving ? 'Saving…' : 'Submit Equipment Request' }}</button>
+        <button type="button" class="btn primary submit" :disabled="saving" @click="submit">{{ saving ? 'Saving…' : 'Submit Equipment Request' }}</button>
       </template>
       <p v-else-if="error" role="alert" class="error">{{ error }}</p>
     </section>
@@ -74,6 +84,8 @@ const events = ref([]);
 const equipmentItems = ref([]);
 const eventId = ref("");
 const requirements = ref([]);
+const initialRequirements = ref([]);
+const offlineReviewConfirmed = ref(false);
 const loading = ref(false);
 const saving = ref(false);
 const error = ref("");
@@ -83,6 +95,61 @@ let nextKey = 0;
 const planningEvents = computed(() => events.value.filter(e => String(e.status).toLowerCase() === "planning"));
 const selectedEvent = computed(() => planningEvents.value.find(e => String(e.id) === String(eventId.value)));
 
+function normalizeRequirements(rows) {
+  return rows.map(req => ({
+    id: req.id == null ? null : String(req.id),
+    type: req.type ?? req.equipmentType ?? "",
+    quantity: Number(req.quantity),
+    technicalNotes: req.technicalNotes ?? "",
+  }));
+}
+
+function requirementsMatch(left, right) {
+  if (left.length !== right.length) return false;
+  const leftById = new Map();
+  for (const row of left) {
+    if (row.id == null || leftById.has(row.id)) return false;
+    leftById.set(row.id, row);
+  }
+  const rightById = new Map();
+  for (const row of right) {
+    if (row.id == null || rightById.has(row.id)) return false;
+    rightById.set(row.id, row);
+  }
+  if (leftById.size !== rightById.size) return false;
+  for (const [id, row] of leftById) {
+    const other = rightById.get(id);
+    if (!other || row.type !== other.type || row.quantity !== other.quantity
+      || (row.technicalNotes ?? "") !== (other.technicalNotes ?? "")) return false;
+  }
+  return true;
+}
+
+const equipmentRequirementsChanged = computed(() =>
+  !requirementsMatch(
+    normalizeRequirements(requirements.value),
+    initialRequirements.value,
+  )
+);
+
+const equipmentNeedsOfflineReview = computed(() => {
+  const rows = normalizeRequirements(requirements.value);
+  if (rows.length !== initialRequirements.value.length) return true;
+
+  const initialById = new Map(initialRequirements.value.map(row => [row.id, row]));
+  const currentById = new Map();
+  for (const row of rows) {
+    if (row.id == null || currentById.has(row.id)) return true;
+    currentById.set(row.id, row);
+  }
+  if (currentById.size !== initialById.size) return true;
+  for (const [id, row] of currentById) {
+    const initial = initialById.get(id);
+    if (!initial || row.type !== initial.type || row.quantity !== initial.quantity) return true;
+  }
+  return false;
+});
+
 function addEquipment() {
   requirements.value.push({ key: nextKey++, id: null, type: "", quantity: 1, technicalNotes: "" });
 }
@@ -91,6 +158,8 @@ watch(selectedEvent, event => {
     key: nextKey++, id: req.id ?? null, type: req.equipmentType ?? req.type ?? "",
     quantity: req.quantity ?? 1, technicalNotes: req.technicalNotes ?? "",
   }));
+  initialRequirements.value = normalizeRequirements(requirements.value);
+  offlineReviewConfirmed.value = false;
   error.value = "";
   success.value = "";
 });
@@ -127,7 +196,11 @@ async function submit() {
     error.value = "Select an event in Planning status.";
     return;
   }
-  if (!requirements.value.length || requirements.value.some(r => !r.type.trim() || !Number.isInteger(Number(r.quantity)) || Number(r.quantity) < 1)) {
+  if (!equipmentRequirementsChanged.value) {
+    error.value = "No changes to submit";
+    return;
+  }
+  if (requirements.value.some(r => !r.type.trim() || !Number.isInteger(Number(r.quantity)) || Number(r.quantity) < 1)) {
     error.value = "Each equipment request needs a type and a positive whole-number quantity.";
     return;
   }
@@ -138,10 +211,10 @@ async function submit() {
         equipment_requirements: requirements.value.map(r => ({
           ...(r.id != null ? { id: r.id } : {}),
           type: r.type.trim(), quantity: Number(r.quantity),
-          technicalNotes: r.technicalNotes.trim(),
+          technicalNotes: r.technicalNotes,
         })),
       },
-      offlineReviewConfirmed: true,
+      offlineReviewConfirmed: offlineReviewConfirmed.value,
     });
     await loadEvents();
     success.value = "Equipment requirements saved to the event for Technical Review.";
@@ -176,6 +249,10 @@ select:focus, input:focus, textarea:focus { outline: 2px solid var(--primary, #6
 .equipment-item { margin-top: 1rem; padding: 1.25rem; background: #faf9ff; border: 1px solid var(--border, #e4defa); border-radius: 12px; }
 .item-header, .section-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
 .item-header strong { color: var(--lilac-text, #4b3fa0); font-size: 1rem; }
+.offline-review-callout { background: var(--butter-bg, #fef3c7); border: 1px solid #f3d98b; border-radius: 10px; padding: .85rem 1rem; margin-bottom: 1rem; }
+.checkbox-option { display: flex; align-items: center; gap: .4rem; font-size: .85rem; font-weight: 600; margin-bottom: .3rem; }
+.checkbox-option input { width: 1rem; height: 1rem; margin: 0; accent-color: var(--primary, #6d5bd0); }
+.offline-review-hint { margin: 0; font-size: .82rem; color: var(--text-muted, #6b6890); }
 .fields { display: grid; grid-template-columns: 2fr 1fr; gap: 0 1rem; }
 .text-button { border: 0; background: transparent; color: var(--rose-text, #a12b47); font: inherit; font-size: .85rem; cursor: pointer; }
 .text-button:hover { text-decoration: underline; }
