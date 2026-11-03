@@ -2,7 +2,7 @@
   <div id="layout">
     <nav v-if="auth.isAuthenticated">
       <div class="nav-inner">
-        <router-link v-if="!auth.hasRole('venue_staff') && !safetyOfficerOnly" to="/">Dashboard</router-link>
+        <router-link v-if="!auth.hasRole('venue_staff') && !auth.hasRole('attendee') && !safetyOfficerOnly" to="/">Dashboard</router-link>        
         <router-link v-if="auth.hasRole('event_organiser')" to="/events/new">New Request</router-link>
         <router-link v-if="auth.hasRole('event_organiser')" to="/drafts">My Drafts</router-link>
         <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/assignments">Assignment Queue</router-link>

@@ -3,6 +3,7 @@
     <router-link to="/attendee/events" class="back">Back to events</router-link>
 
     <p v-if="loading" class="empty">Loading...</p>
+
     <div v-else-if="notFound" class="card" role="alert">
       <h2 class="page-title">Event not found</h2>
       <p>This event does not exist or is not open to you.</p>
@@ -11,47 +12,113 @@
     <div v-else-if="event" class="card">
       <h2 class="page-title">{{ event.name }}</h2>
       <p class="meta">{{ when }}</p>
-      <p v-if="event.venues.length" class="meta">Venue: {{ event.venues.join(", ") }}</p>
+
+      <p v-if="event.venues?.length" class="meta">
+        Venue: {{ event.venues.join(", ") }}
+      </p>
+
       <p v-if="event.description" class="desc">{{ event.description }}</p>
 
       <p class="status">
         <span class="badge lilac">{{ event.statusLabel }}</span>
-        <span :class="['badge', event.registrationOpen ? 'mint' : 'rose']">
-          {{ event.registrationOpen ? "Registration open" : "Registration not open" }}
-        </span>
-        <span v-if="event.capacity !== null" :class="['badge', event.isFull ? 'butter' : 'sky']">
-          {{ event.isFull ? "Full" : `${event.placesRemaining} of ${event.capacity} places left` }}
+
+        <!-- Events that require registration -->
+        <template v-if="event.registrationRequired">
+          <span :class="['badge', event.registrationOpen ? 'mint' : 'rose']">
+            {{ event.registrationOpen ? "Registration open" : "Registration not open" }}
+          </span>
+
+          <span
+            v-if="event.capacity !== null"
+            :class="['badge', event.isFull ? 'butter' : 'sky']"
+          >
+            {{ event.isFull ? "Full" : `${event.placesRemaining} of ${event.capacity} places left` }}
+          </span>
+        </template>
+
+        <!-- Events that do not require registration -->
+        <span v-else class="badge mint">
+          Registration not required
         </span>
       </p>
 
-      <p v-if="message" class="notice" role="status">{{ message }}</p>
+      <!-- Always show errors -->
       <p v-if="error" class="field-error" role="alert">{{ error }}</p>
 
-      <div v-if="event.myRegistration" class="mine">
-        <p>
-          <strong>You are {{ event.myRegistration.status }}.</strong>
-          <span v-if="event.myRegistration.queuePosition"> Your place in the waiting list: {{ event.myRegistration.queuePosition }}.</span>
+      <!-- Registration-related features only -->
+      <template v-if="event.registrationRequired">
+
+        <p v-if="message" class="notice" role="status">
+          {{ message }}
         </p>
-        <button v-if="canWithdraw" type="button" class="btn-danger" :disabled="busy" @click="withdraw">
-          Withdraw
-        </button>
-      </div>
+        <div v-if="event.myRegistration" class="mine">
+          <p>
+            <strong>You are {{ event.myRegistration.status }}.</strong>
+            <span v-if="event.myRegistration.queuePosition">
+              Your place in the waiting list: {{ event.myRegistration.queuePosition }}.
+            </span>
+          </p>
 
-      <div v-else class="actions">
-        <button v-if="event.canRegister" type="button" class="btn-primary" :disabled="busy" @click="register">
-          Register
-        </button>
-        <button v-if="event.canJoinWaitlist" type="button" class="btn-primary" :disabled="busy" @click="joinWaitlist">
-          Join the waiting list
-        </button>
-        <p v-if="!event.canRegister && !event.canJoinWaitlist" class="meta">{{ whyNot }}</p>
-      </div>
+          <button
+            v-if="canWithdraw"
+            type="button"
+            class="btn-danger"
+            :disabled="busy"
+            @click="withdraw"
+          >
+            Withdraw
+          </button>
+        </div>
 
-      <!-- ISP-108: opt in to registration open/close notifications -->
-      <label v-if="!['cancelled', 'completed'].includes(event.status)" class="follow">
-        <input type="checkbox" :checked="event.followingUpdates" :disabled="busy" @change="toggleFollow" />
-        Notify me when registration opens or closes
-      </label>
+        <div v-else class="actions">
+          <button
+            v-if="event.canRegister"
+            type="button"
+            class="btn-primary"
+            :disabled="busy"
+            @click="register"
+          >
+            Register
+          </button>
+
+          <button
+            v-if="event.canJoinWaitlist"
+            type="button"
+            class="btn-primary"
+            :disabled="busy"
+            @click="joinWaitlist"
+          >
+            Join the waiting list
+          </button>
+
+          <p
+            v-if="!event.canRegister && !event.canJoinWaitlist"
+            class="meta"
+          >
+            {{ whyNot }}
+          </p>
+        </div>
+
+        <!-- ISP-108: registration notifications -->
+        <label
+          v-if="!['cancelled', 'completed'].includes(event.status)"
+          class="follow"
+        >
+          <input
+            type="checkbox"
+            :checked="event.followingUpdates"
+            :disabled="busy"
+            @change="toggleFollow"
+          />
+          Notify me when registration opens or closes
+        </label>
+
+      </template>
+
+      <!-- Message for events without registration -->
+      <p v-else class="meta">
+        No registration is needed for this event. Just turn up!
+      </p>
     </div>
   </section>
 </template>

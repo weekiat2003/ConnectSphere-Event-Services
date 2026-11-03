@@ -1,6 +1,6 @@
 <template>
   <section>
-    <h2 class="page-title">Events open for registration</h2>
+    <h2 class="page-title">ALL EVENTS</h2>
 
     <p v-if="error" class="field-error" role="alert">{{ error }}</p>
     <p v-if="loading" class="empty">Loading events...</p>
@@ -34,13 +34,30 @@ const error = ref("");
 const when = (e) => [e.date, e.time].filter(Boolean).join(" at ") || "Date to be confirmed";
 
 function availability(e) {
-  if (!e.registrationOpen) return "Registration not open";
-  if (e.placesRemaining === null) return "Places available";
-  if (e.placesRemaining === 0) return "Full: waiting list open";
+  if (!e.registrationRequired) {
+    return "Registration not required";
+  }
+
+  if (!e.registrationOpen) {
+    return "Registration not open";
+  }
+
+  if (e.placesRemaining === null) {
+    return "Places available";
+  }
+
+  if (e.placesRemaining === 0) {
+    return "Full: waiting list open";
+  }
+
   return `${e.placesRemaining} place${e.placesRemaining === 1 ? "" : "s"} left`;
 }
-const badgeClass = (e) => (!e.registrationOpen ? "rose" : e.placesRemaining === 0 ? "butter" : "mint");
-
+const badgeClass = (e) => {
+  if (!e.registrationRequired) return "mint";
+  if (!e.registrationOpen) return "rose";
+  if (e.placesRemaining === 0) return "butter";
+  return "mint";
+};
 onMounted(async () => {
   loading.value = true;
   try {
