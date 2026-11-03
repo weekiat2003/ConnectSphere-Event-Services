@@ -19,11 +19,12 @@ notify() calls across every service.
 from functools import wraps
 
 from flask import current_app
+from sqlalchemy import func
 
 from app.common.time import utcnow
 from app.extensions import db
 from app.models.equipment import EquipmentItem
-from app.models.event import Event, EventSafetyReview
+from app.models.event import Event, EventEquipmentRequirement, EventSafetyReview
 from app.models.notification import (
     TYPE_COORDINATOR_ASSIGNMENT,
     TYPE_EQUIPMENT_RESERVATION_UPDATE,
@@ -559,6 +560,45 @@ def notify_tech_support_of_equipment(event, kind: str = "new") -> list:
         event_id=event.id, link=f"/technical-review?event={event.id}",
         data={"kind": kind, "summary": summary, "venues": venues, "requesterName": requester},
     )
+
+
+@_never_blocks
+def notify_coordinator_of_retired_equipment(event, item) -> list:
+    if not event.coordinator_id:
+        return []
+    return [notify(
+        event.coordinator_id,
+        TYPE_NEW_EQUIPMENT_REQUEST,
+        "Equipment catalogue item retired",
+        f'"{_name(event)}": {item.name} has been retired from the catalogue. '
+        "Technical Support can no longer reserve it. Please review your equipment request.",
+        event_id=event.id,
+        link=_event_link(event),
+        data={"kind": "catalogue_item_retired", "equipmentItemId": item.id,
+              "equipmentItemName": item.name},
+    )]
+
+
+@_never_blocks
+def notify_coordinators_of_retired_equipment(item) -> list:
+    matching_events = (
+        Event.query.join(
+            EventEquipmentRequirement,
+            EventEquipmentRequirement.event_id == Event.id,
+        )
+        .filter(
+            func.lower(func.trim(EventEquipmentRequirement.equipment_type))
+            == item.name.strip().casefold(),
+            Event.status.notin_(("cancelled", "rejected", "completed")),
+        )
+        .distinct()
+        .all()
+    )
+    created = []
+    for event in matching_events:
+        created.extend(notify_coordinator_of_retired_equipment(event, item))
+    return created
+
 
 @_never_blocks
 def notify_arrangements_of_significant_change(event, fields) -> list:

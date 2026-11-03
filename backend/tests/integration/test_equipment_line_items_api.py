@@ -11,7 +11,7 @@ COORD = "coordinator@test.com"
 
 @pytest.fixture
 def event_id(organiser, coordinator, make_event):
-    return make_event(organiser, status="approved", coordinator_id=coordinator)
+    return make_event(organiser, status="planning", coordinator_id=coordinator)
 
 
 def url(event_id):
@@ -96,6 +96,24 @@ def test_missing_offline_review_confirmation_returns_400(client, auth_header, ev
     res = put(client, auth_header(COORD), event_id, [{"type": "Projector", "quantity": 1}], confirmed=False)
     assert res.status_code == 400
     assert saved(event_id) == []
+
+
+def test_quantity_change_without_offline_review_confirmation_returns_400(
+    client, auth_header, event_id
+):
+    line = add_line(event_id, "Projector", 2)
+
+    res = put(
+        client,
+        auth_header(COORD),
+        event_id,
+        [{"id": line.id, "type": "Projector", "quantity": 3}],
+        confirmed=False,
+    )
+
+    assert res.status_code == 400
+    assert "offline review" in res.get_json()["error"].lower()
+    assert saved(event_id) == [("Projector", 2)]
 
 
 @pytest.mark.parametrize("requirement, bad_key", [

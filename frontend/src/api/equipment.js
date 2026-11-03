@@ -9,6 +9,8 @@ export default {
   markUnavailable: (id, reason) =>
     apiClient.post(`/equipment/items/${id}/mark-unavailable`, { reason }),
   markActive: (id) => apiClient.post(`/equipment/items/${id}/mark-active`),
+  retire: (id) => apiClient.post(`/equipment/items/${id}/retire`),
+  restore: (id) => apiClient.post(`/equipment/items/${id}/restore`),
   // Technical review: an event's requirements with reservation details
   eventRequirements: (eventId) =>
     apiClient.get(`/equipment/events/${eventId}/requirements`),

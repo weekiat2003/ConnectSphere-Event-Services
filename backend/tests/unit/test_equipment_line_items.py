@@ -20,7 +20,7 @@ END = datetime(2026, 12, 1, 11, 0)
 
 @pytest.fixture
 def setup(app, organiser, coordinator, make_event):
-    def _setup(status="approved", lines=()):
+    def _setup(status="planning", lines=()):
         event_id = make_event(organiser, status=status, coordinator_id=coordinator)
         for type_, quantity in lines:
             db.session.add(EventEquipmentRequirement(

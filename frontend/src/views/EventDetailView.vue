@@ -263,6 +263,10 @@
 
       <div v-if="showEditForm && canEditEvent" class="action-block">
         <h3 class="block-title">Edit Event Information</h3>
+        <p v-if="auth.hasRole('event_coordinator')" class="notice-inline">
+          To request or update equipment, use the
+          <router-link to="/equipment/request">Equipment Booking page</router-link>.
+        </p>
 <div class="create-aligned-form">
 <label class="aligned-field"><span>Name</span><input type="text" v-model="editForm.name"  /><span v-if="editErrors.name" class="field-error">{{ editErrors.name }}</span></label>
 <label class="aligned-field"><span>Purpose</span><input type="text" v-model="editForm.purpose"  /><span v-if="editErrors.purpose" class="field-error">{{ editErrors.purpose }}</span></label>
@@ -276,7 +280,6 @@
 <label class="aligned-field"><span>Capacity Needed</span><input type="number" v-model.number="editForm.capacity_needed" min="1" /><span v-if="editErrors.capacity_needed" class="field-error">{{ editErrors.capacity_needed }}</span></label>
 <label class="aligned-field"><span>Required Layout</span><select v-model="editForm.required_layout"><option value="">Select a layout</option><option v-for="layout in venueLayouts" :key="layout" :value="layout">{{ layout }}</option><option v-if="editForm.required_layout && !venueLayouts.includes(editForm.required_layout)" :value="editForm.required_layout">{{ editForm.required_layout }}</option></select><span v-if="editErrors.required_layout" class="field-error">{{ editErrors.required_layout }}</span></label>
 <label class="aligned-field"><span>Accessibility Needs</span><textarea v-model="editForm.accessibility_needs" rows="3" placeholder=""></textarea><span v-if="editErrors.accessibility_needs" class="field-error">{{ editErrors.accessibility_needs }}</span></label>
-<div class="aligned-equipment full"><h3>Equipment Required</h3><p class="aligned-help">Select equipment from the catalogue and specify the quantity needed for your event.</p><div v-for="(item, index) in editForm.equipment_requirements" :key="item.id ?? index" class="aligned-equipment-item"><div class="aligned-item-header"><strong>Equipment {{ index + 1 }}</strong><button type="button" class="aligned-remove" @click="editForm.equipment_requirements.splice(index, 1)">Remove</button></div><div class="aligned-equipment-fields"><label>Equipment Type *<select v-model="item.type"><option value="">Select equipment</option><option v-if="item.type && !equipmentOptions.some(e => e.name === item.type)" :value="item.type">{{ item.type }}</option><option v-for="eq in equipmentOptions" :key="eq.id" :value="eq.name">{{ eq.name }}</option></select></label><label>Quantity *<input type="number" min="1" v-model.number="item.quantity" /></label></div><label>Technical Requirements<textarea v-model="item.technicalNotes" rows="2" placeholder="e.g. HDMI connection required"></textarea></label></div><button type="button" class="btn btn-grey" @click="editForm.equipment_requirements.push({ id: null, type: '', quantity: 1, technicalNotes: '' })">+ Add Equipment</button></div>
 <label class="aligned-field full aligned-checkbox"><input type="checkbox" v-model="editForm.registration_required" />Registration required</label><label v-if="editForm.registration_required" class="aligned-field"><span>Intended Capacity (optional)</span><input type="number" min="1" v-model.number="editForm.intended_capacity" /></label>
 </div>
         <div v-if="editTouchesSignificantField" class="offline-review-callout">
@@ -1026,7 +1029,7 @@ function initRevisionForm() {
 const SIGNIFICANT_FIELD_KEYS = [
   "proposed_date", "proposed_time", "expected_attendance",
   "capacity_needed", "required_layout", "accessibility_needs",
-  "required_facilities", "equipment_requirements",
+  "required_facilities",
 ];
 
 function valuesEqual(a, b) {
@@ -1049,8 +1052,6 @@ const editTouchesSignificantField = computed(() =>
 let initialEditValues = {};
 
 function openEditForm() {
-  ensureCatalogue();
-  loadEquipmentOptions();
   loadVenueLayouts();
   if (!canEditEvent.value) return;
   const source = {
@@ -1067,12 +1068,6 @@ function openEditForm() {
     registration_required: event.value.registrationRequired,
     intended_capacity: event.value.intendedCapacity,
     required_facilities: [...(event.value.venueRequirements?.requiredFacilities || [])],
-    equipment_requirements: (event.value.equipmentRequirements || []).map((item) => ({
-      id: item.id,
-      type: item.equipmentType ?? item.type,
-      quantity: item.quantity,
-      technicalNotes: item.technicalNotes ?? "",
-    })),
   };
   Object.keys(editForm).forEach((key) => delete editForm[key]);
   Object.assign(editForm, source);
@@ -1089,17 +1084,6 @@ function buildChangedFields() {
 
     if (key === "required_facilities" && Array.isArray(value)) {
       value = value.map((v) => String(v || "").trim()).filter(Boolean);
-    }
-
-    if (key === "equipment_requirements" && Array.isArray(value)) {
-      value = value
-        .filter((item) => (item.type && item.type.trim()) || item.id != null)
-        .map((item) => ({
-          ...(item.id != null ? { id: item.id } : {}),
-          type: (item.type || "").trim(),
-          quantity: item.quantity,
-          technicalNotes: (item.technicalNotes || "").trim() || undefined,
-        }));
     }
 
     if (!valuesEqual(value, initialEditValues[key])) {

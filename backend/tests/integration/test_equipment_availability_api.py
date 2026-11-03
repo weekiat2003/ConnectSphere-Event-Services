@@ -92,6 +92,23 @@ def test_unknown_item_returns_404(client, tech_headers):  # AC5
     assert res.get_json()["error"] == "Equipment item not found"
 
 
+def test_mixed_timezone_availability_dates_return_clear_error(client, tech_headers, item):
+    response = client.get(
+        f"{BASE}/{item}/availability",
+        query_string={
+            "start": "2026-12-01T10:00:00+00:00",
+            "end": "2026-12-01T11:00:00",
+            "quantity": "1",
+        },
+        headers=tech_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "start and end must both include, or both omit, a timezone"
+    }
+
+
 @pytest.mark.parametrize("status", ["damaged", "maintenance", "retired"])
 def test_inactive_item_not_available_with_reason_and_zero_free(client, tech_headers, item, status):  # AC6
     db.session.get(EquipmentItem, item).status = status
