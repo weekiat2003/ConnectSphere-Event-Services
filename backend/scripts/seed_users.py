@@ -20,10 +20,11 @@ from werkzeug.security import generate_password_hash  # noqa: E402
 
 from app import create_app  # noqa: E402
 from app.extensions import db  # noqa: E402
-from app.models.event import Event, EventEquipmentRequirement  # noqa: E402
+from app.models.event import Event, EventEquipmentRequirement, EventReview  # noqa: E402
+from app.models.change_request import ChangeRequest  # noqa: E402
 from app.models.user import Organisation, Role, User  # noqa: E402
 from app.models.venue import Venue, VenueBooking  # noqa: E402
-from app.models.equipment import EquipmentItem  # noqa: E402
+from app.models.equipment import EquipmentItem, EquipmentReservation  # noqa: E402
 
 app = create_app(os.getenv("FLASK_ENV", "development"))
 
@@ -336,6 +337,21 @@ TEST_EVENTS = [
         "review_reason": "Expected attendance exceeds the capacity of all available venues.",
         "review_days_ago": 9,
     },
+    {
+        "name": "Research Symposium Change Request Demo",
+        "purpose": "Academic research exchange",
+        "description": "Approved symposium with an open organiser change request.",
+        "category": "Conference", "status": "approved",
+        "coordinator": "coordinator1@example.com",
+        "days": 82, "time": time(10, 0),
+        "expected_attendance": 90, "capacity_needed": 100,
+        "required_layout": "Theatre", "accessibility_needs": "Step-free access",
+        "required_facilities": ["Projector", "Microphone"],
+        "registration_required": 1, "intended_capacity": 100,
+        "submitted_days_ago": 13, "review_outcome": "approved",
+        "review_reason": "Approved; arrangements have not yet begun.",
+        "review_days_ago": 9,
+    },
     # Additional Planning events for the new Equipment Booking and Venue
     # Suitability screens. These are assigned to different coordinators.
     {
@@ -406,24 +422,24 @@ TEST_EVENTS = [
         "resubmits": "Open Air Music Night",
     },
     {
-    "name": "Orlando's First Event Request",
-    "purpose": "Testing request list",
-    "description": "Sample request belonging to Orlando.",
-    "category": "Workshop",
-    "status": "submitted",
-    "organiser": "organiser2@example.com",
-    "coordinator": None,
-    "days": 35,
-    "time": time(10, 0),
-    "expected_attendance": 30,
-    "capacity_needed": 40,
-    "required_layout": "Classroom",
-    "accessibility_needs": None,
-    "required_facilities": ["Projector"],
-    "registration_required": 0,
-    "intended_capacity": 40,
-    "submitted_days_ago": 1,
-}
+        "name": "Python Fundamentals Workshop",
+        "purpose": "Practical programming skills development",
+        "description": "An introductory workshop covering Python fundamentals, including variables, control flow, functions and basic problem-solving.",
+        "category": "Workshop",
+        "status": "submitted",
+        "organiser": "organiser2@example.com",
+        "coordinator": None,
+        "days": 35,
+        "time": time(10, 0),
+        "expected_attendance": 30,
+        "capacity_needed": 40,
+        "required_layout": "Classroom",
+        "accessibility_needs": None,
+        "required_facilities": ["Projector"],
+        "registration_required": 0,
+        "intended_capacity": 40,
+        "submitted_days_ago": 1,
+    }
 ]
 
 # Fields that are not columns on Event and are handled separately.
@@ -516,6 +532,7 @@ with app.app_context():
     # -----------------------------------------------------------------
     # Events
     # -----------------------------------------------------------------
+    organiser = User.query.filter_by(email="organiser@example.com").first()
     organisers = {
         u.email: u
         for u in User.query.filter(
@@ -526,8 +543,13 @@ with app.app_context():
         ).all()
     }
 
+    # Default organiser for existing seeded events and related records.
     default_organiser = organisers["organiser@example.com"]
-    
+
+    # Keep this variable because later equipment, booking and
+    # change-request sections use organiser.id for Olivia's records.
+    organiser = default_organiser
+
     coordinators = {
         u.email: u
         for u in User.query.filter(
@@ -537,7 +559,7 @@ with app.app_context():
             ])
         ).all()
     }
-    
+
     now = datetime.utcnow()
     today = now.date()
     events_created = 0
@@ -572,9 +594,11 @@ with app.app_context():
             fields["review_coordinator_id"] = coord.id if coord else None
             fields["review_timestamp"] = now - timedelta(days=entry["review_days_ago"])
 
+# This makes the resubmission lookup use the same organiser as the event being created. Your current resubmission belongs to Olivia, so it should continue working.
         if "resubmits" in entry:
             original = Event.query.filter_by(
-                name=entry["resubmits"], organiser_id=default_organiser.id
+                name=entry["resubmits"],
+                organiser_id=event_organiser.id
             ).first()
             if original:
                 fields["resubmitted_from_event_id"] = original.id
@@ -634,6 +658,14 @@ with app.app_context():
             ("Projector", 1, "HDMI adapter and screen mirroring"),
             ("Laptop", 2, "One presenter laptop and one backup"),
         ],
+        "Industry Panel: Future of AI": [
+            ("Projector", 1, "Panel presentation"),
+            ("Microphone", 3, "Panel microphones"),
+        ],
+        "Orientation Welcome Session": [
+            ("Projector", 1, "Orientation slides"),
+            ("Microphone", 2, "Host and speaker"),
+        ],
         "Hackathon Safety Check Demo": [
             ("Projector", 2, "Ceiling-mounted; cables routed overhead"),
             ("Extension cord", 6, "Run along walls and taped down"),
@@ -644,9 +676,7 @@ with app.app_context():
     }
     equipment_requirements_created = 0
     for event_name, items in EVENT_EQUIPMENT.items():
-        event = Event.query.filter_by(
-        name=event_name,
-        organiser_id=default_organiser.id).first()
+        event = Event.query.filter_by(name=event_name, organiser_id=default_organiser.id).first()
         if not event:
             continue
         existing_types = {
@@ -696,32 +726,6 @@ with app.app_context():
             "coordinator": "coordinator2@example.com",
         },
         {
-            "event": "Quarterly All-Hands Meeting",
-            "venue": "Main Auditorium",
-            "status": "pending",
-            "start_hour": 14,
-            "duration": 2,
-            "coordinator": "coordinator1@example.com",
-        },
-        {
-            "event": "Leadership Workshop",
-            "venue": "Seminar Room A",
-            "status": "pending",
-            "start_hour": 9,
-            "start_minute": 30,
-            "duration": 3,
-            "coordinator": "coordinator2@example.com",
-        },
-        {
-            "event": "Leadership Workshop",
-            "venue": "Innovation Lab",
-            "status": "pending",
-            "start_hour": 9,
-            "start_minute": 30,
-            "duration": 3,
-            "coordinator": "coordinator2@example.com",
-        },
-        {
             "event": "Hackathon Kickoff",
             "venue": "Main Auditorium",
             "status": "pending",
@@ -755,12 +759,9 @@ with app.app_context():
             "coordinator": "coordinator1@example.com",
         },
         {
-            "event": "Open Air Music Night (Revised)",
-            "venue": "Banquet Hall",
-            "status": "pending",
-            "start_hour": 20,
-            "duration": 2,
-            "coordinator": "coordinator1@example.com",
+            "event": "Orientation Welcome Session", "venue": "Main Auditorium",
+            "status": "approved", "start_hour": 10, "duration": 3,
+            "coordinator": "coordinator2@example.com",
         },
         # Safety-check demos need booked venues for the Safety Officer to assess.
         {
@@ -843,6 +844,87 @@ with app.app_context():
         bookings_created += 1
 
     db.session.commit()
+
+    # Seed confirmed equipment arrangements for later workflow stages.
+    reservations_created = 0
+    for event_name in ("Hackathon Safety Check Demo", "Industry Panel: Future of AI",
+                       "Orientation Welcome Session"):
+        event = Event.query.filter_by(name=event_name, organiser_id=organiser.id).first()
+        if not event:
+            continue
+        booking = VenueBooking.query.filter_by(event_id=event.id, status="approved").first()
+        if not booking:
+            print(f"Skipping equipment for {event_name}: no approved venue booking")
+            continue
+        for requirement in event.equipment_requirements:
+            item = EquipmentItem.query.filter(
+                db.func.lower(EquipmentItem.name) == requirement.equipment_type.lower()
+            ).first()
+            if not item:
+                print(f"Missing equipment catalogue item: {requirement.equipment_type}")
+                continue
+            existing = EquipmentReservation.query.filter_by(
+                event_id=event.id, equipment_requirement_id=requirement.id,
+                status="reserved",
+            ).first()
+            if not existing:
+                db.session.add(EquipmentReservation(
+                    event_id=event.id, equipment_requirement_id=requirement.id,
+                    equipment_item_id=item.id, quantity=requirement.quantity,
+                    start_datetime=booking.start_datetime, end_datetime=booking.end_datetime,
+                    status="reserved", created_by=event.coordinator_id,
+                ))
+                reservations_created += 1
+            requirement.status = "confirmed"
+            requirement.needs_recheck = False
+
+    # Approved event with a pending change request.
+    change_event = Event.query.filter_by(
+        name="Research Symposium Change Request Demo", organiser_id=organiser.id
+    ).first()
+    changes_created = 0
+    if change_event and not ChangeRequest.query.filter(
+        ChangeRequest.event_id == change_event.id,
+        ChangeRequest.status.in_(("pending", "re_review")),
+    ).first():
+        db.session.add(ChangeRequest(
+            event_id=change_event.id, organiser_id=organiser.id,
+            coordinator_id=change_event.coordinator_id, request_type="change",
+            requested_changes={"expected_attendance": {"from": 90, "to": 95}},
+            reason="Five additional research presenters would like to attend.",
+            is_significant=True, status="pending",
+        ))
+        changes_created = 1
+
+    # A real open clarification is an unanswered EventReview, not just a flag.
+    clarification_event = Event.query.filter_by(
+        name="Leadership Workshop", organiser_id=organiser.id
+    ).first()
+    clarifications_created = 0
+    if clarification_event:
+        open_reviews = [
+            review for review in clarification_event.reviews
+            if review.action == "clarification_requested"
+            and review.withdrawn_at is None
+            and not any(response.review_id == review.id
+                        for response in clarification_event.clarification_responses)
+        ]
+        if not open_reviews:
+            db.session.add(EventReview(
+                event_id=clarification_event.id,
+                coordinator_id=clarification_event.coordinator_id,
+                action="clarification_requested",
+                comments="Please confirm whether catering is needed and the exact end time.",
+            ))
+            clarifications_created = 1
+        clarification_event.clarification_flag = True
+        clarification_event.clarification_comments = (
+            "Please confirm whether catering is needed and the exact end time."
+        )
+    db.session.commit()
+    print(f"Seeded {reservations_created} equipment reservation(s), "
+          f"{changes_created} open change request(s), "
+          f"{clarifications_created} open clarification(s).")
 
     print(f"Seeded {bookings_created} new venue booking request(s).")
 
