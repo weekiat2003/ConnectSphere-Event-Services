@@ -1,6 +1,8 @@
 """Organiser requests a change to an event (Event Change Requests)."""
 from datetime import date, datetime, time, timedelta
+from types import SimpleNamespace
 
+import app.change_requests.routes as change_routes
 import pytest
 
 from flask import url_for
@@ -470,11 +472,6 @@ def test_only_active_equipment_is_offered_in_name_order_without_quantities(app):
 # HTTP route coverage: retain all service-level tests above.
 # These tests exercise the blueprint's response and error branches.
 # ---------------------------------------------------------------------
-
-from types import SimpleNamespace
-from unittest.mock import Mock
-import app.change_requests.routes as change_routes
-
 
 class _RouteResult:
     def to_dict(self):

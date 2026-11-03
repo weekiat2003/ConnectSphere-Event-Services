@@ -871,7 +871,6 @@ def test_service_cancel_stale_conditional_update(app, context, monkeypatch):
     from app.venues.services import booking as svc
     record = db.session.get(VenueBooking, add_booking(context, status="approved"))
     query_type = type(VenueBooking.query)
-    original_update = query_type.update
     monkeypatch.setattr(query_type, "update", lambda self, *a, **k: 0)
     with pytest.raises(ValueError, match="no longer approved"):
         svc.cancel_booking(record, context.staff_id)
