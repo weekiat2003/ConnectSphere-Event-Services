@@ -78,14 +78,18 @@ class TestViewing:
         assert hidden.status_code == missing.status_code == 404
         assert hidden.get_json() == missing.get_json()
 
-    def test_browse_lists_only_confirmed_events_that_take_registrations(self, client, cast):
+    def test_browse_lists_all_confirmed_events_regardless_of_registration(self, client, cast):
         shown = open_event(client, cast, name="Shown")
-        make_event(cast, required=False, name="No sign-up")
+        no_signup = make_event(cast, required=False, name="No sign-up")
         make_event(cast, status="planning", name="Planning")
 
         listed = client.get(f"{URL}/events", headers=cast["h"]["a1"]).get_json()
 
-        assert [e["id"] for e in listed] == [shown.id]
+        assert [e["id"] for e in listed] == [shown.id, no_signup.id]
+
+        no_signup_event = next(e for e in listed if e["id"] == no_signup.id)
+        assert no_signup_event["registrationRequired"] is False
+
 
     def test_cancelled_event_shows_its_final_status_without_a_register_option(self, client, cast):
         event = make_event(cast, status="cancelled")

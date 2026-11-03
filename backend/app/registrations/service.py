@@ -73,12 +73,16 @@ def _lock_event(event_id):
     return db.session.query(Event).filter(Event.id == event_id).with_for_update().first()
 
 
+
 def _public_event(event_id):
-    """The event if an Attendee may know it exists, else NotFound (never reveals more)."""
+    """Return an event if an attendee is allowed to view it."""
     event = db.session.get(Event, event_id)
-    if event is None or event.status not in PUBLIC_STATUSES or not event.registration_required:
+
+    if event is None or event.status not in PUBLIC_STATUSES:
         raise NotFound("Event not found")
+
     return event
+
 
 
 def _lock_public_event(event_id):
@@ -183,11 +187,8 @@ def _places(event, counts):
 # --------------------------------------------------------- attendee: browse
 def event_summary(event, attendee_id=None):
     """Public details only: no coordinator, review comments, equipment or history."""
-    counts = _counts(event.id)
-    cap, remaining = _places(event, counts)
-    open_now = _is_open(event)
-    mine = _active_registration(event.id, attendee_id) if attendee_id else None
-    return {
+
+    summary = {
         "id": event.id,
         "name": event.name,
         "description": event.description,
@@ -196,33 +197,46 @@ def event_summary(event, attendee_id=None):
         "venues": _venue_names(event.id),
         "status": event.status,
         "statusLabel": event.status.replace("_", " ").capitalize(),
-        "registrationOpen": open_now,
-        "capacity": cap,
-        "placesRemaining": remaining,
-        "isFull": remaining == 0,
-        "canRegister": open_now and not mine and remaining != 0,
-        "canJoinWaitlist": open_now and not mine and remaining == 0,
-        "followingUpdates": bool(attendee_id) and _is_following(event.id, attendee_id),
-        "myRegistration": (
-            {"id": mine.id, "status": mine.status, "queuePosition": queue_position(mine)}
-            if mine
-            else None
-        ),
+
+        # Tell the frontend whether registration is required
+        "registrationRequired": bool(event.registration_required),
     }
+
+    # Only include registration information for events that require registration
+    if event.registration_required:
+        counts = _counts(event.id)
+        cap, remaining = _places(event, counts)
+        open_now = _is_open(event)
+        mine = _active_registration(event.id, attendee_id) if attendee_id else None
+
+        summary.update({
+            "registrationOpen": open_now,
+            "capacity": cap,
+            "placesRemaining": remaining,
+            "isFull": remaining == 0,
+            "canRegister": open_now and not mine and remaining != 0,
+            "canJoinWaitlist": open_now and not mine and remaining == 0,
+            "followingUpdates": bool(attendee_id) and _is_following(event.id, attendee_id),
+            "myRegistration": (
+                {
+                    "id": mine.id,
+                    "status": mine.status,
+                    "queuePosition": queue_position(mine),
+                }
+                if mine
+                else None
+            ),
+        })
+
+    return summary
 
 
 def list_events(attendee_id):
-    """List only confirmed events that are currently open for registration."""
+    """List all confirmed events, whether registration is required or not."""
     events = (
         Event.query
-        .join(
-            EventRegistrationSetting,
-            EventRegistrationSetting.event_id == Event.id,
-        )
         .filter(
             Event.status == STATUS_CONFIRMED,
-            Event.registration_required.is_(True),
-            EventRegistrationSetting.is_open.is_(True),
         )
         .order_by(Event.proposed_date, Event.proposed_time, Event.id)
         .all()
@@ -230,7 +244,9 @@ def list_events(attendee_id):
 
     changed = False
     for event in events:
-        changed = bool(rebalance(event)) or changed
+        # Only rebalance events that require registration
+        if event.registration_required:
+            changed = bool(rebalance(event)) or changed
 
     if changed:
         db.session.commit()
@@ -238,10 +254,13 @@ def list_events(attendee_id):
     return [event_summary(e, attendee_id) for e in events]
 
 
+
 def get_event(event_id, attendee_id):
     event = _public_event(event_id)
-    if rebalance(event):
+
+    if event.registration_required and rebalance(event):
         db.session.commit()
+
     return event_summary(event, attendee_id)
 
 

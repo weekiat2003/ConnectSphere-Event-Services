@@ -286,6 +286,11 @@ router.beforeEach((to) => {
     return { name: "login" };
   }
 
+    // Redirect attendees away from Dashboard.
+  if (to.name === "dashboard" && auth.hasRole("attendee")) {
+    return { name: "attendee-events" };
+  }
+
   if (
     to.name === "dashboard" &&
     auth.hasRole("venue_staff") &&
