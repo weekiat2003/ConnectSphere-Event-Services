@@ -42,6 +42,11 @@ def validate_for_submission(event) -> list[str]:
     if event.intended_capacity is not None and event.intended_capacity <= 0:
         errors.append("Intended capacity must be greater than zero")
 
+    # ADD THIS: Validate that end time is after start time
+    if event.proposed_time and event.proposed_end_time:
+        if event.proposed_end_time <= event.proposed_time:
+            errors.append("End time must be after start time")
+
     for idx, item in enumerate(event.equipment_requirements):
         if not item.equipment_type:
             errors.append(f"Equipment item {idx + 1}: type is required")
