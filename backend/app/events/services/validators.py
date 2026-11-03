@@ -36,6 +36,11 @@ def validate_for_submission(event) -> list[str]:
     if event.proposed_date is not None and event.proposed_date < date.today():
         errors.append("Proposed date cannot be in the past")
 
+    # ADD THIS: Validate that end time is after start time
+    if event.proposed_time and event.proposed_end_time:
+        if event.proposed_end_time <= event.proposed_time:
+            errors.append("End time must be after start time")
+
     if event.registration_required and not event.intended_capacity:
         errors.append("Intended capacity is required when registration is enabled")
 
