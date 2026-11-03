@@ -31,6 +31,7 @@ DEFAULT_PASSWORD = "Password123!"
 
 TEST_USERS = [
     {"name": "Olivia Organiser", "email": "organiser@example.com", "roles": ["event_organiser"]},
+    {"name": "Orlando Organiser", "email": "organiser2@example.com", "roles": ["event_organiser"]},
     {"name": "Carlos Coordinator", "email": "coordinator1@example.com", "roles": ["event_coordinator"]},
     {"name": "Priya Coordinator", "email": "coordinator2@example.com", "roles": ["event_coordinator"]},
     {"name": "Lee Coordinator Lead", "email": "lead@example.com", "roles": ["event_coordinator_lead"]},
@@ -404,11 +405,32 @@ TEST_EVENTS = [
         "submitted_days_ago": 1,
         "resubmits": "Open Air Music Night",
     },
+    {
+    "name": "Orlando's First Event Request",
+    "purpose": "Testing request list",
+    "description": "Sample request belonging to Orlando.",
+    "category": "Workshop",
+    "status": "submitted",
+    "organiser": "organiser2@example.com",
+    "coordinator": None,
+    "days": 35,
+    "time": time(10, 0),
+    "expected_attendance": 30,
+    "capacity_needed": 40,
+    "required_layout": "Classroom",
+    "accessibility_needs": None,
+    "required_facilities": ["Projector"],
+    "registration_required": 0,
+    "intended_capacity": 40,
+    "submitted_days_ago": 1,
+}
 ]
 
 # Fields that are not columns on Event and are handled separately.
-_HELPER_KEYS = {"coordinator", "days", "time", "submitted_days_ago",
-                "review_days_ago", "resubmits"}
+_HELPER_KEYS = {
+    "organiser", "coordinator", "days", "time",
+    "submitted_days_ago", "review_days_ago", "resubmits"
+}
 
 with app.app_context():
     org = Organisation.query.filter_by(name="Acme Events Ltd").first()
@@ -494,26 +516,51 @@ with app.app_context():
     # -----------------------------------------------------------------
     # Events
     # -----------------------------------------------------------------
-    organiser = User.query.filter_by(email="organiser@example.com").first()
-    coordinators = {
+    organisers = {
         u.email: u
         for u in User.query.filter(
-            User.email.in_(["coordinator1@example.com", "coordinator2@example.com"])
+            User.email.in_([
+                "organiser@example.com",
+                "organiser2@example.com",
+            ])
         ).all()
     }
 
+    default_organiser = organisers["organiser@example.com"]
+    
+    coordinators = {
+        u.email: u
+        for u in User.query.filter(
+            User.email.in_([
+                "coordinator1@example.com",
+                "coordinator2@example.com",
+            ])
+        ).all()
+    }
+    
     now = datetime.utcnow()
     today = now.date()
     events_created = 0
 
     for entry in TEST_EVENTS:
-        if Event.query.filter_by(name=entry["name"], organiser_id=organiser.id).first():
+        event_organiser = organisers.get(
+            entry.get("organiser", "organiser@example.com")
+        )
+
+        if not event_organiser:
+            print(f"Skipping {entry['name']}: organiser not found")
+            continue
+
+        if Event.query.filter_by(
+            name=entry["name"],
+            organiser_id=event_organiser.id
+        ).first():
             continue
 
         coord = coordinators.get(entry["coordinator"]) if entry["coordinator"] else None
 
         fields = {k: v for k, v in entry.items() if k not in _HELPER_KEYS}
-        fields["organiser_id"] = organiser.id
+        fields["organiser_id"] = event_organiser.id
         fields["coordinator_id"] = coord.id if coord else None
         fields["proposed_date"] = today + timedelta(days=entry["days"])
         fields["proposed_time"] = entry["time"]
@@ -527,7 +574,7 @@ with app.app_context():
 
         if "resubmits" in entry:
             original = Event.query.filter_by(
-                name=entry["resubmits"], organiser_id=organiser.id
+                name=entry["resubmits"], organiser_id=default_organiser.id
             ).first()
             if original:
                 fields["resubmitted_from_event_id"] = original.id
@@ -597,7 +644,9 @@ with app.app_context():
     }
     equipment_requirements_created = 0
     for event_name, items in EVENT_EQUIPMENT.items():
-        event = Event.query.filter_by(name=event_name, organiser_id=organiser.id).first()
+        event = Event.query.filter_by(
+        name=event_name,
+        organiser_id=default_organiser.id).first()
         if not event:
             continue
         existing_types = {
@@ -745,7 +794,7 @@ with app.app_context():
     for entry in TEST_BOOKINGS:
         event = Event.query.filter_by(
             name=entry["event"],
-            organiser_id=organiser.id,
+            organiser_id=default_organiser.id,
         ).first()
 
         venue = Venue.query.filter_by(
