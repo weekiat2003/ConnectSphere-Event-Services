@@ -244,6 +244,19 @@ def notify_coordinator_of_clarification_response(event, review, comments) -> lis
 
 
 @_never_blocks
+def notify_organiser_of_change_request_submitted(event, change_request) -> list:
+    """Confirmation to the organiser that their change or withdrawal request
+    was submitted and is waiting for the Coordinator's review."""
+    label = "withdrawal request" if change_request.request_type == "withdrawal" else "change request"
+    return _organiser(
+        event, f"{change_request.request_type}_request_submitted", f"{label.capitalize()} submitted",
+        f'Your {label} for "{_name(event)}" was submitted and is awaiting your Coordinator\'s review.',
+        {"changeRequestId": change_request.id, "requestType": change_request.request_type,
+         "reason": change_request.reason},
+    )
+
+
+@_never_blocks
 def notify_coordinator_of_change_request(event, change_request) -> list:
     """An organiser submitted a change or withdrawal request: the assigned
     Coordinator is asked to review it. (If no Coordinator is assigned yet,
@@ -508,6 +521,38 @@ def notify_venue_staff_of_booking_requests(bookings) -> list:
             event_id=booking.event_id, link=f"/venues/approval?booking={booking.id}",
             data={"bookingId": booking.id, "venueName": venue_name,
                   "eventName": _name(event), "bookingDate": booking_date},
+        )
+    return created
+
+
+def _venue_manager_or_all_staff(venue, venue_staff_ids) -> list:
+    """The Venue Staff member who manages this venue; if they are missing or
+    no longer active Venue Staff, every Venue Staff member, so nothing is lost."""
+    manager_id = venue.created_by if venue else None
+    return [manager_id] if manager_id in venue_staff_ids else sorted(venue_staff_ids)
+
+
+@_never_blocks
+def notify_venue_staff_of_released_bookings(event, bookings, reason: str = None) -> list:
+    """The event was cancelled and its live venue bookings were released:
+    whoever manages each venue is told the slot is free again."""
+    created = []
+    venue_staff_ids = set(active_user_ids_with_role("venue_staff"))
+    for booking in bookings:
+        venue = db.session.get(Venue, booking.venue_id)
+        venue_name = venue.name if venue else f"Venue #{booking.venue_id}"
+        message = (
+            f'"{_name(event)}" was cancelled, so its booking of {venue_name} '
+            f"({_timestamp(booking.start_datetime).replace(' UTC', '')}) has been released."
+        )
+        if reason:
+            message += f" Reason: {_sentence(reason)}"
+        created += notify_users(
+            _venue_manager_or_all_staff(venue, venue_staff_ids),
+            TYPE_VENUE_BOOKING_UPDATE, "Venue booking released", message,
+            event_id=event.id, link=f"/venues/approval?booking={booking.id}",
+            data={"bookingId": booking.id, "change": "released_event_cancelled",
+                  "venueName": venue_name, "reason": reason},
         )
     return created
 
@@ -876,8 +921,12 @@ def notify_attendee_status_change(event, attendee_id: int, old_status: str, new_
                                   note: str = None) -> list:
     old_label = STATUS_LABELS.get(old_status, old_status)
     new_label = STATUS_LABELS.get(new_status, new_status)
-    title = "A place is available for you" if (old_status, new_status) == ("waitlisted", "registered") \
-        else "Registration status changed"
+    if (old_status, new_status) == ("waitlisted", "registered"):
+        title = "A place is available for you"
+    elif new_status == "cancelled":
+        title = "Event cancelled"
+    else:
+        title = "Registration status changed"
     message = f'"{_name(event)}": your status changed from {old_label} to {new_label}.'
     if note:
         message += f" {note}"
@@ -932,11 +981,24 @@ def notify_attendees_of_event_cancellation(event, reason: str = None) -> list:
         .order_by(Registration.id)
         .all()
     )
+    note = f"The event was cancelled. Reason: {_sentence(reason)}" if reason else "The event was cancelled."
     for registration in active:
         created += notify_attendee_status_change(
-            event, registration.attendee_id, registration.status, "cancelled",
-            note=f"The event was cancelled. Reason: {_sentence(reason)}" if reason else "The event was cancelled.",
+            event, registration.attendee_id, registration.status, "cancelled", note=note,
         )
+    # Attendees who only follow the event ("Notify me") and are not registered
+    # or waitlisted are told as well.
+    registered_ids = {r.attendee_id for r in active}
+    followers = [
+        s.attendee_id
+        for s in EventUpdateSubscription.query.filter_by(event_id=event.id).order_by(EventUpdateSubscription.id)
+        if s.attendee_id not in registered_ids
+    ]
+    created += notify_users(
+        followers, TYPE_REGISTRATION_CHANGE, "Event cancelled", f'"{_name(event)}": {note}',
+        event_id=event.id, link=_attendee_link(event),
+        data={"kind": "event_cancelled", "reason": reason},
+    )
     return created
 
 @_never_blocks
