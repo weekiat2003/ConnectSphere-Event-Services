@@ -146,7 +146,15 @@ class Event(db.Model):
                 "requiredFacilities": self.required_facilities or [],
             },
             "equipmentRequirements": [e.to_dict() for e in self.equipment_requirements],
-            "venueBookings": [booking.to_dict() for booking in self.venue_bookings],
+            "venueBookings": [
+                {
+                    **booking.to_dict(),
+                    "venueName": booking.venue.name if booking.venue else None,
+                    "venueLocation": booking.venue.location if booking.venue else None,
+                    "venueCapacity": booking.venue.capacity if booking.venue else None,
+                }
+                for booking in self.venue_bookings
+            ],
             "registrationRequired": self.registration_required,
             "intendedCapacity": self.intended_capacity,
             "clarificationFlag": self.clarification_flag,
