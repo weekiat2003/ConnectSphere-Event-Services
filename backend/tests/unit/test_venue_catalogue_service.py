@@ -576,3 +576,102 @@ class TestSuitabilityOperatingHours:
 
         assert len(flags) == 2
         assert any("exceeds" in f for f in flags) and any("operating hours" in f for f in flags)
+
+
+def test_suitability_check_skips_booking_without_event(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app.venues.services import catalogue, suitability
+
+    model = MagicMock()
+    model.query.filter.return_value.all.return_value = [
+        SimpleNamespace(event=None)
+    ]
+    monkeypatch.setattr(catalogue, "VenueBooking", model)
+
+    check = MagicMock()
+    monkeypatch.setattr(suitability, "check_suitability", check)
+
+    flags = catalogue._flag_suitability_change(
+        SimpleNamespace(id=1), "Changed"
+    )
+
+    assert flags == []
+    check.assert_not_called()
+
+
+def test_repeated_suitability_check_does_not_duplicate_flag(app):
+    from app.models.venue import VenueAvailabilityFlag
+    from app.venues.services import catalogue
+
+    with app.app_context():
+        venue = _venue(capacity=100)
+        booking = _booking(
+            venue,
+            datetime(2030, 1, 1, 10),
+            datetime(2030, 1, 1, 12),
+            expected_attendance=80,
+        )
+        venue.capacity = 50
+
+        first = catalogue._flag_suitability_change(
+            venue, "Capacity reduced"
+        )
+        db.session.flush()
+
+        second = catalogue._flag_suitability_change(
+            venue, "Capacity reduced"
+        )
+
+        assert len(first) == 1
+        assert first[0].event_id == booking.event_id
+        assert second == []
+        assert VenueAvailabilityFlag.query.filter_by(
+            event_id=booking.event_id,
+            venue_id=venue.id,
+            resolved=False,
+        ).count() == 1
+
+
+def test_updating_identical_lists_keeps_rows_and_raises_no_flags(app):
+    with app.app_context():
+        venue = create_venue(1, {
+            "name": "Unchanged Hall",
+            "capacity": 100,
+            "supportedLayouts": ["theatre"],
+            "facilities": ["WiFi"],
+            "accessibilityFeatures": ["Lift"],
+        })
+
+        updated, flags = update_venue(venue, {
+            "supportedLayouts": ["THEATRE"],
+            "facilities": ["wifi"],
+            "accessibilityFeatures": ["LIFT"],
+        })
+
+        assert updated is venue
+        assert flags == []
+        assert list(venue.supported_layouts) == ["theatre"]
+        assert list(venue.facilities) == ["WiFi"]
+        assert list(venue.accessibility_features) == ["Lift"]
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("  No candles  ", "No candles"),
+    ("   ", None),
+    (None, None),
+])
+def test_known_restrictions_are_trimmed_or_cleared(value, expected):
+    cleaned = _validate({"knownRestrictions": value}, partial=True)
+
+    assert cleaned["knownRestrictions"] == expected
+
+
+@pytest.mark.parametrize("value", [
+    123,
+    ["No candles"],
+    {"rule": "No candles"},
+])
+def test_known_restrictions_reject_non_text(value):
+    with pytest.raises(ValueError, match="Known restrictions must be text"):
+        _validate({"knownRestrictions": value}, partial=True)

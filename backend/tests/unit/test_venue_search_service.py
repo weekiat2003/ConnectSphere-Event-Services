@@ -651,3 +651,13 @@ def test_s3_ac4_editing_layouts_of_a_venue_with_an_approved_booking_does_not_cra
             catalogue.get_venue(venue_id), {"supportedLayouts": ["Banquet"]}
         )
         assert list(venue.supported_layouts) == ["banquet"]
+
+def test_filter_options_deduplicate_layouts_ignoring_case(app):
+    _add_venue(app, "Uppercase Hall", supported_layouts=["Theatre"])
+    _add_venue(app, "Lowercase Hall", supported_layouts=["theatre"])
+
+    with app.app_context():
+        layouts = search_service.get_filter_options()["layouts"]
+
+    assert len(layouts) == 1
+    assert layouts[0].lower() == "theatre"
