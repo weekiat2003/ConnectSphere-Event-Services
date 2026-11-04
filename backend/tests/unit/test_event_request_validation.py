@@ -237,3 +237,19 @@ def test_second_equipment_item_is_validated_independently(app, organiser):
         ]
         errors = validate_for_submission(event)
         assert any("Equipment item 2" in e for e in errors)
+
+def test_submission_requires_end_time_after_start_time():
+    from datetime import time
+
+    event = _valid_event(1)
+    event.proposed_time = time(10, 0)
+
+    for end_time in (time(9, 0), time(10, 0)):
+        event.proposed_end_time = end_time
+        assert (
+            "End time must be after start time"
+            in validate_for_submission(event)
+        )
+
+    event.proposed_end_time = time(11, 0)
+    assert validate_for_submission(event) == []
