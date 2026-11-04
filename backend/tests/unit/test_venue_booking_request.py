@@ -1310,6 +1310,7 @@ def test_advisory_crosses_midnight_formats_full_period(ctx, other_event_id):
     )
     db.session.add(booking)
     db.session.commit()
+    add_other_booking(
         ctx,
         other_event_id,
         ctx.hall_a,
