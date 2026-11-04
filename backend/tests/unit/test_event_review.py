@@ -1,7 +1,10 @@
+from unittest.mock import patch
+from sqlalchemy.exc import IntegrityError
 import pytest
 from datetime import datetime, timezone, date, time
 from werkzeug.security import generate_password_hash
-from app.models.event import Event, EventClarificationResponse
+from app.models.event import Event, EventClarificationResponse, EventEquipmentRequirement, EventReview
+from app.events import routes as event_routes
 from app.events.routes import _build_display_fields, _require_confirmation  # both pure/stateless, safe to import directly
 from app.models.user import Role, User
 from app.events.services.review import (
@@ -705,6 +708,185 @@ def test_require_confirmation_is_required_even_without_any_unresolved_clarificat
         result = _require_confirmation(event, {}, "cancel")
         assert result is not None  # confirmation is unconditional, not just a warning-triggered thing
 
+
+def test_review_display_helpers_format_optional_and_equipment_values():
+    event = Event(
+        name="Display helper event",
+        proposed_date=date(2030, 6, 1),
+        required_facilities=[],
+        registration_required=False,
+    )
+
+    assert event_routes._nil_if_empty(None) == "NIL"
+    assert event_routes._nil_if_empty("  ") == "NIL"
+    assert event_routes._nil_if_empty([]) == "NIL"
+    assert event_routes._nil_if_empty({}) == "NIL"
+    assert event_routes._nil_if_empty(0) == 0
+    assert event_routes._nil_if_empty(False) is False
+
+    assert event_routes._format_proposed_date_time(event) == "2030-06-01"
+    event.proposed_date = None
+    event.proposed_time = time(14, 30)
+    assert event_routes._format_proposed_date_time(event) == "14:30:00"
+    event.proposed_time = None
+    assert event_routes._format_proposed_date_time(event) is None
+
+    assert event_routes._venue_requirements_value(event) == "NIL"
+    event.capacity_needed = 0
+    assert event_routes._venue_requirements_value(event) == {
+        "capacityNeeded": 0,
+        "requiredLayout": "NIL",
+        "requiredFacilities": "NIL",
+    }
+
+    assert event_routes._equipment_requirements_value(event) == "NIL"
+    event.equipment_requirements = [
+        EventEquipmentRequirement(
+            equipment_type="",
+            quantity=0,
+            technical_notes=None,
+        )
+    ]
+    assert event_routes._equipment_requirements_value(event) == [
+        {"type": "NIL", "quantity": 0, "technicalNotes": "NIL"}
+    ]
+
+
+def test_event_route_cancel_uses_confirmation_gate_and_validation_errors(app, client, auth_header):
+    with app.app_context():
+        coordinator = User(
+            name="Coord", email="coord.route@test.com", password_hash=generate_password_hash("password")
+        )
+        coordinator.roles = [Role.query.filter_by(name="event_coordinator").first()]
+        db.session.add(coordinator)
+        db.session.commit()
+
+        event = Event(
+            organiser_id=100,
+            coordinator_id=coordinator.id,
+            status="confirmed",
+            name="Route cancel event",
+            purpose="Testing route",
+            description="Event to cancel",
+            proposed_date=date(2030, 1, 1),
+            proposed_time=time(9, 0),
+            expected_attendance=40,
+            required_layout="theatre",
+            accessibility_needs="Step-free access",
+            registration_required=False,
+        )
+        db.session.add(event)
+        db.session.commit()
+
+        headers = auth_header("coord.route@test.com")
+
+        response = client.post(f"/api/events/{event.id}/cancel", headers=headers, json={"reason": "No longer happening"})
+        assert response.status_code == 409
+        assert response.get_json()["requiresConfirmation"] is True
+
+        response = client.post(f"/api/events/{event.id}/cancel", headers=headers, json={"reason": "!!!"})
+        assert response.status_code == 400
+        assert "error" in response.get_json()
+
+        response = client.post(f"/api/events/{event.id}/cancel", headers=headers, json={"reason": "No longer happening", "confirmed": True})
+        assert response.status_code == 200
+        assert response.get_json()["status"] == "cancelled"
+
+
+def test_event_route_status_and_safety_handlers_cover_error_paths(app, client, auth_header, monkeypatch):
+    with app.app_context():
+        coordinator = User(
+            name="Safety Coord", email="status.route@test.com", password_hash=generate_password_hash("password")
+        )
+        coordinator.roles = [Role.query.filter_by(name="event_coordinator").first()]
+        db.session.add(coordinator)
+        db.session.commit()
+
+        event = Event(
+            organiser_id=100,
+            coordinator_id=coordinator.id,
+            status="confirmed",
+            name="Status route event",
+            purpose="Testing status",
+            description="Event for status route",
+            proposed_date=date(2030, 2, 1),
+            proposed_time=time(10, 0),
+            expected_attendance=50,
+            required_layout="theatre",
+            accessibility_needs="Wheelchair access",
+            registration_required=False,
+        )
+        db.session.add(event)
+        db.session.commit()
+
+        headers = auth_header("status.route@test.com")
+
+        response = client.post(f"/api/events/{event.id}/status", headers=headers, json={"status": "safety_approved"})
+        assert response.status_code == 403
+
+        response = client.post(f"/api/events/{event.id}/status", headers=headers, json={"status": "nonsense"})
+        assert response.status_code == 400
+
+        monkeypatch.setattr(event_routes.status_service, "revert_to_planning", lambda event_obj, uid, reason: event_obj)
+        response = client.post(f"/api/events/{event.id}/status", headers=headers, json={"status": "planning", "reason": "Change"})
+        assert response.status_code == 200
+
+        safety_officer = User(
+            name="Safety Officer", email="safety.route@test.com", password_hash=generate_password_hash("password")
+        )
+        safety_officer.roles = [Role.query.filter_by(name="safety_officer").first()]
+        db.session.add(safety_officer)
+        db.session.commit()
+
+        safety_headers = auth_header("safety.route@test.com")
+        safety_event = Event(
+            organiser_id=100,
+            coordinator_id=coordinator.id,
+            status="planning",
+            name="Safety event",
+            purpose="Safety test",
+            description="Safety route",
+            proposed_date=date(2030, 3, 1),
+            proposed_time=time(11, 0),
+            expected_attendance=60,
+            required_layout="theatre",
+            accessibility_needs="Step-free access",
+            registration_required=False,
+        )
+        db.session.add(safety_event)
+        db.session.commit()
+
+        response = client.get(f"/api/events/{safety_event.id}/safety-assessment", headers=safety_headers)
+        assert response.status_code == 200
+
+        monkeypatch.setattr(event_routes.safety, "save_assessment", lambda event_obj, user_obj, values: None)
+        response = client.put(f"/api/events/{safety_event.id}/safety-assessment", headers=safety_headers, json={"factorAssessments": []})
+        assert response.status_code == 200
+
+        monkeypatch.setattr(event_routes.safety, "save_assessment", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bad")))
+        response = client.put(f"/api/events/{safety_event.id}/safety-assessment", headers=safety_headers, json={"factorAssessments": []})
+        assert response.status_code == 400
+
+        monkeypatch.setattr(event_routes.safety, "review_safety_check", lambda event_obj, user_obj, *args, **kwargs: event_obj)
+        response = client.post(f"/api/events/{safety_event.id}/safety-review", headers=safety_headers, json={"decision": "approved"})
+        assert response.status_code == 200
+
+        monkeypatch.setattr(event_routes.safety, "review_safety_check", lambda *args, **kwargs: (_ for _ in ()).throw(event_routes.safety.SafetyReviewConflictError("conflict")))
+        response = client.post(f"/api/events/{safety_event.id}/safety-review", headers=safety_headers, json={"decision": "approved"})
+        assert response.status_code == 409
+
+        monkeypatch.setattr(
+            event_routes.safety,
+            "review_safety_check",
+            lambda *args, **kwargs: (_ for _ in ()).throw(event_routes.safety.SafetyReviewValidationError(["field: bad"])),
+        )
+        response = client.post(f"/api/events/{safety_event.id}/safety-review", headers=safety_headers, json={"decision": "approved"})
+        assert response.status_code == 400
+
+        response = client.get(f"/api/events/{999999}/safety-assessment", headers=safety_headers)
+        assert response.status_code == 404
+
+
 def test_review_decision_is_empty_before_any_decision(app):
     with app.app_context():
         pending = _persist_event()
@@ -1015,3 +1197,88 @@ def test_full_review_history_for_an_unresubmitted_event_contains_only_its_own_en
         assert history[0]["action"] == "clarification_requested"
         assert history[0]["comments"] == "Please confirm the headcount."
         assert history[0]["isCurrentSubmission"] is True
+
+
+def test_cannot_respond_to_withdrawn_clarification(app):
+    with app.app_context():
+        event = _persist_event(coordinator_id=200)
+        request_clarification(event, 200, "Please confirm the headcount.")
+        review_id = event.reviews[-1].id
+        delete_clarification_request(event, 200, review_id)
+
+        with pytest.raises(ValueError, match="withdrawn"):
+            respond_to_clarification(event, 100, review_id, {"comments": "Confirmed at 80."})
+
+        assert EventClarificationResponse.query.filter_by(review_id=review_id).count() == 0
+
+
+def test_response_integrity_error_rolls_back_and_reports_duplicate(app):
+    with app.app_context():
+        event = _persist_event(coordinator_id=200)
+        request_clarification(event, 200, "Please confirm the headcount.")
+        review_id = event.reviews[-1].id
+        event_id = event.id
+        error = IntegrityError("INSERT", {}, Exception("duplicate response"))
+        with patch.object(db.session, "commit", side_effect=error), patch.object(
+            db.session, "rollback", wraps=db.session.rollback
+        ) as rollback:
+            with pytest.raises(ValueError, match="already been responded to"):
+                respond_to_clarification(event, 100, review_id, {"comments": "Confirmed at 80."})
+            rollback.assert_called_once()
+
+        assert EventClarificationResponse.query.filter_by(review_id=review_id).count() == 0
+        assert db.session.get(Event, event_id).clarification_flag is True
+
+
+def test_clarification_thread_ignores_other_review_actions(app):
+    with app.app_context():
+        event = _persist_event(coordinator_id=200)
+        request_clarification(event, 200, "Please confirm the headcount.")
+        review_id = event.reviews[-1].id
+        db.session.add(EventReview(event_id=event.id, coordinator_id=200, action="approved"))
+        db.session.commit()
+        db.session.expire(event, ["reviews"])
+
+        thread = get_clarification_thread(event)
+
+        assert len(thread) == 1
+        assert thread[0]["reviewId"] == review_id
+        assert thread[0]["request"]["comments"] == "Please confirm the headcount."
+
+
+@pytest.mark.parametrize("broken_chain", ["missing_parent", "cycle"])
+def test_review_history_stops_at_missing_or_repeated_parent(app, broken_chain):
+    with app.app_context():
+        event = _persist_event(coordinator_id=200)
+        db.session.add(EventReview(
+            event_id=event.id, coordinator_id=200, action="rejected", comments="Revise the plan."
+        ))
+        db.session.commit()
+        # Simulate legacy/corrupt links in memory without persisting invalid foreign keys.
+        with db.session.no_autoflush:
+            event.resubmitted_from_event_id = 999999 if broken_chain == "missing_parent" else event.id
+            history = get_full_review_history(event)
+            prior = get_prior_rejection_decisions(event)
+
+        assert len(history) == 1
+        assert history[0]["eventId"] == event.id
+        assert history[0]["comments"] == "Revise the plan."
+        assert history[0]["isCurrentSubmission"] is True
+        assert prior == []
+
+
+@pytest.mark.parametrize("timestamp", [None, datetime(2026, 11, 4, 9, 30)])
+def test_event_review_to_dict(timestamp):
+    review = EventReview(
+        id=7, event_id=42, coordinator_id=200, action="clarification_requested",
+        comments="Please confirm the headcount.", withdrawn_at=timestamp, created_at=timestamp,
+    )
+
+    assert review.to_dict() == {
+        "id": 7,
+        "coordinatorId": 200,
+        "action": "clarification_requested",
+        "comments": "Please confirm the headcount.",
+        "withdrawnAt": "2026-11-04T09:30:00" if timestamp else None,
+        "createdAt": "2026-11-04T09:30:00" if timestamp else None,
+    }
