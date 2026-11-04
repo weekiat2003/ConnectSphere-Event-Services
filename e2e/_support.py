@@ -123,15 +123,21 @@ class E2ETestCase(unittest.TestCase):
         self.context.close()
 
     def _has_failed(self):
-        # Failures are recorded on the result as soon as they happen, so they
-        # are visible here in tearDown (including failures inside subTests).
+        """True if this test has already failed, under unittest or pytest."""
         result = getattr(getattr(self, "_outcome", None), "result", None)
         if result is None:
             return False
-        for test, _ in list(result.failures) + list(result.errors):
-            if test is self or getattr(test, "test_case", None) is self:
-                return True
-        return False
+        failures = getattr(result, "failures", None)
+        errors = getattr(result, "errors", None)
+        if failures is not None and errors is not None:
+            # unittest: failures are recorded as soon as they happen, so they
+            # are visible here in tearDown (including failures inside subTests).
+            for test, _ in list(failures) + list(errors):
+                if test is self or getattr(test, "test_case", None) is self:
+                    return True
+            return False
+        # pytest: its unittest adapter keeps the captured exceptions instead.
+        return bool(getattr(result, "_excinfo", None))
 
     # -- helpers ----------------------------------------------------------
     def goto(self, path=""):
