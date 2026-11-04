@@ -21,6 +21,7 @@ from app.models.event import (
     EVENT_STATUSES,
     Event,
     EventEquipmentRequirement,
+    EventSafetyAssessment,
     EventSafetyReview,
     EventStatusHistory,
     STATUS_LABELS,
@@ -831,3 +832,191 @@ def test_significant_event_update_on_confirmed_event_is_locked(
             event_id=event_id,
             new_status="planning",
         ).count() == 0
+
+
+def test_confirm_after_safety_approval_requires_approved_review_by_safety_officer(
+    app, organiser, coordinator, make_event
+):
+    """Confirmation rejects non-approved decisions and reviews by non-officers."""
+    with app.app_context():
+        event_id = make_event(organiser, status="safety_approved")
+        event = db.session.get(Event, event_id)
+        non_safety_reviewer = SimpleNamespace(
+            decision="rejected",
+            safety_officer=SimpleNamespace(has_role=lambda role: True),
+        )
+        with pytest.raises(
+            status_service.InvalidTransitionError,
+            match="Safety check must be approved",
+        ):
+            status_service.confirm_after_safety_approval(
+                event, non_safety_reviewer, coordinator
+            )
+
+        reviewer_without_role = SimpleNamespace(
+            decision="approved",
+            safety_officer=SimpleNamespace(has_role=lambda role: False),
+        )
+        with pytest.raises(
+            status_service.InvalidTransitionError,
+            match="Safety review must be performed by a Safety Officer",
+        ):
+            status_service.confirm_after_safety_approval(
+                event, reviewer_without_role, coordinator
+            )
+
+
+def test_current_safety_review_handles_missing_stale_and_non_approval_reviews(
+    app, organiser, make_event, monkeypatch
+):
+    """Only a current approval is returned, and only for displayable statuses."""
+    with app.app_context():
+        event_id = make_event(organiser, status="planning")
+        event = db.session.get(Event, event_id)
+        latest = SimpleNamespace(decision="rejected")
+
+        monkeypatch.setattr(status_service, "_latest_safety_review", lambda _event: None)
+        assert status_service.approved_safety_review_for_current_check(event) is None
+        assert status_service.current_safety_review(event) is None
+
+        monkeypatch.setattr(status_service, "_latest_safety_review", lambda _event: latest)
+        monkeypatch.setattr(
+            status_service, "_decided_before_current_check", lambda _event, _review: False
+        )
+        assert status_service.approved_safety_review_for_current_check(event) is None
+        assert status_service.current_safety_review(event) is None
+
+        latest.decision = "approved"
+        monkeypatch.setattr(
+            status_service, "_decided_before_current_check", lambda _event, _review: True
+        )
+        assert status_service.approved_safety_review_for_current_check(event) is None
+        assert status_service.current_safety_review(event) is None
+
+        monkeypatch.setattr(
+            status_service, "_decided_before_current_check", lambda _event, _review: False
+        )
+        assert status_service.approved_safety_review_for_current_check(event) is latest
+        assert status_service.current_safety_review(event) is None
+
+        for status in ("safety_approved", "confirmed", "completed"):
+            event.status = status
+            assert status_service.current_safety_review(event) is latest
+
+
+def test_arrangement_checks_cover_held_bookings_and_incomplete_equipment(
+    app, organiser, make_event
+):
+    """Held bookings and incomplete equipment block safety-check readiness."""
+    with app.app_context():
+        event_id = make_event(organiser, status="planning", capacity_needed=100)
+        event = db.session.get(Event, event_id)
+        _create_venue_booking(event, organiser, status="approved")
+        _create_venue_booking(event, organiser, status="held")
+        assert status_service.arrangements_are_complete(event) is False
+
+        held_event_id = make_event(organiser, status="planning", capacity_needed=100)
+        held_event = db.session.get(Event, held_event_id)
+        _create_venue_booking(held_event, organiser, status="held")
+        assert status_service.arrangements_are_complete(held_event) is False
+
+        no_requirements_id = make_event(organiser, status="planning")
+        no_requirements = db.session.get(Event, no_requirements_id)
+        assert status_service.arrangements_are_complete(no_requirements) is True
+
+        equipment_event_id = make_event(organiser, status="planning")
+        equipment_event = db.session.get(Event, equipment_event_id)
+        requirement = EventEquipmentRequirement(
+            equipment_type="Projector",
+            quantity=2,
+            status="confirmed",
+            needs_recheck=True,
+        )
+        equipment_event.equipment_requirements.append(requirement)
+        db.session.commit()
+        assert status_service.arrangements_are_complete(equipment_event) is False
+
+        requirement.needs_recheck = False
+        db.session.commit()
+        assert status_service.arrangements_are_complete(equipment_event) is False
+
+
+def test_return_reconsider_and_revert_status_helpers_cover_no_op_and_delete_paths(
+    app, organiser, coordinator, make_event, monkeypatch
+):
+    """Status helpers leave unaffected events alone and clear stale assessments."""
+    with app.app_context():
+        planning_id = make_event(organiser, status="planning")
+        planning = db.session.get(Event, planning_id)
+        assert status_service.return_to_planning(planning, coordinator, "No change") is planning
+        assert status_service.reconsider_event_after_arrangement_loss(
+            planning, coordinator, "No change"
+        ) is planning
+
+        confirmed_id = make_event(organiser, status="confirmed")
+        confirmed = db.session.get(Event, confirmed_id)
+        monkeypatch.setattr(status_service, "arrangements_are_complete", lambda _event: True)
+        assert status_service.reconsider_event_after_arrangement_loss(
+            confirmed, coordinator, "Arrangements remain complete"
+        ) is confirmed
+
+        safety_check_id = make_event(organiser, status="safety_check")
+        safety_check = db.session.get(Event, safety_check_id)
+        assessment = EventSafetyAssessment(
+            event_id=safety_check_id,
+            safety_officer_id=coordinator,
+            factors={},
+        )
+        db.session.add(assessment)
+        db.session.commit()
+        assert safety_check.safety_assessment is assessment
+
+        monkeypatch.setattr(status_service, "arrangements_are_complete", lambda _event: False)
+        status_service.reconsider_event_after_arrangement_loss(
+            safety_check, coordinator, "Arrangements changed"
+        )
+        assert safety_check.status == "planning"
+        assert safety_check.safety_assessment is None
+
+        with pytest.raises(
+            status_service.InvalidTransitionError,
+            match="Only a confirmed event",
+        ):
+            status_service.revert_to_planning(planning, coordinator, "Not confirmed")
+        assert status_service.revert_to_planning(
+            confirmed, coordinator, "Return to planning"
+        ) is confirmed
+        assert confirmed.status == "planning"
+
+
+def test_change_status_releases_reservations_and_closes_reassignment_on_terminal_statuses(
+    app, organiser, coordinator, make_event, monkeypatch
+):
+    """Cancellation releases equipment; terminal transitions close reassignment requests."""
+    with app.app_context():
+        event_id = make_event(organiser, status="planning")
+        event = db.session.get(Event, event_id)
+        releases = []
+        monkeypatch.setattr(
+            status_service,
+            "release_equipment_reservations",
+            lambda changed_event: releases.append(changed_event) or 0,
+        )
+        status_service.change_status(
+            event, "cancelled", coordinator, notify=False
+        )
+        assert releases == [event]
+        assert event.status == "cancelled"
+
+        completed_id = make_event(organiser, status="confirmed")
+        completed = db.session.get(Event, completed_id)
+        closed_events = []
+        monkeypatch.setattr(
+            "app.events.services.assignment.close_reassignment_request_for_closed_event",
+            lambda closed_event: closed_events.append(closed_event),
+        )
+        status_service.change_status(
+            completed, "completed", coordinator, notify=False
+        )
+        assert completed.status == "completed"
+        assert closed_events == [completed]
