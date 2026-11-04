@@ -23,7 +23,7 @@ from app.models.event import Event
 from app.models.user import Role, User
 from app.models.change_request import ChangeRequest
 from app.models.venue import (
-    BOOKING_APPROVED, BOOKING_PENDING, BOOKING_REJECTED, BOOKING_RELEASED, VenueBooking,
+    BOOKING_APPROVED, BOOKING_HELD, BOOKING_PENDING, BOOKING_REJECTED, BOOKING_RELEASED, VenueBooking,
 )
 
 BASE_DAY = date.today() + timedelta(days=60)
@@ -128,6 +128,13 @@ def test_cancel_is_refused_in_other_statuses(app, status):
             status_service.cancel_event(event.id, coordinator, REASON)
 
         assert db.session.get(Event, event.id).status == status
+
+
+def test_cancel_missing_event_raises_lookup_error(app):
+    """Cancellation of an unknown event raises the service's not-found error."""
+    with app.app_context():
+        with pytest.raises(LookupError, match="Event not found"):
+            status_service.cancel_event(999999, 1, REASON)
 
 
 def test_another_coordinator_cannot_cancel(app):
@@ -245,6 +252,21 @@ def test_pending_and_approved_bookings_and_reservations_are_released(app):
         assert db.session.get(VenueBooking, approved.id).status == BOOKING_RELEASED
         assert db.session.get(VenueBooking, rejected.id).status == BOOKING_REJECTED  # untouched
         assert db.session.get(EquipmentReservation, reservation.id).status == "released"
+
+
+def test_cancelling_held_booking_records_its_hold_release_time(app):
+    """Cancelling an event releases held bookings and records when the hold ended."""
+    with app.app_context():
+        organiser, coordinator, _ = _people()
+        event = _event(organiser, coordinator)
+        held = _booking(event, BOOKING_HELD)
+
+        status_service.cancel_event(event.id, coordinator, REASON)
+
+        released = db.session.get(VenueBooking, held.id)
+        assert released.status == BOOKING_RELEASED
+        assert released.hold_released_at is not None
+        assert released.decided_by == coordinator
 
 
 # ---------------------------------------------------------------------
