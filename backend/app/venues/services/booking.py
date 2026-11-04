@@ -39,6 +39,9 @@ def submit_booking_request(
     event: Event,
     venue: Venue,
     user_id: int,
+    *,
+    start_datetime=None,
+    end_datetime=None,
 ) -> VenueBooking:
     """
     Submit a booking request for a venue.
@@ -46,6 +49,9 @@ def submit_booking_request(
     An event may have more than one venue booking, but it cannot
     have another active booking for the same venue.
     """
+
+    if start_datetime is None or end_datetime is None or end_datetime <= start_datetime:
+        raise ValueError("A valid booking start and end datetime are required")
 
     existing = VenueBooking.query.filter(
         VenueBooking.event_id == event.id,
@@ -64,6 +70,8 @@ def submit_booking_request(
         venue_id=venue.id,
         requested_by=user_id,
         status=PENDING,
+        start_datetime=start_datetime,
+        end_datetime=end_datetime,
     )
 
     db.session.add(booking)
