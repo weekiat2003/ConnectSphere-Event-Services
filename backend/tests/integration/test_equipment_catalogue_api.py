@@ -92,3 +92,34 @@ def test_update_item_changes_name_category_and_quantity(client, tech_headers, it
     assert (saved.name, saved.category, saved.total_quantity) == (
         "Ceiling Projector", "Display", 12
     )
+
+
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        (
+            {"category": "Display", "totalQuantity": 12},
+            ("Projector", "Display", 12),
+        ),
+        (
+            {"name": "Ceiling Projector", "totalQuantity": 12},
+            ("Ceiling Projector", "Audio visual", 12),
+        ),
+        (
+            {"name": "Ceiling Projector", "category": "Display"},
+            ("Ceiling Projector", "Display", 8),
+        ),
+    ],
+    ids=["name-omitted", "category-omitted", "quantity-omitted"],
+)
+def test_update_item_keeps_omitted_fields_unchanged(
+    client, tech_headers, item_id, payload, expected
+):
+    response = client.put(
+        f"{BASE}/{item_id}", json=payload, headers=tech_headers
+    )
+
+    assert response.status_code == 200
+    db.session.expire_all()
+    saved = db.session.get(EquipmentItem, item_id)
+    assert (saved.name, saved.category, saved.total_quantity) == expected

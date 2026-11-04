@@ -4,8 +4,10 @@ from types import SimpleNamespace
 import pytest
 
 from app.common.time import utcnow
+from app.auth.decorators import roles_required
 from app.extensions import db
 from app.models.venue import Venue, VenueBooking
+from app.venues.services.advisory import get_advisory
 
 
 BASE = "/api/venues"
@@ -1296,6 +1298,42 @@ def test_advisory_ac1_ac2_pending_overlap_warns_without_other_event_details(clie
     assert "@" not in adv["message"] and "Event" not in adv["message"]
 
 
+def test_advisory_crosses_midnight_formats_full_period(ctx, other_event_id):
+    start_date = day(30)
+    booking = VenueBooking(
+        event_id=ctx.event_id,
+        venue_id=ctx.hall_a,
+        requested_by=ctx.coord_id,
+        status="pending",
+        start_datetime=at(start_date, 23),
+        end_datetime=at(start_date + timedelta(days=1), 1),
+    )
+    db.session.add(booking)
+    db.session.commit()
+    add_other_booking(
+        ctx,
+        other_event_id,
+        ctx.hall_a,
+        status="pending",
+        start=datetime.combine(start_date, time(23, 30)),
+        end=datetime.combine(start_date + timedelta(days=1), time(2)),
+    )
+
+    advisory = get_advisory(booking)
+
+    assert advisory["period"] == (
+        f"{start_date.isoformat()} 23:30 to "
+        f"{(start_date + timedelta(days=1)).isoformat()} 01:00"
+    )
+    assert advisory["type"] == "possible_conflict"
+
+
+def test_advisory_pending_booking_without_venue_returns_none():
+    booking = SimpleNamespace(status="pending", venue=None)
+
+    assert get_advisory(booking) is None
+
+
 def test_advisory_ac4_no_warning_cases(client, ctx, other_event_id):
     add_other_booking(ctx, other_event_id, ctx.hall_a, status="pending")
     # different venue, and non-overlapping time
@@ -1334,3 +1372,269 @@ def test_advisory_ac7_confirmed_overlap_replaces_warning_and_blocks_approval(cli
 
     pending = client.get(f"{BASE}/bookings/pending", headers=ctx.staff).get_json()
     assert next(b for b in pending if b["id"] == new_id)["canApprove"] is False
+
+
+def test_roles_required_allows_options_preflight_without_authentication(app, client):
+    @app.route(
+        "/decorator-options-test",
+        methods=["OPTIONS"],
+        provide_automatic_options=False,
+    )
+    @roles_required("event_coordinator")
+    def preflight_probe():
+        return "unexpected", 200
+
+    response = client.options("/decorator-options-test")
+
+    assert response.status_code == 204
+    assert response.get_data(as_text=True) == ""
+
+
+def test_venue_catalogue_routes_cover_missing_update_and_deactivation_errors(
+    client, ctx,
+):
+    assert client.get(f"{BASE}/99999", headers=ctx.staff).status_code == 404
+    assert client.put(
+        f"{BASE}/99999", json={"name": "Missing"}, headers=ctx.staff
+    ).status_code == 404
+
+    invalid_update = client.put(
+        f"{BASE}/{ctx.hall_a}",
+        json={"capacity": 0},
+        headers=ctx.staff,
+    )
+    assert invalid_update.status_code == 400
+    assert invalid_update.get_json()["error"] == "Venue capacity must be greater than zero"
+
+    assert client.delete(f"{BASE}/99999", headers=ctx.staff).status_code == 404
+    add_booking(ctx, ctx.hall_a, status="pending")
+    blocked = client.delete(f"{BASE}/{ctx.hall_a}", headers=ctx.staff)
+    assert blocked.status_code == 400
+    assert "active bookings" in blocked.get_json()["error"]
+
+
+def test_venue_can_be_deactivated_without_active_bookings(client, ctx):
+    response = client.delete(f"{BASE}/{ctx.hall_a}", headers=ctx.staff)
+
+    assert response.status_code == 204
+    assert client.get(f"{BASE}/{ctx.hall_a}", headers=ctx.staff).status_code == 200
+
+
+def test_calendar_routes_validate_required_and_ordered_datetimes(client, ctx):
+    venue_url = f"{BASE}/{ctx.hall_a}/calendar"
+    assert client.get(venue_url, headers=ctx.staff).status_code == 400
+    reversed_dates = "?start=2026-12-02T10:00:00&end=2026-12-01T10:00:00"
+    assert client.get(venue_url + reversed_dates, headers=ctx.staff).status_code == 400
+
+    combined_url = f"{BASE}/calendar"
+    assert client.get(combined_url, headers=ctx.staff).status_code == 400
+    assert client.get(
+        combined_url + "?start=not-a-date&end=2026-12-02T10:00:00",
+        headers=ctx.staff,
+    ).status_code == 400
+    assert client.get(
+        combined_url + reversed_dates,
+        headers=ctx.staff,
+    ).status_code == 400
+    valid = client.get(
+        combined_url + "?start=2026-12-01T00:00:00&end=2026-12-02T00:00:00",
+        headers=ctx.staff,
+    )
+    assert valid.status_code == 200
+
+
+def test_unavailability_and_suitability_routes_report_missing_records(
+    client, ctx,
+):
+    missing_unavailability = client.post(
+        f"{BASE}/99999/unavailability",
+        json={},
+        headers=ctx.staff,
+    )
+    assert missing_unavailability.status_code == 404
+
+    suitability_response = client.get(
+        f"{BASE}/99999/suitability/{ctx.event_id}",
+        headers=ctx.coord,
+    )
+    assert suitability_response.status_code == 404
+    assert suitability_response.get_json()["error"] == "Venue or event not found"
+
+
+def test_search_rejects_maximum_capacity_out_of_range(client, ctx):
+    response = client.get(
+        f"{BASE}/search?date={day(30).isoformat()}&start_time=10:00"
+        "&end_time=12:00&attendance=10&max_capacity=999999999999999",
+        headers=ctx.coord,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["errors"]["max_capacity"] == "Maximum capacity is out of range."
+
+
+def test_submit_booking_rejects_missing_or_unassigned_event(
+    client, ctx, make_user, auth_header,
+):
+    missing = client.post(
+        f"{BASE}/bookings",
+        json={"eventId": 99999, "venues": []},
+        headers=ctx.coord,
+    )
+    assert missing.status_code == 404
+    assert missing.get_json()["error"] == "Event not found"
+
+    make_user("unassigned-coordinator@test.com", ["event_coordinator"])
+    unassigned = auth_header("unassigned-coordinator@test.com")
+    denied = client.post(
+        f"{BASE}/bookings",
+        json={"eventId": ctx.event_id, "venues": []},
+        headers=unassigned,
+    )
+    assert denied.status_code == 403
+    assert "assigned Coordinator" in denied.get_json()["error"]
+
+
+def test_submit_booking_rejects_malformed_venue_entries(client, ctx):
+    response = client.post(
+        f"{BASE}/bookings",
+        json={
+            "eventId": ctx.event_id,
+            "venues": [
+                None,
+                {
+                    "venueId": ctx.hall_a,
+                    "date": 12,
+                    "startTime": 10,
+                    "equipment": 42,
+                },
+            ],
+        },
+        headers=ctx.coord,
+    )
+
+    assert response.status_code == 400
+    errors = response.get_json()["errors"]
+    assert errors[0]["field"] == "venue"
+    assert {error["field"] for error in errors[1:]} >= {
+        "date", "start_time", "equipment",
+    }
+
+
+def test_submit_booking_treats_non_list_venues_as_empty(client, ctx):
+    response = client.post(
+        f"{BASE}/bookings",
+        json={"eventId": ctx.event_id, "venues": "not-a-list"},
+        headers=ctx.coord,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Booking request could not be submitted"
+
+
+def test_event_bookings_reject_missing_and_hidden_events(
+    client, ctx, make_user, auth_header,
+):
+    assert client.get(
+        f"{BASE}/events/99999/bookings", headers=ctx.coord
+    ).status_code == 404
+
+    make_user("unrelated-attendee@test.com", ["attendee"])
+    unrelated = auth_header("unrelated-attendee@test.com")
+    response = client.get(
+        f"{BASE}/events/{ctx.event_id}/bookings",
+        headers=unrelated,
+    )
+    assert response.status_code == 404
+
+
+def test_booking_actions_report_missing_booking(client, ctx):
+    assert client.post(
+        f"{BASE}/bookings/99999/withdraw", headers=ctx.coord
+    ).status_code == 404
+    assert client.post(
+        f"{BASE}/bookings/99999/cancel", headers=ctx.staff
+    ).status_code == 404
+
+
+def test_cancelling_pending_booking_returns_validation_error(client, ctx):
+    add_booking(ctx, ctx.hall_a, status="pending")
+    pending = all_bookings()[0]
+
+    response = client.post(
+        f"{BASE}/bookings/{pending.id}/cancel",
+        json={},
+        headers=ctx.staff,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Only approved bookings can be cancelled"
+
+
+def test_approved_booking_list_includes_booking_and_related_names(client, ctx):
+    add_booking(ctx, ctx.hall_a, status="approved")
+
+    response = client.get(f"{BASE}/bookings/approved", headers=ctx.staff)
+
+    assert response.status_code == 200
+    booking = response.get_json()[0]
+    assert booking["venueName"] == "Hall A"
+    assert booking["eventName"] == "Test Event"
+
+
+def test_reject_booking_requires_object_json(client, ctx):
+    add_booking(ctx, ctx.hall_a, status="pending")
+    booking_id = all_bookings()[0].id
+
+    response = client.post(
+        f"{BASE}/bookings/{booking_id}/reject",
+        json=["not", "an", "object"],
+        headers=ctx.staff,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Request body must be a JSON object"
+
+
+def test_reject_booking_accepts_empty_body_as_empty_object(client, ctx):
+    add_booking(ctx, ctx.hall_a, status="pending")
+    pending = all_bookings()[0]
+
+    response = client.post(
+        f"{BASE}/bookings/{pending.id}/reject",
+        headers=ctx.staff,
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "rejected"
+
+
+@pytest.mark.parametrize(
+    "expires_at",
+    [
+        123,
+        "2026-12-01T10:00:00",
+        "not-a-datetime",
+    ],
+)
+def test_hold_route_rejects_invalid_expiry_formats(client, ctx, expires_at):
+    response = client.post(
+        f"{BASE}/bookings/99999/hold",
+        json={"expiresAt": expires_at},
+        headers=ctx.staff,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == (
+        "expiresAt must be an ISO datetime with a timezone offset"
+    )
+
+
+def test_hold_route_reports_missing_booking_after_valid_expiry(client, ctx):
+    response = client.post(
+        f"{BASE}/bookings/99999/hold",
+        json={"expiresAt": "2026-12-01T10:00:00Z"},
+        headers=ctx.staff,
+    )
+
+    assert response.status_code == 404
+    assert response.get_json()["error"] == "Booking not found"
