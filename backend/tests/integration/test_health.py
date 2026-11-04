@@ -45,3 +45,16 @@ def test_registered_error_handlers_return_json(app, client, status_code, message
     assert response.status_code == status_code
     assert response.is_json
     assert response.get_json() == {"error": message}
+
+def test_process_holds_cli_reports_expired_count(app, monkeypatch):
+    from unittest.mock import Mock
+    from app.venues.services import booking
+
+    expire = Mock(return_value=3)
+    monkeypatch.setattr(booking, "expire_due_holds", expire)
+
+    result = app.test_cli_runner().invoke(args=["process-holds"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == "Expired 3 tentative hold(s)."
+    expire.assert_called_once_with()

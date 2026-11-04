@@ -75,3 +75,25 @@ def test_notify_role_skips_inactive_users(app, make_user):
     db.session.commit()
     created = core.notify_role("venue_staff", TYPE_ORGANISER_UPDATE, "T", "M")
     assert [n.recipient_id for n in created] == [active]
+
+def test_inbox_invalid_limit_uses_default(
+    client, organiser, auth_header, monkeypatch
+):
+    from unittest.mock import Mock
+
+    list_items = Mock(return_value=[])
+    monkeypatch.setattr(core, "list_for_user", list_items)
+    headers = auth_header("organiser@test.com")
+
+    response = client.get(
+        "/api/notifications?limit=invalid",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == []
+    list_items.assert_called_once_with(
+        organiser,
+        unread_only=False,
+        limit=50,
+    )

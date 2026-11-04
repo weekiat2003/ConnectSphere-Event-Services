@@ -645,3 +645,19 @@ class TestSafetyCheckEdits:
                      if n.data.get("kind") == "returned_to_planning"]
             assert len(notes) == 1
             assert "Edited during safety check" in notes[0].message
+
+def test_valid_end_fields_and_registration_capacity_pass_validation():
+    from datetime import date, time, timedelta
+    from app.events.services.update import _validate_changes
+
+    event = Event(
+        registration_required=True,
+        intended_capacity=20,
+    )
+    changes = {
+        "proposed_end_date": date.today() + timedelta(days=30),
+        "proposed_end_time": time(12, 0),
+        "intended_capacity": 25,
+    }
+
+    assert _validate_changes(event, changes) == {}

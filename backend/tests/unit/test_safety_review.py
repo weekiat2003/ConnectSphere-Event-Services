@@ -426,3 +426,57 @@ def test_nonapproval_reports_every_missing_detail_at_once(
         assert any("affected arrangements" in error for error in errors)
         assert event.status == "safety_check"
         assert EventSafetyReview.query.filter_by(event_id=event_id).count() == 0
+
+def test_factor_assessment_rejects_non_object_entry():
+    with pytest.raises(ValueError, match="Each factor assessment"):
+        safety._validate_factor_assessments(
+            {"expected_attendance": "satisfactory"}
+        )
+
+
+@pytest.mark.parametrize(
+    ("decision", "comments", "approved_review", "error", "message"),
+    [
+        (
+            "approved",
+            None,
+            True,
+            safety.SafetyReviewConflictError,
+            "already has an approved",
+        ),
+        ("invalid", None, False, ValueError, "Decision must be"),
+        ("approved", 123, False, ValueError, "reason must be text"),
+    ],
+)
+def test_safety_review_rejects_invalid_decision_input(
+    monkeypatch, decision, comments, approved_review, error, message
+):
+    from types import SimpleNamespace
+
+    event = SimpleNamespace(status="safety_check")
+    officer = SimpleNamespace(
+        has_role=lambda role: role == "safety_officer"
+    )
+    monkeypatch.setattr(
+        safety.status_service,
+        "approved_safety_review_for_current_check",
+        lambda event: object() if approved_review else None,
+    )
+
+    with pytest.raises(error, match=message):
+        safety.review_safety_check(
+            event, officer, decision, comments=comments
+        )
+
+
+@pytest.mark.parametrize(
+    "values",
+    ["venue", [123], ["unknown"], ["venue", "venue"]],
+)
+def test_safety_values_reject_invalid_or_duplicate_entries(values):
+    with pytest.raises(ValueError, match="valid, unique values"):
+        safety._validate_values(
+            values,
+            {"venue", "equipment"},
+            "affected arrangements",
+        )

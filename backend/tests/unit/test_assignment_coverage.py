@@ -232,3 +232,23 @@ def test_only_requesting_coordinator_can_withdraw_reassignment(
 
         db.session.refresh(request)
         assert request.status == "pending"
+
+def test_calendar_does_not_duplicate_current_event_with_history(
+    app, organiser, coordinator, make_event
+):
+    event = make_event_for_assignment(
+        make_event, organiser, "planning", coordinator
+    )
+    db.session.add(
+        EventCoordinatorHistory(
+            event_id=event.id,
+            coordinator_id=coordinator,
+            assignment_type="lead",
+        )
+    )
+    db.session.commit()
+
+    entries = assignment.coordinator_calendar(coordinator)
+
+    assert [entry["id"] for entry in entries] == [event.id]
+    assert entries[0]["isReadOnly"] is False    

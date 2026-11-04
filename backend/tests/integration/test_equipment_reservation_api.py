@@ -355,3 +355,41 @@ def test_unauthenticated_is_denied(client, item, setup_event):
 
     assert res.status_code == 401
     assert count() == 0
+
+def test_release_handles_missing_requirement(app, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from app.equipment.services import reservation
+    from app.events.services import status
+
+    item = SimpleNamespace(
+        id=7,
+        status="reserved",
+        equipment_requirement_id=99,
+        event=object(),
+        created_by=12,
+    )
+    notify = Mock()
+    reconsider = Mock()
+    commit = Mock()
+
+    monkeypatch.setattr(db.session, "get", Mock(return_value=None))
+    monkeypatch.setattr(db.session, "commit", commit)
+    monkeypatch.setattr(
+        reservation.notifications,
+        "notify_coordinator_of_equipment_reservation",
+        notify,
+    )
+    monkeypatch.setattr(
+        status, "reconsider_event_after_arrangement_loss", reconsider
+    )
+
+    assert reservation.release(item, actor_id=34) is item
+    assert item.status == "released"
+    notify.assert_called_once_with(item, "released", actor_id=34)
+    commit.assert_called_once_with()
+    reconsider.assert_called_once_with(
+        item.event,
+        12,
+        reason="Equipment reservation 7 was released; arrangements need review",
+    )
