@@ -412,6 +412,44 @@ def _make_preparation_booking(event_id, staff_id, status=BOOKING_APPROVED):
 
 
 class TestVenuePreparation:
+    def test_non_object_changes_rejected(self, app, make_user, make_event):
+        with app.app_context():
+            from app.models.user import User
+
+            staff_id = make_user("staff-non-object@test.com", ["venue_staff"])
+            event_id = make_event(organiser_id=1, status="planning")
+            booking = _make_preparation_booking(event_id, staff_id)
+            staff = User.query.get(staff_id)
+
+            with pytest.raises(PreparationUpdateError, match="must be an object"):
+                update_venue_preparation(booking, staff, [])
+
+    def test_empty_changes_rejected(self, app, make_user, make_event):
+        with app.app_context():
+            from app.models.user import User
+
+            staff_id = make_user("staff-empty@test.com", ["venue_staff"])
+            event_id = make_event(organiser_id=1, status="planning")
+            booking = _make_preparation_booking(event_id, staff_id)
+            staff = User.query.get(staff_id)
+
+            with pytest.raises(PreparationUpdateError, match="At least one"):
+                update_venue_preparation(booking, staff, {})
+
+    def test_non_text_venue_notes_rejected_without_mutation(self, app, make_user, make_event):
+        with app.app_context():
+            from app.models.user import User
+
+            staff_id = make_user("staff-invalid-notes@test.com", ["venue_staff"])
+            event_id = make_event(organiser_id=1, status="planning")
+            booking = _make_preparation_booking(event_id, staff_id)
+            staff = User.query.get(staff_id)
+
+            with pytest.raises(PreparationUpdateError, match="Venue notes must be text"):
+                update_venue_preparation(booking, staff, {"venue_notes": 123})
+
+            assert VenueBooking.query.get(booking.id).venue_notes is None
+
     def test_managing_venue_staff_updates_preparation(self, app, make_user, make_event):
         with app.app_context():
             from app.models.user import User
