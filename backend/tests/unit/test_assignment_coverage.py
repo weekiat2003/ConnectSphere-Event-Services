@@ -125,7 +125,7 @@ def test_try_assign_and_advance_rejects_non_submitted_event(
     app, organiser, make_user, make_event
 ):
     with app.app_context():
-        coordinator = make_coordinator(make_user, "wrong-status@test.com")
+        make_coordinator(make_user, "wrong-status@test.com")
         event = make_event_for_assignment(
             make_event, organiser, "planning", coordinator_id=None
         )
