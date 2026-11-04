@@ -1638,3 +1638,77 @@ def test_hold_route_reports_missing_booking_after_valid_expiry(client, ctx):
 
     assert response.status_code == 404
     assert response.get_json()["error"] == "Booking not found"
+
+@pytest.mark.parametrize("candidate_start,candidate_end", [(8, 9), (12, 13)])
+def test_confirmed_conflict_skips_non_overlapping_candidates(
+    monkeypatch, candidate_start, candidate_end
+):
+    from unittest.mock import MagicMock
+
+    from app.venues.services import booking_requests
+
+    venue = SimpleNamespace(id=1, setup_minutes=0, turnaround_minutes=0)
+    start = datetime(2030, 1, 1, 10)
+    end = datetime(2030, 1, 1, 12)
+
+    outside = SimpleNamespace(
+        start_datetime=datetime(2030, 1, 1, candidate_start),
+        end_datetime=datetime(2030, 1, 1, candidate_end),
+    )
+    overlapping = SimpleNamespace(
+        start_datetime=datetime(2030, 1, 1, 11),
+        end_datetime=datetime(2030, 1, 1, 13),
+    )
+
+    # Keep real SQL column expressions while controlling returned candidates.
+    model = SimpleNamespace(
+        query=MagicMock(),
+        **{
+            name: getattr(VenueBooking, name)
+            for name in (
+                "venue_id", "status", "event_id",
+                "start_datetime", "end_datetime",
+            )
+        },
+    )
+    model.query.filter.return_value.order_by.return_value.all.return_value = [
+        outside, overlapping
+    ]
+    monkeypatch.setattr(booking_requests, "VenueBooking", model)
+
+    result = booking_requests._find_confirmed_conflict(
+        99, venue, start, end
+    )
+
+    assert result is overlapping
+
+
+def test_booking_request_rejects_unknown_venue_without_saving(app):
+    from app.venues.services.booking_requests import (
+        BookingRequestError,
+        submit_booking_requests,
+    )
+
+    with app.app_context():
+        before = VenueBooking.query.count()
+
+        with pytest.raises(BookingRequestError) as raised:
+            submit_booking_requests(
+                SimpleNamespace(id=1),
+                [{
+                    "venue_id": 999999,
+                    "date": day(30),
+                    "start_time": time(10),
+                    "end_time": time(12),
+                }],
+                user_id=1,
+                today=TODAY,
+            )
+
+        assert raised.value.errors == [{
+            "venue_id": 999999,
+            "venue": "Venue 1",
+            "field": "venue_id",
+            "message": "Venue 1: venue not found",
+        }]
+        assert VenueBooking.query.count() == before
