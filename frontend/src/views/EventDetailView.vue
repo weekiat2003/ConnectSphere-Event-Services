@@ -83,8 +83,13 @@
       <p class="description">{{ event.description }}</p>
       <div class="details">
         <div class="detail">
-          <span class="detail-label">Proposed Date and Time</span>
-          <span>{{ event.proposedDate || "—" }} {{ event.proposedTime || "" }}</span>
+          <span class="detail-label">Starts</span>
+          <span>{{ formatSchedule(event.proposedDate, event.proposedTime) }}</span>
+        </div>
+
+        <div class="detail">
+          <span class="detail-label">Ends</span>
+          <span>{{ formatSchedule(event.proposedEndDate, event.proposedEndTime) }}</span>
         </div>
         <div class="detail">
           <span class="detail-label">Expected attendance</span>
@@ -109,6 +114,20 @@
       <div class="accessibility">
         <span class="detail-label">Accessibility needs</span>
         <p>{{ event.venueRequirements?.accessibilityNeeds || "None specified" }}</p>
+      </div>
+      <div class="accessibility">
+        <span class="detail-label">Equipment required</span>
+
+        <ul v-if="event.equipmentRequirements?.length">
+          <li v-for="item in event.equipmentRequirements" :key="item.id">
+            <strong>{{ item.quantity }} × {{ item.type }}</strong>
+            <template v-if="item.technicalNotes">
+              · {{ item.technicalNotes }}
+            </template>
+          </li>
+        </ul>
+
+        <p v-else>No equipment requested</p>
       </div>
     </div>
 
@@ -945,6 +964,21 @@ const formatDate = (iso) => {
   const text = String(iso);
   return new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(text) ? text : `${text}Z`).toLocaleString();
 };
+
+function formatSchedule(date, time) {
+  const dateLabel = date
+    ? new Intl.DateTimeFormat("en-SG", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC",
+      }).format(new Date(`${date}T00:00:00Z`))
+    : "";
+
+  const timeLabel = time ? time.slice(0, 5) : "";
+
+  return [dateLabel, timeLabel].filter(Boolean).join(" at ") || "Not specified";
+}
 
 async function load() {
   const { data } = await eventsApi.getEvent(route.params.id);
