@@ -315,16 +315,15 @@ async function loadDraft() {
       registration_required: data.registrationRequired ?? false,
       intended_capacity: data.intendedCapacity ?? null,
     });
+
+    equipmentRequirements.value = (data.equipmentRequirements || []).map(item => ({
+      type: item.type || "",
+      quantity: item.quantity || 1,
+      technicalNotes: item.technicalNotes || "",
+    }));
   } catch (e) {
     error.value = e.response?.data?.error || "Could not load this draft.";
   }
-  equipmentRequirements.value = (
-  data.equipmentRequirements || []
-).map(item => ({
-  type: item.type || "",
-  quantity: item.quantity || 1,
-  technicalNotes: item.technicalNotes || "",
-}));
 }
 
 function sanitizePayload(data) {

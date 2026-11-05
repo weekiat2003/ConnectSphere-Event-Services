@@ -4,6 +4,7 @@ One test class per user story. They call the service directly against the
 in-memory test database, like the other service-level tests in this folder.
 """
 from datetime import time, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -11,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from app.common.time import utcnow
 from app.extensions import db
 from app.models.event import Event
-from app.models.registration import Registration
+from app.models.registration import EventUpdateSubscription, Registration
 from app.models.venue import Venue, VenueBooking
 from app.registrations import service
 from app.registrations.service import Conflict, EventFull, Forbidden, NotFound
@@ -59,6 +60,10 @@ def active_count(event_id):
     return Registration.query.filter(
         Registration.event_id == event_id, Registration.status != "withdrawn"
     ).count()
+
+
+def test_event_start_without_proposed_date_is_none():
+    assert service._event_start(SimpleNamespace(proposed_date=None, proposed_time=time(10, 0))) is None
 
 
 # =====================================================================
@@ -234,6 +239,16 @@ class TestRegister:
 
         assert Registration.query.count() == 0
 
+    def test_submitted_event_cannot_accept_registration(self, app, people):
+        event = make_event(people, status="submitted")
+
+        with pytest.raises(NotFound, match="Event not found"):
+            service.join_waitlist(event.id, people["a1"])
+        with pytest.raises(NotFound, match="Event not found"):
+            service._check_can_take_registrations(db.session.get(Event, event.id))
+
+        assert Registration.query.count() == 0
+
     @pytest.mark.parametrize("status", ["cancelled", "completed"])
     def test_finished_event_is_rejected(self, app, people, status):
         event = make_event(people, status=status)
@@ -319,6 +334,19 @@ class TestMyRegistrations:
 
     def test_empty_state_when_never_registered(self, app, people):
         assert service.my_registrations(people["a1"]) == []
+
+    def test_viewing_waitlist_promotes_attendee_after_capacity_increases(self, app, people):
+        event = open_event(people, capacity=1)
+        service.register(event.id, people["a1"])
+        waiting = service.join_waitlist(event.id, people["a2"])
+        event.intended_capacity = 2
+        db.session.commit()
+
+        mine = service.my_registrations(people["a2"])
+
+        assert mine[0]["id"] == waiting.id
+        assert mine[0]["status"] == "registered"
+        assert db.session.get(Registration, waiting.id).status == "registered"
 
     def test_reload_shows_the_latest_status(self, app, people):
         event = open_event(people, capacity=1)
@@ -698,6 +726,20 @@ class TestAttendeeList:
 
         assert data["registrations"] == [] and data["total"] == 0 and data["summary"]["registered"] == 0
 
+    def test_listing_attendees_rebalances_after_capacity_increases(self, app, people):
+        event = open_event(people, capacity=1)
+        service.register(event.id, people["a1"])
+        waiting = service.join_waitlist(event.id, people["a2"])
+        event.intended_capacity = 2
+        db.session.commit()
+
+        data = service.list_attendees(event.id, people["organiser"])
+
+        attendee = next(row for row in data["registrations"] if row["id"] == waiting.id)
+        assert attendee["status"] == "registered"
+        assert data["summary"]["registered"] == 2
+        assert data["summary"]["waitlisted"] == 0
+
     def test_withdrawn_entries_are_visible_but_marked(self, app, people):
         event = open_event(people)
         r = service.register(event.id, people["a1"])
@@ -759,3 +801,24 @@ class TestAttendeeList:
         row = service.list_attendees(event.id, people["organiser"])["registrations"][0]
 
         assert set(row) == {"id", "attendeeName", "status", "queuePosition", "registeredAt"}
+
+
+class TestFollowingUpdates:
+    def test_unfollowing_existing_subscription_removes_it(self, app, people):
+        event = make_event(people, status="confirmed")
+        service.set_following(event.id, people["a1"], True)
+
+        result = service.set_following(event.id, people["a1"], False)
+
+        assert result["followingUpdates"] is False
+        assert EventUpdateSubscription.query.filter_by(
+            event_id=event.id, attendee_id=people["a1"]
+        ).count() == 0
+
+    def test_unfollowing_without_subscription_is_an_idempotent_noop(self, app, people):
+        event = make_event(people, status="confirmed")
+
+        result = service.set_following(event.id, people["a1"], False)
+
+        assert result["followingUpdates"] is False
+        assert EventUpdateSubscription.query.count() == 0
