@@ -11,6 +11,10 @@ from datetime import date, timedelta
 import pytest
 
 from app.events.services import drafts, review
+from app.events.services import update as update_service
+from app.extensions import db
+from app.models.equipment import EquipmentReservation
+from app.models.user import User
 
 FUTURE_DATE = date.today() + timedelta(days=7)
 
@@ -106,6 +110,50 @@ def test_equipment_requirements_are_saved(app, organiser):
         assert equipment.equipment_type == "Projector"
         assert equipment.quantity == 2
         assert equipment.technical_notes == "HDMI connection required"
+
+
+def test_submitting_draft_keeps_equipment_requirements_without_reserving(
+    app, organiser
+):
+    with app.app_context():
+        payload = dict(VALID_PAYLOAD)
+        payload["equipment_requirements"] = [
+            {"type": "Projector", "quantity": 2}
+        ]
+        event = drafts.create_draft(organiser, payload)
+
+        assert [(line.equipment_type, line.quantity) for line in event.equipment_requirements] == [
+            ("Projector", 2)
+        ]
+
+        event = review.submit_event(event, organiser)
+
+        assert event.status == "submitted"
+        assert [(line.equipment_type, line.quantity) for line in event.equipment_requirements] == [
+        ("Projector", 2)
+        ]
+        
+        assert EquipmentReservation.query.filter_by(event_id=event.id).count() == 0
+
+
+def test_equipment_can_still_be_requested_while_planning(app, organiser, coordinator):
+    with app.app_context():
+        event = drafts.create_draft(organiser, dict(VALID_PAYLOAD))
+        event.status = "planning"
+        event.coordinator_id = coordinator
+        db.session.commit()
+
+        event = update_service.update_event_fields(
+            event,
+            db.session.get(User, coordinator),
+            {"equipment_requirements": [{"type": "Projector", "quantity": 2}]},
+            offline_review_confirmed=True,
+        )
+
+        assert event.status == "planning"
+        assert [(line.equipment_type, line.quantity, line.status) for line in event.equipment_requirements] == [
+            ("Projector", 2, "requested")
+        ]
 
 
 def test_registration_requirements_are_saved(app, organiser):

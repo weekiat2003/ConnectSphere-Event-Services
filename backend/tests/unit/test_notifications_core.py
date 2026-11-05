@@ -22,6 +22,19 @@ def test_notify_rejects_unknown_type(app, organiser):
         core.notify(organiser, "not_a_type", "Title", "Body")
 
 
+@pytest.mark.parametrize(
+    "title,message",
+    [("", "Body"), ("Title", "")],
+)
+def test_notify_requires_title_and_message(app, organiser, title, message):
+    with pytest.raises(
+        core.NotificationError, match="A notification needs a title and a message"
+    ):
+        core.notify(organiser, TYPE_ORGANISER_UPDATE, title, message)
+
+    assert Notification.query.count() == 0
+
+
 def test_notify_role_reaches_each_active_user_once(app, make_user):
     a = make_user("v1@test.com", ["venue_staff"])
     b = make_user("v2@test.com", ["venue_staff"])
@@ -34,6 +47,44 @@ def test_notify_role_reaches_each_active_user_once(app, make_user):
 def test_notify_users_ignores_duplicates_and_none(app, organiser, coordinator):
     created = core.notify_users([organiser, organiser, None, coordinator], TYPE_ORGANISER_UPDATE, "T", "M")
     assert len(created) == 2
+
+
+def test_clear_notifications_updates_unread_read_and_extra_data(app, organiser):
+    unread = core.notify(
+        organiser, TYPE_ORGANISER_UPDATE, "Unread", "Body",
+        event_id=17, data={"existing": "value"},
+    )
+    already_read = core.notify(
+        organiser, TYPE_ORGANISER_UPDATE, "Read", "Body",
+        event_id=17, data={"keep": True},
+    )
+    unrelated = core.notify(
+        organiser, TYPE_ORGANISER_UPDATE, "Other event", "Body", event_id=18,
+    )
+    db.session.commit()
+    already_read.is_read = True
+    already_read.read_at = already_read.created_at
+    db.session.commit()
+    read_at = already_read.read_at
+
+    cleared = core.clear_notifications(TYPE_ORGANISER_UPDATE, 17)
+
+    assert cleared == 2
+    db.session.flush()
+    db.session.refresh(unread)
+    db.session.refresh(already_read)
+    db.session.refresh(unrelated)
+    assert unread.cleared_at is not None
+    assert unread.is_read is True
+    assert unread.read_at is not None
+    assert already_read.cleared_at is not None
+    assert already_read.is_read is True
+    assert already_read.read_at == read_at
+    assert unrelated.cleared_at is None
+    assert unread.data == {"existing": "value"}
+    assert already_read.data == {"keep": True}
+
+    assert core.clear_notifications(TYPE_ORGANISER_UPDATE, 17) == 0
 
 
 def test_inbox_routes(client, app, organiser, coordinator, auth_header):
@@ -75,6 +126,45 @@ def test_notify_role_skips_inactive_users(app, make_user):
     db.session.commit()
     created = core.notify_role("venue_staff", TYPE_ORGANISER_UPDATE, "T", "M")
     assert [n.recipient_id for n in created] == [active]
+
+
+def test_clear_notifications_merges_extra_data(app, organiser):
+    notification = core.notify(
+        organiser, TYPE_ORGANISER_UPDATE, "Title", "Body",
+        event_id=23, data={"existing": "value"},
+    )
+    db.session.commit()
+
+    assert core.clear_notifications(
+        TYPE_ORGANISER_UPDATE, 23, {"resolution": "done"}
+    ) == 1
+
+    db.session.flush()
+    db.session.refresh(notification)
+    assert notification.data == {"existing": "value", "resolution": "done"}
+    assert notification.is_read is True
+    assert notification.cleared_at is not None
+
+
+def test_mark_read_reports_missing_notification(app, organiser):
+    with pytest.raises(LookupError, match="Notification not found"):
+        core.mark_read(999999, organiser)
+
+
+def test_mark_read_keeps_existing_read_timestamp(app, organiser):
+    notification = core.notify(organiser, TYPE_ORGANISER_UPDATE, "Title", "Body")
+    db.session.commit()
+    notification.is_read = True
+    notification.read_at = notification.created_at
+    db.session.commit()
+    read_at = notification.read_at
+
+    result = core.mark_read(notification.id, organiser)
+
+    assert result.id == notification.id
+    assert result.is_read is True
+    assert result.read_at == read_at
+
 
 def test_inbox_invalid_limit_uses_default(
     client, organiser, auth_header, monkeypatch
