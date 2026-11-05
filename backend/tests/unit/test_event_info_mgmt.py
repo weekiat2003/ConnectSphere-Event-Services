@@ -13,6 +13,8 @@ from app.venues.services.preparation import (
     update_venue_preparation,
     PreparationUpdateError,
 )
+from app.events.services import update as update_service
+
 
 
 def _make_event_change_booking(event_id, status=BOOKING_APPROVED):
@@ -421,6 +423,22 @@ class TestEndAfterStartValidation:
         )
         values.update(overrides)
         return Event.query.get(make_event(**values))
+
+    def test_end_time_comparison_accepts_only_times_after_the_start(self):
+            """Cover both outcomes of the schedule end-after-start comparison."""
+            event = Event(
+                proposed_date=date(2027, 3, 1),
+                proposed_time=time(9, 0),
+                proposed_end_date=date(2027, 3, 1),
+                proposed_end_time=time(17, 0),
+            )
+
+            assert update_service._validate_changes(
+                event, {"proposed_end_time": time(8, 59)}
+            ) == {"proposed_end_time": "End must be after the start"}
+            assert update_service._validate_changes(
+                event, {"proposed_end_time": time(9, 1)}
+            ) == {}
 
     @pytest.mark.parametrize(
         "changes",
