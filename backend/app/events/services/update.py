@@ -276,6 +276,15 @@ def _validate_changes(event: Event, changes: dict) -> dict:
                     existing_ids = {item.id for item in event.equipment_requirements}
                     if requirement_id not in existing_ids:
                         errors[f"{field}.id"] = "Equipment requirement does not belong to this event"
+    schedule_fields = ("proposed_date", "proposed_time", "proposed_end_date", "proposed_end_time")
+    if any(f in changes for f in schedule_fields) and not any(f in errors for f in schedule_fields):
+        start_date = changes.get("proposed_date", event.proposed_date)
+        start_time = changes.get("proposed_time", event.proposed_time)
+        end_date = changes.get("proposed_end_date", event.proposed_end_date)
+        end_time = changes.get("proposed_end_time", event.proposed_end_time)
+        if start_date and start_time and end_date and end_time:
+            if datetime.combine(end_date, end_time) <= datetime.combine(start_date, start_time):
+                errors["proposed_end_time"] = "End must be after the start"
 
     return errors
 

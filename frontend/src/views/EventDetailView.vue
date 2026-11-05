@@ -1064,8 +1064,14 @@ function initRevisionForm() {
 }
 
 const SIGNIFICANT_FIELD_KEYS = [
-  "proposed_date", "proposed_time", "expected_attendance",
-  "capacity_needed", "required_layout", "accessibility_needs",
+  "proposed_date",
+  "proposed_time",
+  "proposed_end_date",
+  "proposed_end_time",
+  "expected_attendance",
+  "capacity_needed",
+  "required_layout",
+  "accessibility_needs",
   "required_facilities",
 ];
 
@@ -1098,6 +1104,8 @@ function openEditForm() {
     category: event.value.category,
     proposed_date: event.value.proposedDate,
     proposed_time: event.value.proposedTime,
+    proposed_end_date: event.value.proposedEndDate || "",
+    proposed_end_time: (event.value.proposedEndTime || "").slice(0, 5),
     expected_attendance: event.value.expectedAttendance,
     capacity_needed: event.value.venueRequirements?.capacityNeeded,
     required_layout: event.value.venueRequirements?.requiredLayout,

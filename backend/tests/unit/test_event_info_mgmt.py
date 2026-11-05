@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime, time
 
 import pytest
 from app.extensions import db
@@ -409,6 +409,131 @@ def _make_preparation_booking(event_id, staff_id, status=BOOKING_APPROVED):
     db.session.add(booking)
     db.session.commit()
     return booking
+
+class TestEndAfterStartValidation:
+    @staticmethod
+    def _event(make_event, coordinator, **overrides):
+        values = dict(
+            organiser_id=1, status="planning", coordinator_id=coordinator,
+            proposed_date=date(2027, 3, 1), proposed_time=time(9, 0),
+            proposed_end_date=date(2027, 3, 1), proposed_end_time=time(17, 0),
+            expected_attendance=50, capacity_needed=60,
+        )
+        values.update(overrides)
+        return Event.query.get(make_event(**values))
+
+    @pytest.mark.parametrize(
+        "changes",
+        [
+            {"proposed_end_time": "08:00"},       # earlier the same day
+            {"proposed_end_time": "09:00"},       # boundary: equal to the start
+            {"proposed_end_date": "2027-02-28"},  # an earlier day
+            {"proposed_time": "18:00"},           # moving the START past the existing end
+            {"proposed_date": "2027-03-02"},      # moving the start DATE past the existing end
+        ],
+    )
+    def test_end_that_is_not_after_the_start_is_refused(
+        self, app, coordinator, make_event, changes
+    ):
+        with app.app_context():
+            from app.models.user import User
+            event = self._event(make_event, coordinator)
+
+            with pytest.raises(EventValidationError) as exc_info:
+                update_event_fields(
+                    event, User.query.get(coordinator), changes, offline_review_confirmed=True
+                )
+
+            assert exc_info.value.field_errors == {"proposed_end_time": "End must be after the start"}
+            refreshed = Event.query.get(event.id)
+            assert refreshed.proposed_date == date(2027, 3, 1)
+            assert refreshed.proposed_time == time(9, 0)
+            assert refreshed.proposed_end_date == date(2027, 3, 1)
+            assert refreshed.proposed_end_time == time(17, 0)
+
+    @pytest.mark.parametrize(
+        "changes, expected",
+        [
+            ({"proposed_end_time": "09:01"}, (date(2027, 3, 1), time(9, 1))),  # boundary: one minute after
+            (
+                {"proposed_end_date": "2027-03-02", "proposed_end_time": "08:00"},
+                (date(2027, 3, 2), time(8, 0)),  # a later day may have an earlier clock time
+            ),
+            (
+                {"proposed_time": "18:00", "proposed_end_time": "20:00"},
+                (date(2027, 3, 1), time(20, 0)),  # start and end moved together
+            ),
+        ],
+    )
+    def test_end_after_the_start_is_accepted(
+        self, app, coordinator, make_event, changes, expected
+    ):
+        with app.app_context():
+            from app.models.user import User
+            event = self._event(make_event, coordinator)
+
+            update_event_fields(
+                event, User.query.get(coordinator), changes, offline_review_confirmed=True
+            )
+
+            refreshed = Event.query.get(event.id)
+            assert (refreshed.proposed_end_date, refreshed.proposed_end_time) == expected
+
+    def test_clearing_the_end_time_skips_the_check(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event = self._event(make_event, coordinator)
+
+            update_event_fields(
+                event, User.query.get(coordinator), {"proposed_end_time": None},
+                offline_review_confirmed=True,
+            )
+
+            assert Event.query.get(event.id).proposed_end_time is None
+
+    def test_event_with_no_end_can_still_change_its_start(self, app, coordinator, make_event):
+        with app.app_context():
+            from app.models.user import User
+            event = self._event(
+                make_event, coordinator, proposed_end_date=None, proposed_end_time=None
+            )
+
+            update_event_fields(
+                event, User.query.get(coordinator), {"proposed_time": "18:00"},
+                offline_review_confirmed=True,
+            )
+
+            assert Event.query.get(event.id).proposed_time == time(18, 0)
+
+    def test_end_date_without_an_end_time_is_not_checked(self, app, coordinator, make_event):
+        # Boundary: the check only runs once both an end date and an end time exist.
+        with app.app_context():
+            from app.models.user import User
+            event = self._event(
+                make_event, coordinator, proposed_end_date=None, proposed_end_time=None
+            )
+
+            update_event_fields(
+                event, User.query.get(coordinator), {"proposed_end_date": "2027-02-01"},
+                offline_review_confirmed=True,
+            )
+
+            assert Event.query.get(event.id).proposed_end_date == date(2027, 2, 1)
+
+    def test_refused_end_during_safety_check_changes_nothing(self, app, coordinator, make_event):
+        # Validation runs before the revert, so a refused edit must not touch the status.
+        with app.app_context():
+            from app.models.user import User
+            event = self._event(make_event, coordinator, status="safety_check")
+
+            with pytest.raises(EventValidationError):
+                update_event_fields(
+                    event, User.query.get(coordinator), {"proposed_end_time": "08:00"},
+                    offline_review_confirmed=True,
+                )
+
+            assert Event.query.get(event.id).status == "safety_check"
+            assert EventStatusHistory.query.filter_by(event_id=event.id).count() == 0
 
 
 class TestVenuePreparation:
