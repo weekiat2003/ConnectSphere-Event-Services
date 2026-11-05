@@ -4,6 +4,7 @@ Each test drives the real service (or API) action and then checks who was
 notified and what the notification says — i.e. the acceptance criteria.
 """
 from datetime import date, time, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,7 @@ from app.models.notification import (
 )
 from app.models.user import User
 from app.models.venue import Venue, VenueBooking, BOOKING_APPROVED
+from app.notifications.services import triggers
 from app.models.event import Event, EventEquipmentRequirement, EventSafetyReview
 from app.registrations import service as registrations
 from app.venues.services import booking as booking_service
@@ -1089,3 +1091,106 @@ class TestISP130SafetyOfficer:
 
         assert event.status == "planning"
         assert Notification.query.filter_by(type=TYPE_SAFETY_CHECK).count() == 0
+
+
+class TestNotificationTriggerCoverage:
+    def test_schedule_without_date_has_a_concrete_fallback(self):
+        assert triggers._schedule_text(None, time(10, 0)) == "no date set"
+
+    def test_duplicate_approved_venue_names_are_listed_once(self, app, organiser, coordinator, staff):
+        event = new_event(organiser, "planning", coordinator)
+        venues = [
+            Venue(name="Grand Hall", capacity=100, created_by=staff["venue1"]),
+            Venue(name="Grand Hall", capacity=100, created_by=staff["venue1"]),
+        ]
+        db.session.add_all(venues)
+        db.session.flush()
+        start = utcnow() + timedelta(days=10)
+        db.session.add_all([
+            VenueBooking(event_id=event.id, venue_id=venue.id, requested_by=coordinator,
+                         status=BOOKING_APPROVED, start_datetime=start,
+                         end_datetime=start + timedelta(hours=2))
+            for venue in venues
+        ])
+        db.session.commit()
+
+        assert triggers._booked_venues(event) == ["Grand Hall"]
+
+    def test_assigned_coordinator_submission_does_not_notify_leads(self, app, organiser, staff):
+        event = new_event(organiser, "draft", staff["coord_b"])
+
+        notifications = triggers.on_event_status_changed(event, "draft", "submitted")
+
+        assert len(notifications) == 1
+        assert notifications[0].recipient_id == organiser
+        assert Notification.query.filter_by(
+            recipient_id=staff["lead1"], type=TYPE_NEW_EVENT_SUBMISSION
+        ).count() == 0
+
+    def test_withdrawal_change_request_uses_withdrawal_wording(self, app, organiser):
+        event = new_event(organiser)
+        change_request = SimpleNamespace(
+            id=17, request_type="withdrawal", decision_reason="  scheduling conflict "
+        )
+
+        [notification] = triggers.notify_organiser_of_change_request(
+            event, change_request, "rejected"
+        )
+
+        assert notification.title == "Withdrawal request rejected"
+        assert notification.message.endswith("Reason: scheduling conflict.")
+        assert notification.data["changeRequestId"] == 17
+
+    def test_released_booking_notification_without_reason(self, app, organiser, staff):
+        event = new_event(organiser)
+        venue = Venue(name="Grand Hall", capacity=100, created_by=staff["venue1"])
+        db.session.add(venue)
+        db.session.commit()
+        booking = SimpleNamespace(
+            id=23, venue_id=venue.id, start_datetime=utcnow() + timedelta(days=10)
+        )
+
+        [notification] = triggers.notify_venue_staff_of_released_bookings(
+            event, [booking]
+        )
+
+        assert notification.recipient_id == staff["venue1"]
+        assert notification.message.endswith("has been released.")
+        assert "Reason:" not in notification.message
+        assert notification.data["reason"] is None
+
+    def test_safety_recheck_notification_without_reason(self, app, organiser, staff):
+        event = new_event(organiser)
+        event.equipment_requirements.append(
+            EventEquipmentRequirement(equipment_type="Projector", quantity=2)
+        )
+        db.session.commit()
+
+        [notification] = triggers.notify_technical_support_of_safety_recheck(
+            event, "changes_requested"
+        )
+
+        assert notification.recipient_id == staff["tech"]
+        assert "requested changes to" in notification.message
+        assert "Reason:" not in notification.message
+
+    def test_notification_failure_is_logged_and_does_not_block_outside_tests(
+        self, app, organiser, caplog
+    ):
+        event = new_event(organiser)
+        app.config["TESTING"] = False
+
+        result = triggers.notify_organiser_of_change_request(
+            event, SimpleNamespace(request_type="change"), "unknown"
+        )
+
+        assert result == []
+        assert "Notification notify_organiser_of_change_request failed" in caplog.text
+
+    def test_notification_failure_is_reraised_in_tests(self, app, organiser):
+        event = new_event(organiser)
+
+        with pytest.raises(KeyError, match="unknown"):
+            triggers.notify_organiser_of_change_request(
+                event, SimpleNamespace(request_type="change"), "unknown"
+            )

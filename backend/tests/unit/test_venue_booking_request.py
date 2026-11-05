@@ -1342,6 +1342,28 @@ def test_advisory_ac4_no_warning_cases(client, ctx, other_event_id):
     assert all(b["advisory"] is None for b in res.get_json())
 
 
+def test_advisory_ignores_prefilter_candidate_that_only_touches_padded_window(
+    app, ctx, other_event_id
+):
+    set_padding(ctx.hall_a, setup=30, turnaround=30)
+    candidate = VenueBooking(
+        event_id=ctx.event_id,
+        venue_id=ctx.hall_a,
+        requested_by=ctx.coord_id,
+        status="pending",
+        start_datetime=at(day(30), 10),
+        end_datetime=at(day(30), 12),
+    )
+    db.session.add(candidate)
+    db.session.commit()
+    add_other_booking(
+        ctx, other_event_id, ctx.hall_a, status="pending",
+        start=at(day(30), 13), end=at(day(30), 14),
+    )
+
+    assert get_advisory(candidate) is None
+
+
 @pytest.mark.parametrize("status", ["rejected", "withdrawn"])
 def test_advisory_ac4_inactive_overlaps_ignored(client, ctx, other_event_id, status):
     add_other_booking(ctx, other_event_id, ctx.hall_a, status=status)

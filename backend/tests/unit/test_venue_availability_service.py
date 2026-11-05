@@ -25,8 +25,8 @@ from app.venues.services.availability import (
     add_unavailability,
     compute_booking_window,
     flag_timing_conflicts,
-    get_calendar,
     get_combined_calendar,
+    get_calendar,
     list_flags_for_event,
     list_unresolved_flags_for_coordinator,
     pad_window,
@@ -224,6 +224,65 @@ class TestAddUnavailability:
         _booking(other, dt(5, 10), dt(5, 12))
         _, flags = add_unavailability(venue, 1, dt(5, 9), dt(5, 17))
         assert flags == []
+
+
+class TestAvailabilityCoverage:
+    def test_calendar_separates_held_bookings_from_confirmed_bookings(self, app):
+        venue = _venue()
+        held = _booking(venue, dt(5, 10), dt(5, 12), status=BOOKING_HELD)
+        held.hold_expires_at = utcnow() + timedelta(days=1)
+        db.session.commit()
+
+        calendar = get_calendar(venue.id, dt(5, 9), dt(5, 13))
+
+        assert calendar["confirmedBookings"] == []
+        assert [booking["id"] for booking in calendar["heldBookings"]] == [held.id]
+
+    def test_orphaned_approved_booking_is_ignored_by_availability_changes(self, app):
+        venue = _venue()
+        orphan = VenueBooking(
+            event_id=999999,
+            venue_id=venue.id,
+            requested_by=1,
+            status=BOOKING_APPROVED,
+            start_datetime=dt(5, 10),
+            end_datetime=dt(5, 12),
+        )
+        db.session.add(orphan)
+        db.session.commit()
+
+        calendar = get_calendar(venue.id, dt(5, 9), dt(5, 13))
+        _, flags = add_unavailability(venue, 1, dt(5, 8), dt(5, 9), "Maintenance")
+        timing_flags = flag_timing_conflicts(venue, "Timing changed")
+
+        assert calendar["confirmedBookings"][0]["eventName"] == "Event #999999"
+        assert flags == []
+        assert timing_flags == []
+        assert db.session.get(VenueBooking, orphan.id).status == BOOKING_APPROVED
+        assert VenueAvailabilityFlag.query.count() == 0
+
+    def test_timing_conflicts_skip_existing_flags_and_duplicate_event_pairs(self, app):
+        venue = _venue(setup_minutes=15)
+        bookings = [
+            _booking(venue, dt(5, 10), dt(5, 12)),
+            _booking(venue, dt(5, 10), dt(5, 12)),
+            _booking(venue, dt(5, 10), dt(5, 12)),
+        ]
+        existing = add_flag_once(
+            bookings[0].event_id, venue.id, "Timing changed", notify=False
+        )
+        db.session.commit()
+
+        flags = flag_timing_conflicts(venue, "Timing changed")
+
+        assert existing is not None
+        assert {flag.event_id for flag in flags} == {
+            bookings[1].event_id, bookings[2].event_id
+        }
+        assert VenueAvailabilityFlag.query.filter_by(
+            venue_id=venue.id, reason="Timing changed", resolved=False
+        ).count() == 3
+
 
 class TestRemoveUnavailability:
 

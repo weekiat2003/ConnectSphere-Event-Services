@@ -132,12 +132,15 @@
     </div>
 
     <div
-      v-if="event.venueBookings?.length || ['planning', 'safety_check', 'safety_approved', 'confirmed'].includes(event.status)"
+      v-if="event.venueBookings?.length && ['planning', 'safety_check', 'safety_approved', 'confirmed'].includes(event.status)"
       class="equipment-requirements-spacing"
     >
       <VenueRequirementsPanel :bookings="event.venueBookings" :requirements="event.venueRequirements" />
     </div>
-    <div v-if="event.equipmentRequirements?.length" class="equipment-requirements-spacing">
+    <div
+      v-if="event.equipmentRequirements?.length && ['planning', 'safety_check', 'safety_approved', 'confirmed'].includes(event.status)"
+      class="equipment-requirements-spacing"
+    >
       <EquipmentRequirementsPanel :requirements="event.equipmentRequirements" />
     </div>
     <div v-if="(isAssignedCoordinator || isOwningOrganiser) && event.fieldEditLogs?.length" class="card history">
