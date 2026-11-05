@@ -20,7 +20,7 @@ class TestOrganiserDashboard(E2ETestCase):
         table = page.locator("table")
         for name, status in [
             ("Spring Product Showcase", "Draft"),
-            ("Quarterly All-Hands Meeting", "Submitted"),
+            ("Quarterly All-Hands Meeting", "Under Review"),
             ("Industry Panel: Future of AI", "Confirmed"),
             ("Charity Gala Evening", "Cancelled"),
             ("Open Air Music Night", "Rejected"),

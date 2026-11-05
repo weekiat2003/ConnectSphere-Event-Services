@@ -7,6 +7,7 @@
         <router-link v-if="auth.hasRole('event_organiser')" to="/drafts">My Drafts</router-link>
         <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/assignments">Assignment Queue</router-link>
         <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/supervision">Supervision</router-link>
+        <router-link v-if="auth.hasRole('event_coordinator_lead')" to="/lead/calendar">Calendar</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/change-requests">Change Requests</router-link>
         <router-link v-if="auth.hasRole('safety_officer')" to="/safety-reviews">Safety Reviews</router-link>
         <router-link v-if="auth.hasRole('event_coordinator')" to="/planning">Planning View</router-link>
