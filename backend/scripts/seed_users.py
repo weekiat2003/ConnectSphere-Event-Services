@@ -124,7 +124,8 @@ TEST_VENUES = [
         "accessibility_info": "Step-free access",
         "operating_hours": "08:00-21:00",
         "accessibility_features": ["Step-free access"],
-        "facilities": ["Display screen", "Power outlets", "Whiteboard", "Wi-Fi"],        "setup_minutes": 15,
+        "facilities": ["Display screen", "Power outlets", "Whiteboard", "Wi-Fi"],
+        "setup_minutes": 15,
         "turnaround_minutes": 15,
         "supported_layouts": ["classroom", "island", "boardroom"],
     },
@@ -136,7 +137,8 @@ TEST_VENUES = [
         "operating_hours": "08:00-22:00",
         "known_restrictions": "Amplified sound must end by 22:00. Events may be stopped in lightning warnings. No vehicles on the lawn.",
         "accessibility_features": ["Step-free access"],
-        "facilities": ["Outdoor stage", "PA System", "Power outlets"],        "setup_minutes": 60,
+        "facilities": ["Outdoor stage", "PA System", "Power outlets"],        
+        "setup_minutes": 60,
         "turnaround_minutes": 60,
         "supported_layouts": ["theatre", "standing"],
     },
@@ -169,7 +171,7 @@ TEST_EVENTS = [
         "purpose": "Company-wide update",
         "description": "Leadership update on quarterly results and priorities.",
         "category": "Meeting",
-        "status": "submitted",
+        "status": "under_review",
         "coordinator": "coordinator1@example.com",
         "days": 30, "time": time(14, 0),
         "expected_attendance": 250, "capacity_needed": 280,
@@ -408,7 +410,7 @@ TEST_EVENTS = [
         "purpose": "Student entertainment",
         "description": "Scaled-down version of the music night, sized to fit the Banquet Hall.",
         "category": "Entertainment",
-        "status": "submitted",
+        "status": "under_review",
         "coordinator": "coordinator1@example.com",
         "days": 40, "time": time(20, 0),
         "expected_attendance": 140, "capacity_needed": 150,
@@ -571,10 +573,23 @@ with app.app_context():
             print(f"Skipping {entry['name']}: organiser not found")
             continue
 
-        if Event.query.filter_by(
+        existing_event = Event.query.filter_by(
             name=entry["name"],
-            organiser_id=event_organiser.id
-        ).first():
+            organiser_id=event_organiser.id,
+        ).first()
+
+        if existing_event:
+            starts_at = datetime.combine(
+                existing_event.proposed_date,
+                existing_event.proposed_time,
+            )
+            ends_at = starts_at + timedelta(hours=2)
+
+            if existing_event.proposed_end_date is None:
+                existing_event.proposed_end_date = ends_at.date()
+            if existing_event.proposed_end_time is None:
+                existing_event.proposed_end_time = ends_at.time()
+
             continue
 
         coord = coordinators.get(entry["coordinator"]) if entry["coordinator"] else None
@@ -584,6 +599,11 @@ with app.app_context():
         fields["coordinator_id"] = coord.id if coord else None
         fields["proposed_date"] = today + timedelta(days=entry["days"])
         fields["proposed_time"] = entry["time"]
+        starts_at = datetime.combine(fields["proposed_date"], fields["proposed_time"])
+        ends_at = starts_at + timedelta(hours=2)
+
+        fields["proposed_end_date"] = ends_at.date()
+        fields["proposed_end_time"] = ends_at.time()
 
         if "submitted_days_ago" in entry:
             fields["submitted_at"] = now - timedelta(days=entry["submitted_days_ago"])
