@@ -25,7 +25,6 @@ from app.venues.services.availability import (
     add_unavailability,
     compute_booking_window,
     flag_timing_conflicts,
-    get_calendar,
     get_combined_calendar,
     get_calendar,
     list_flags_for_event,
