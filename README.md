@@ -39,33 +39,6 @@ connectsphere/
    `event_coordinator`, `event_coordinator_lead`, `venue_staff`,
    `technical_support_staff`, `safety_officer`, `attendee`).
 
-   **Existing database?** If your `event_coordinator_history` table predates
-   the Event Coordinator Lead feature, add the new column:
-
-   ```sql
-   ALTER TABLE event_coordinator_history
-       ADD COLUMN assigned_by BIGINT UNSIGNED NULL AFTER assignment_type,
-       ADD CONSTRAINT fk_ech_assigned_by FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL;
-   ```
-
-   **Existing database, Coordinator reassignment requests?** Coordinators now
-   ask a Lead to reassign an event instead of reassigning it themselves. If your
-   database was created before this change, add the new table by running only
-   the last statement of `database/schema.sql`
-   (`CREATE TABLE IF NOT EXISTS coordinator_reassignment_requests ...`), or
-   recreate the database from the full schema.
-
-   **Existing database, Safety approved status?** Approving a safety check now
-   moves the event to a new `safety_approved` status until its Coordinator
-   confirms it. Add the status to an older database with:
-
-   ```sql
-   ALTER TABLE events MODIFY status ENUM(
-       'draft','submitted','under_review','approved',
-       'planning','safety_check','safety_approved','confirmed','completed','cancelled','rejected'
-   ) NOT NULL DEFAULT 'draft';
-   ```
-
 ## 2. Backend setup (Flask API)
 
 ```bash
